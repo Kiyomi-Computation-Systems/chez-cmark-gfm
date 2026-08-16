@@ -1365,9 +1365,12 @@ Create `src/cmark/gfm/private/native.sls`:
           node-free find-extension attach-extension
           parser-get-syntax-extensions render-html free-buffer)
   (import (rnrs)
+          ;; NOT file-exists? -- (rnrs) exports it via (rnrs files), and
+          ;; importing both raises "multiple definitions for file-exists?".
+          ;; Same conflict class as `exit`; see the test files above.
           (only (chezscheme)
                 load-shared-object foreign-procedure foreign-ref
-                make-mutex with-mutex getenv file-exists?)
+                make-mutex with-mutex getenv)
           (cmark gfm private config)
           (cmark gfm private conditions))
 
