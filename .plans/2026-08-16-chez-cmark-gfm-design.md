@@ -40,129 +40,77 @@ mutates a global registry and must be serialized (§4.4).
 
 ## 2. Decisions
 
+Each decision is recorded as an ADR under `.plans/decisions/`. This section is an
+index: the ADRs carry the full context, the alternatives considered, and the
+consequences. Where a decision corrects the project plan, the ADR quotes the evidence.
+
+| ADR | Decision | Corrects |
+|---|---|---|
+| [0001](decisions/0001-hybrid-native-dependency-acquisition.md) | Hybrid native dependency acquisition | — |
+| [0002](decisions/0002-traverse-ast-in-scheme.md) | Traverse the AST in Scheme behind a thin C shim | — |
+| [0003](decisions/0003-linux-primary-memory-verification.md) | Linux-primary memory verification with in-process counters | — |
+| [0004](decisions/0004-defer-windows-support.md) | Defer Windows support beyond v1 | `AGENTS.md` |
+| [0005](decisions/0005-parser-outlives-rendering.md) | The parser outlives rendering | plan §8.2 |
+| [0006](decisions/0006-liveness-flag-with-dynamic-wind.md) | Pair `dynamic-wind` with a liveness flag | plan §9.4 |
+| [0007](decisions/0007-incremental-release-staging.md) | Ship incrementally from 0.1 | plan §16 |
+
 ### 2.1 Native dependency: hybrid acquisition
 
-**Decision.** Normal builds discover a system `cmark-gfm` through `pkg-config`. A
-pinned git submodule at `vendor/cmark-gfm` provides a fallback, used automatically
-when `pkg-config` finds nothing and explicitly via `make vendor`.
-
-**Rationale.** The system path keeps the package light for consumers and matches
-plan §14. The vendored path gives CI an exactly pinned native version, which is a
-precondition for meaningful differential testing (§7.5) and for building an
-instrumented cmark when needed.
-
-**Consequences.** Two build paths to maintain. Linking differs between them (§6.1).
+Normal builds discover a system `cmark-gfm` through `pkg-config`; a pinned
+`vendor/cmark-gfm` submodule is the fallback, with cmark linked **statically** on that
+path. See [ADR-0001](decisions/0001-hybrid-native-dependency-acquisition.md).
 
 ### 2.2 Traversal lives in Scheme; the shim stays thin
 
-**Decision.** The C shim performs no tree traversal and holds no parsing or
-rendering logic. It does only what C must: version reporting, one-time extension
-registration, extension lookup normalization, option-bit construction, renderer
-buffer release, and debug allocation counters. Scheme drives `first-child` / `next`
-and calls the accessors.
+The C shim performs no tree traversal and holds no parsing or rendering logic —
+roughly 150 lines covering version reporting, one-time extension registration,
+option-bit construction, renderer buffer release, and debug counters. The most
+effective memory-safety measure available is to write less C.
 
-**Rationale.** The most effective memory-safety measure available is to write less
-C. Alternatives that moved traversal into C (a per-node snapshot call, or full
-serialization to a blob) would make the "no native pointer escapes" invariant
-structural rather than disciplinary, but they buy that guarantee by adding buffer
-arithmetic in C — itself a classic defect source. Performance does not favor them:
-a 2,000-node document at ~8 accessors per node is roughly 16,000 FFI calls, well
-under a millisecond.
-
-**Consequences.** The lifecycle logic that memory safety depends on lives in
-Scheme, so a standalone C harness cannot exercise it. Memory verification must run
-the Chez process itself under a memory tool (§2.3).
+Consequence carried into this spec: the lifecycle logic memory safety depends on lives
+in Scheme, so it must be verified in-process (§2.3). See
+[ADR-0002](decisions/0002-traverse-ast-in-scheme.md).
 
 ### 2.3 Memory verification: Linux-primary, with in-process counters
 
-**Decision.** Linux CI is the gate for all memory claims, using Valgrind against a
-stock Chez plus ASan/UBSan. macOS runs ASan/UBSan via `DYLD_INSERT_LIBRARIES` and
-`leaks` on a best-effort basis. Independently of both, the shim maintains debug
-allocation counters queryable from Scheme (§7.1).
-
-**Rationale.** Valgrind requires no instrumentation of Chez or cmark and detects
-leaks, use-after-free, and double-frees process-wide. **LeakSanitizer is not
-supported on macOS/ARM64**, so ASan on the development machine catches
-use-after-free and overflows but will not find leaks — the counters close that gap
-and add per-test granularity that neither tool provides.
-
-**Consequences.** A green macOS run is not sufficient evidence for a memory claim.
-Documentation and CI must state this.
+Linux CI is the gate for all memory claims (Valgrind against stock Chez, plus
+ASan/UBSan). macOS is best-effort, because **LeakSanitizer is not supported on
+macOS/ARM64** — ASan there finds use-after-free and overflows but not leaks. Debug
+allocation counters in the shim (§7.1) close that gap and add per-test granularity
+neither tool provides. See
+[ADR-0003](decisions/0003-linux-primary-memory-verification.md).
 
 ### 2.4 Windows deferred beyond v1
 
-**Decision.** v1 targets Linux and macOS. The C stays strictly portable (no
-POSIX-only APIs) and library-name/path resolution sits behind one abstraction, so
-Windows is additive later rather than a redesign.
+v1 targets Linux and macOS. The C stays strictly portable and path resolution sits
+behind one abstraction, so Windows is additive later rather than a redesign. Resolves
+the conflict between `AGENTS.md` and plan §2 in favor of the plan. See
+[ADR-0004](decisions/0004-defer-windows-support.md).
 
-**Rationale.** Resolves the conflict between `AGENTS.md` (macOS/Linux/Windows) and
-plan §2 (Linux and macOS initially) in favor of the plan. v1's risk is memory
-correctness, not platform breadth. Valgrind does not exist on Windows, so adding it
-would fork the verification story described in §2.3.
+### 2.5 CORRECTION: the parser must outlive rendering
 
-### 2.5 CORRECTION: the plan's parse sequence contains a use-after-free
+Plan §8.2 frees the parser before rendering. But `cmark_parser_free` calls
+`cmark_llist_free` on `parser->syntax_extensions`, which is exactly the list
+`cmark_render_html` receives — so the render path is a use-after-free whenever
+extensions are enabled, which is the default. The AST-copy path is unaffected, and
+that asymmetry is what lets the defect survive review.
 
-Plan §8.2 orders the lifecycle as: *…6. finish parsing → 7. free the parser →
-8. render or copy the AST → 9. free the root.*
-
-Verified in `cmark-gfm/src/blocks.c`:
-
-```c
-void cmark_parser_free(cmark_parser *parser) {
-  cmark_mem *mem = parser->mem;
-  cmark_parser_dispose(parser);
-  cmark_strbuf_free(&parser->curline);
-  cmark_strbuf_free(&parser->linebuf);
-  cmark_llist_free(parser->mem, parser->syntax_extensions);        /* <-- */
-  cmark_llist_free(parser->mem, parser->inline_syntax_extensions);
-  mem->free(parser);
-}
-```
-
-`cmark_parser_get_syntax_extensions` returns `parser->syntax_extensions`, the list
-freed above. The renderer signature is:
-
-```c
-char *cmark_render_html(cmark_node *root, int options, cmark_llist *extensions);
-```
-
-Therefore on the **render** path, step 7 frees the extension list that step 8 passes
-to the renderer — a dangling `cmark_llist *`, in the default configuration where
-extensions are enabled. The AST-copy path is unaffected, which is what makes this
-dangerous: one of the two paths sharing the sequence is correct, so the defect
-survives casual review and manifests only with extensions on.
-
-**Decision.** The parser outlives rendering. Teardown is strict reverse of
-acquisition, freeing the parser **last** (§5.2).
-
-Rejected alternative: constructing our own `cmark_llist` from
-`cmark_find_syntax_extension` results and freeing it with `cmark_llist_free`. This
-also works, but adds a container to own for no benefit; holding the parser
-marginally longer costs nothing.
-
-**Verified as correct in the plan**, and retained: `cmark_parser_finish` detaches
-the root (`parser->root = NULL`), so the root survives `cmark_parser_free`
-(plan §9.1 rule 5); and registered extensions are library-owned and must never be
-freed by the binding (plan §9.5).
+Teardown is therefore strict reverse of acquisition, freeing the parser last (§5.2).
+Evidence and the rejected alternative are in
+[ADR-0005](decisions/0005-parser-outlives-rendering.md).
 
 ### 2.6 CORRECTION: `dynamic-wind` alone is an insufficient guard
 
-Plan §9.4 proposes `dynamic-wind`. It is necessary but not sufficient. It handles
-non-local **escape** correctly — the after-thunk runs, so nothing leaks. It fails on
-**re-entry**: if a caller captures a continuation inside the scope body and
-reinvokes it after the scope has exited, the before-thunk runs again but cannot
-recreate the freed document, and the body then dereferences a stale pointer.
-Nulling the variable after freeing (which the plan does specify) prevents double
-*frees*, not use-after-free.
+Plan §9.4 proposes `dynamic-wind`. It handles non-local escape correctly but fails on
+re-entry: a continuation captured inside the scope and reinvoked after teardown
+dereferences a freed document. Nulling pointers after freeing prevents double *frees*,
+not use-after-free.
 
-**Decision.** Pair `dynamic-wind` with a liveness flag on a handle record, and route
-every native access through a checked accessor that raises when the handle is dead
-(§5.3). This converts a class of undefined behavior into an ordinary Scheme
-condition.
+`dynamic-wind` is therefore paired with a liveness flag and checked accessors (§5.3),
+converting the failure into a structured condition. See
+[ADR-0006](decisions/0006-liveness-flag-with-dynamic-wind.md).
 
 ### 2.7 Release staging
-
-**Decision.** Ship incrementally rather than as one v1.0:
 
 | Release | Milestones | Contains |
 |---|---|---|
@@ -171,13 +119,9 @@ condition.
 | 0.3 | M5 | SXML adapter |
 | 1.0 | M6 | Packaging, docs, release |
 
-**Rationale.** `markdown->html` alone already exercises every native ownership rule
-— parser, root, extension list, and renderer buffer — at the smallest possible
-Scheme surface area. This front-loads the hardest memory problem into the first
-deliverable, so AST copying is built on a foundation already proven under Valgrind
-rather than concurrently with it.
-
----
+`markdown->html` alone already exercises every native ownership rule, so the hardest
+memory problem is front-loaded into the smallest deliverable. See
+[ADR-0007](decisions/0007-incremental-release-staging.md).
 
 ## 3. Goals and non-goals
 
@@ -537,14 +481,6 @@ they can be designed around wrongly:
 If Chez's `string` foreign return type is shown to copy, decode UTF-8, and handle
 `NULL` safely, §5.4's explicit `uptr` conversion may be simplified. The design
 deliberately does not assume this.
-
-### 9.2 Decision-record split
-
-`AGENTS.md` places decision records in `.plans/decisions`. The decisions in §2 are
-currently inline. They can be split into individual ADRs if that convention is to be
-followed strictly.
-
----
 
 ## 10. References
 
