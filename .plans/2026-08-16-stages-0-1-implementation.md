@@ -467,7 +467,21 @@ chez --script spike/02-parse.ss \
   "$LIBDIR/libcmark-gfm.dylib" "$LIBDIR/libcmark-gfm-extensions.dylib"
 ```
 
-Expected: five `attach … rc=0` lines, an indented node-type tree containing `heading`, `table`, `table_row`, `table_cell`, `strikethrough`, `link` (from the autolink), `item`, and `html_block`, then `OK: parsed, traversed, freed`.
+Expected: five `attach … rc=1` lines, an indented node-type tree, then
+`OK: parsed, traversed, freed`.
+
+Note `rc=1`, not `0`. `cmark_parser_attach_syntax_extension` contains a single
+`return 1` and cannot fail or signal failure (`src/blocks.c`), so its result is
+not an error channel — the only real failure mode is
+`cmark_find_syntax_extension` returning NULL, which the script already checks.
+
+The tree should contain `heading`, `table`, `table_header`, `table_row`,
+`table_cell`, `strikethrough`, `link` (from the autolink), and `html_block`.
+Two names are easy to get wrong: header rows print as `table_header` (distinct
+from `table_row`), and task-list items print as **`tasklist`**, not `item` —
+`cmark_node_get_type_string` dispatches to the extension's own type-string
+function, and `tasklist.c` hardcodes that name. Stage 3's dispatch table needs
+a `tasklist` case separate from `item`.
 
 - [ ] **Step 3: Record the observed node-type names**
 
@@ -1683,6 +1697,9 @@ Create `src/cmark/gfm/private/scope.sls`:
                ;; established yet, so cleanup is this procedure's duty.
                (release! h)
                (raise (make-cmark-extension-unavailable name)))
+             ;; The return value is not an error channel:
+             ;; cmark_parser_attach_syntax_extension has a single `return 1`
+             ;; and cannot fail. The real failure mode is the NULL check above.
              (attach-extension p ext)))
          extension-names)
         (parser-feed p bytes (bytevector-length bytes))
