@@ -14,7 +14,7 @@
 ## Open questions
 
 - [x] Q1: How does Chez marshal `const char *`? (Task 3) — ANSWERED below
-- [ ] Q2: Is the ADR-0005 use-after-free detectable by our tooling? (Task 5)
+- [x] Q2: Is the ADR-0005 use-after-free detectable by our tooling? (Task 5) — CONFIRMED below
 
 ## Q0: loading
 
@@ -186,3 +186,104 @@ OK: parsed, traversed, freed
 **Determinism:** ran twice, byte-identical output both times, exit code `0` both times.
 
 **Conclusion:** all five GFM extensions (`autolink`, `strikethrough`, `table`, `tagfilter`, `tasklist`) attach successfully (`rc=1`, the only value this library version's `cmark_parser_attach_syntax_extension` can return), and a document exercising every one of them parses, traverses depth-first via `cmark_node_first_child`/`cmark_node_next`, and frees (root then parser, per ADR-0005) without error. Seven of the brief's eight predicted node-type strings appeared exactly as predicted; `item` did not appear at all in this run because every list item in the test document was a task-list checkbox item, which the tasklist extension unconditionally relabels `"tasklist"` at the `cmark_node_get_type_string` level. Stage 3's dispatch table must account for `"tasklist"` as distinct from `"item"`, and should not assume `"item"` is the only list-item-shaped type string it will ever see.
+
+## Q2: ADR-0005 use-after-free — CONFIRMED
+
+**Script:** `spike/03-uaf.ss` (definitions kept at top level throughout, per the Q0 body-syntax finding — no `define` follows an expression inside a `let`/lambda body). Parses a one-row GFM table (forces the renderer to consult the syntax-extension list) with the `table` extension attached, then renders under one of two argv-selected teardown orderings: `buggy` calls `cmark_parser_free` — which frees `parser->syntax_extensions` via `cmark_llist_free` — *before* calling `cmark_render_html` with that same now-dangling list; `correct` renders first and frees the parser last, per ADR-0005.
+
+**Step 1: build cmark-gfm with AddressSanitizer** (brief Step 1, verbatim flags):
+
+```bash
+cmake -S vendor/cmark-gfm -B build/asan \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_C_FLAGS="-fsanitize=address -fno-omit-frame-pointer -g" \
+  -DCMAKE_SHARED_LINKER_FLAGS="-fsanitize=address" \
+  -DCMARK_TESTS=OFF -DCMARK_STATIC=OFF
+cmake --build build/asan -j
+```
+
+**Deviation required to configure — recorded, not silently absorbed:** the vendored `CMakeLists.txt` declares `cmake_minimum_required(VERSION 3.0)`. CMake 4.3.3 (installed on this machine) hard-errors on that (`Compatibility with CMake < 3.5 has been removed from CMake`) rather than just warning. Added `-DCMAKE_POLICY_VERSION_MINIMUM=3.5` — CMake's own suggested workaround in its error text — to the configure invocation. This only changes how CMake interprets the vendored project's minimum-version policy floor; it does not touch `CMAKE_C_FLAGS`, `CMAKE_SHARED_LINKER_FLAGS`, or any target definition. With that flag, configure succeeded (one deprecation warning only) and `HAVE_FLAG_SANITIZE_ADDRESS` reported `Success`. Build completed in ~1s on this 8-core machine (not the "several minutes" the brief allows for — evidently fast on this hardware). Produced `build/asan/src/libcmark-gfm.dylib` and `build/asan/extensions/libcmark-gfm-extensions.dylib`. Confirmed genuinely instrumented via `otool -L`: both dylibs link `@rpath/libclang_rt.asan_osx_dynamic.dylib` as a direct dependency.
+
+**ASan runtime path** (brief Step 3, verbatim glob resolved with `ls | head -1`):
+
+```
+/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/../lib/clang/21.0.0/lib/darwin/libclang_rt.asan_osx_dynamic.dylib
+```
+
+No literal `*` remained. Confirmed with `file`/`stat` to be a real 4924256-byte Mach-O universal binary (arm64 slice present, matching the running machine) — this is the same runtime as the sibling `.../clang/21/...` path (`21.0.0` is a symlink to `21`), consistent with the brief's ambiguity note. **Gotcha found and worked around:** this machine's `ls` is aliased to `command ls --color` (unconditional color, not `--color=auto`), which injects ANSI escape codes into `ls` output even under `$(...)` command substitution. On the first attempt this silently corrupted the captured path — `file` and `stat` both reported "No such file or directory" on a path that contained no literal `*` and looked correct when echoed to a color-capable terminal. This is exactly the "looks resolved, is not" failure mode the brief's ambiguity note warns about, just from a different cause than the glob itself. Worked around by resolving with `command ls` (bypasses the alias) instead of bare `ls`.
+
+**Harness verification performed before trusting either run result** (per task requirement — a clean run is meaningless unless the harness is proven to be watching):
+- `chez` (`/opt/homebrew/bin/chez`, Cellar `10.4.1`) is codesigned `adhoc,linker-signed` — not a hardened-runtime/SIP-restricted binary — so `DYLD_INSERT_LIBRARIES` is not stripped at launch. Checked directly with `codesign -dv`, not assumed.
+- A diagnostic run with `DYLD_PRINT_LIBRARIES=1` added (in addition to the required env vars) showed the ASan runtime dylib loading, and both `libcmark-gfm` dylibs loading from full, hash-qualified paths under this repo's `build/asan/...` — not from `/opt/homebrew/Cellar/cmark-gfm/...`. No Homebrew/Cellar `libcmark-gfm` path appeared anywhere in the dyld trace.
+
+**Command run — correct ordering** (brief Step 3, verbatim):
+
+```bash
+DYLD_INSERT_LIBRARIES="$ASAN_LIB" ASAN_OPTIONS=detect_leaks=0 \
+  chez --script spike/03-uaf.ss \
+    build/asan/src/libcmark-gfm.dylib \
+    build/asan/extensions/libcmark-gfm-extensions.dylib correct
+```
+
+**Actual observed output** (verbatim; exit code `0`; stderr: 0 bytes, no sanitizer output of any kind):
+
+```
+<table>
+<thead>
+<tr>
+<th>a</th>
+<th>b</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>2</td>
+</tr>
+</tbody>
+</table>
+done: correct
+```
+
+**Command run — buggy ordering** (brief Step 4, verbatim):
+
+```bash
+DYLD_INSERT_LIBRARIES="$ASAN_LIB" ASAN_OPTIONS=detect_leaks=0 \
+  chez --script spike/03-uaf.ss \
+    build/asan/src/libcmark-gfm.dylib \
+    build/asan/extensions/libcmark-gfm-extensions.dylib buggy
+```
+
+**Actual observed output** — exit code `134` (SIGABRT — ASan aborts the process after reporting); stdout empty (the process aborted inside the C call, before control ever returned to the Scheme `printf`). First 23 lines of stderr, verbatim (covers the `heap-use-after-free` header and the complete freed-block trace through `cmark_llist_free` → `cmark_parser_free`, demonstrating `cmark_llist` involvement as required):
+
+```
+=================================================================
+==17019==ERROR: AddressSanitizer: heap-use-after-free on address 0x602000000398 at pc 0x0001087dcb7c bp 0x00016f1623d0 sp 0x00016f1623c8
+READ of size 8 at 0x602000000398 thread T0
+    #0 0x0001087dcb78 in cmark_render_html_with_mem html.c:481
+    #1 0x0001087dc958 in cmark_render_html html.c:469
+    #2 0x00010a272de0  (<unknown module>)
+    #3 0x000100d1f7ac in boot_call+0x28 (chez:arm64+0x1000837ac)
+    #4 0x000100d1fb7c in run_script+0x124 (chez:arm64+0x100083b7c)
+    #5 0x000100c9daa4 in main+0x7c4 (chez:arm64+0x100001aa4)
+    #6 0x000190083dfc in start+0x1b4c (dyld:arm64e+0x1fdfc)
+
+0x602000000398 is located 8 bytes inside of 16-byte region [0x602000000390,0x6020000003a0)
+freed by thread T0 here:
+    #0 0x0001015d5258 in free+0x7c (libclang_rt.asan_osx_dynamic.dylib:arm64e+0x41258)
+    #1 0x000108765604 in xfree cmark.c:36
+    #2 0x0001087ed948 in cmark_llist_free_full linked_list.c:31
+    #3 0x0001087ed97c in cmark_llist_free linked_list.c:36
+    #4 0x00010876e8f0 in cmark_parser_free blocks.c:164
+    #5 0x00010a271f9c  (<unknown module>)
+    #6 0x000100d1f7ac in boot_call+0x28 (chez:arm64+0x1000837ac)
+    #7 0x000100d1fb7c in run_script+0x124 (chez:arm64+0x100083b7c)
+    #8 0x000100c9daa4 in main+0x7c4 (chez:arm64+0x100001aa4)
+    #9 0x000190083dfc in start+0x1b4c (dyld:arm64e+0x1fdfc)
+```
+
+The remainder of the report (45 more lines, preserved verbatim in `.superpowers/sdd/task-5-report.md`) contains the "previously allocated by" stanza — `cmark_llist_append` (`linked_list.c:7`) called from `cmark_parser_attach_syntax_extension` (`blocks.c:104`) — and closes with `SUMMARY: AddressSanitizer: heap-use-after-free html.c:481 in cmark_render_html_with_mem` followed by the shadow-byte legend and `==17019==ABORTING`.
+
+**Determinism:** both orderings were run twice. `correct` produced byte-identical stdout and empty stderr both times (exit `0` both times). `buggy` crashed both times at the identical site — same `heap-use-after-free html.c:481 in cmark_render_html_with_mem` summary, same `cmark_parser_free blocks.c:164` in the freed-by trace, same exit code `134` — differing only in process id and ASLR-shifted addresses (`==17019==` vs `==18495==`), which is expected and does not affect the finding.
+
+**Conclusion:** the defect is real, and this project's ASan harness sees it. `cmark_render_html` (via `cmark_render_html_with_mem`, `html.c:481`) reads a heap block that was freed by `cmark_parser_free` → `cmark_llist_free` (`blocks.c:164` → `linked_list.c:36`); that same 16-byte block was originally allocated by `cmark_parser_attach_syntax_extension` → `cmark_llist_append` (`blocks.c:104` → `linked_list.c:7`) — i.e., it is a node of `parser->syntax_extensions`, exactly the list ADR-0005 identified as shared between `cmark_parser_free` and `cmark_render_html`. The `correct` ordering (render, then free) produced zero sanitizer output across the run. The `buggy` ordering (free, then render) reliably crashed with `heap-use-after-free` under ASan (exit code `134`) on every invocation. Both runs were confirmed, not assumed, to be exercising the ASan-instrumented `build/asan` libraries rather than stock Homebrew binaries. ADR-0005's teardown order (parser must outlive the render call) is therefore both necessary and — critically for every later memory-safety claim this project makes — detectable by the sanitizer harness this project actually uses.
