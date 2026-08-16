@@ -1,5 +1,6 @@
 ;; Stage 0 spike: prove load-shared-object and version reporting.
-;; Usage: chez --script spike/00-load.ss /abs/path/to/libcmark-gfm.dylib;;
+;; Usage: chez --script spike/00-load.ss /abs/path/to/libcmark-gfm.dylib
+;;
 ;; NOTE: every definition below sits at TOP LEVEL, not inside a `let`. Chez
 ;; rejects a `define` that follows an expression within a body ("invalid
 ;; context for definition"); at top level the interleaving is legal, and the

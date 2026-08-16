@@ -162,7 +162,8 @@ Create `spike/00-load.ss`:
 
 ```scheme
 ;; Stage 0 spike: prove load-shared-object and version reporting.
-;; Usage: chez --script spike/00-load.ss /abs/path/to/libcmark-gfm.dylib;;
+;; Usage: chez --script spike/00-load.ss /abs/path/to/libcmark-gfm.dylib
+;;
 ;; NOTE: every definition below sits at TOP LEVEL, not inside a `let`. Chez
 ;; rejects a `define` that follows an expression within a body ("invalid
 ;; context for definition"); at top level the interleaving is legal, and the
@@ -230,7 +231,8 @@ Create `spike/01-strings.ss`:
 ;;   (a) does the `string` return type COPY, or alias native memory?
 ;;   (b) does it decode UTF-8 correctly?
 ;;   (c) what happens when the C function returns NULL?
-;; Usage: chez --script spike/01-strings.ss /abs/path/to/libcmark-gfm.dylib;;
+;; Usage: chez --script spike/01-strings.ss /abs/path/to/libcmark-gfm.dylib
+;;
 ;; NOTE: every definition below sits at TOP LEVEL, not inside a `let`. Chez
 ;; rejects a `define` that follows an expression within a body ("invalid
 ;; context for definition"); at top level the interleaving is legal, and the
@@ -371,7 +373,8 @@ Create `spike/02-parse.ss`:
 
 ```scheme
 ;; Stage 0 spike: attach all five GFM extensions, parse, traverse, free.
-;; Usage: chez --script spike/02-parse.ss /abs/core.dylib /abs/extensions.dylib;;
+;; Usage: chez --script spike/02-parse.ss /abs/core.dylib /abs/extensions.dylib
+;;
 ;; NOTE: every definition below sits at TOP LEVEL, not inside a `let`. Chez
 ;; rejects a `define` that follows an expression within a body ("invalid
 ;; context for definition"); at top level the interleaving is legal, and the
@@ -515,7 +518,8 @@ Create `spike/03-uaf.ss`:
 ;; which is the SAME list cmark_render_html() receives. Freeing the parser
 ;; before rendering therefore hands the renderer a dangling list.
 ;;
-;; Usage: chez --script spike/03-uaf.ss <core.dylib> <ext.dylib> [buggy|correct];;
+;; Usage: chez --script spike/03-uaf.ss <core.dylib> <ext.dylib> [buggy|correct]
+;;
 ;; NOTE: every definition below sits at TOP LEVEL, not inside a `let`. Chez
 ;; rejects a `define` that follows an expression within a body ("invalid
 ;; context for definition"); at top level the interleaving is legal, and the
