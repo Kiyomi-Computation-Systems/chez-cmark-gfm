@@ -254,35 +254,78 @@ DYLD_INSERT_LIBRARIES="$ASAN_LIB" ASAN_OPTIONS=detect_leaks=0 \
     build/asan/extensions/libcmark-gfm-extensions.dylib buggy
 ```
 
-**Actual observed output** — exit code `134` (SIGABRT — ASan aborts the process after reporting); stdout empty (the process aborted inside the C call, before control ever returned to the Scheme `printf`). First 23 lines of stderr, verbatim (covers the `heap-use-after-free` header and the complete freed-block trace through `cmark_llist_free` → `cmark_parser_free`, demonstrating `cmark_llist` involvement as required):
+**Actual observed output** — exit code `134` (SIGABRT — ASan aborts the process after reporting); stdout empty (the process aborted inside the C call, before control ever returned to the Scheme `printf`). Complete stderr, verbatim, 68 lines — the `heap-use-after-free` header and READ trace, the freed-by trace through `cmark_llist_free` → `cmark_parser_free`, the previously-allocated-by trace through `cmark_llist_append` → `cmark_parser_attach_syntax_extension`, the `SUMMARY` line, and the shadow-byte legend:
 
 ```
 =================================================================
-==17019==ERROR: AddressSanitizer: heap-use-after-free on address 0x602000000398 at pc 0x0001087dcb7c bp 0x00016f1623d0 sp 0x00016f1623c8
+==28585==ERROR: AddressSanitizer: heap-use-after-free on address 0x602000000398 at pc 0x0001088d0b7c bp 0x00016f12a3d0 sp 0x00016f12a3c8
 READ of size 8 at 0x602000000398 thread T0
-    #0 0x0001087dcb78 in cmark_render_html_with_mem html.c:481
-    #1 0x0001087dc958 in cmark_render_html html.c:469
-    #2 0x00010a272de0  (<unknown module>)
-    #3 0x000100d1f7ac in boot_call+0x28 (chez:arm64+0x1000837ac)
-    #4 0x000100d1fb7c in run_script+0x124 (chez:arm64+0x100083b7c)
-    #5 0x000100c9daa4 in main+0x7c4 (chez:arm64+0x100001aa4)
+    #0 0x0001088d0b78 in cmark_render_html_with_mem html.c:481
+    #1 0x0001088d0958 in cmark_render_html html.c:469
+    #2 0x00010a366de0  (<unknown module>)
+    #3 0x000100d577ac in boot_call+0x28 (chez:arm64+0x1000837ac)
+    #4 0x000100d57b7c in run_script+0x124 (chez:arm64+0x100083b7c)
+    #5 0x000100cd5aa4 in main+0x7c4 (chez:arm64+0x100001aa4)
     #6 0x000190083dfc in start+0x1b4c (dyld:arm64e+0x1fdfc)
 
 0x602000000398 is located 8 bytes inside of 16-byte region [0x602000000390,0x6020000003a0)
 freed by thread T0 here:
-    #0 0x0001015d5258 in free+0x7c (libclang_rt.asan_osx_dynamic.dylib:arm64e+0x41258)
-    #1 0x000108765604 in xfree cmark.c:36
-    #2 0x0001087ed948 in cmark_llist_free_full linked_list.c:31
-    #3 0x0001087ed97c in cmark_llist_free linked_list.c:36
-    #4 0x00010876e8f0 in cmark_parser_free blocks.c:164
-    #5 0x00010a271f9c  (<unknown module>)
-    #6 0x000100d1f7ac in boot_call+0x28 (chez:arm64+0x1000837ac)
-    #7 0x000100d1fb7c in run_script+0x124 (chez:arm64+0x100083b7c)
-    #8 0x000100c9daa4 in main+0x7c4 (chez:arm64+0x100001aa4)
+    #0 0x0001017b5258 in free+0x7c (libclang_rt.asan_osx_dynamic.dylib:arm64e+0x41258)
+    #1 0x000108859604 in xfree cmark.c:36
+    #2 0x0001088e1948 in cmark_llist_free_full linked_list.c:31
+    #3 0x0001088e197c in cmark_llist_free linked_list.c:36
+    #4 0x0001088628f0 in cmark_parser_free blocks.c:164
+    #5 0x00010a365f9c  (<unknown module>)
+    #6 0x000100d577ac in boot_call+0x28 (chez:arm64+0x1000837ac)
+    #7 0x000100d57b7c in run_script+0x124 (chez:arm64+0x100083b7c)
+    #8 0x000100cd5aa4 in main+0x7c4 (chez:arm64+0x100001aa4)
     #9 0x000190083dfc in start+0x1b4c (dyld:arm64e+0x1fdfc)
-```
 
-The remainder of the report (45 more lines, preserved verbatim in `.superpowers/sdd/task-5-report.md`) contains the "previously allocated by" stanza — `cmark_llist_append` (`linked_list.c:7`) called from `cmark_parser_attach_syntax_extension` (`blocks.c:104`) — and closes with `SUMMARY: AddressSanitizer: heap-use-after-free html.c:481 in cmark_render_html_with_mem` followed by the shadow-byte legend and `==17019==ABORTING`.
+previously allocated by thread T0 here:
+    #0 0x0001017b5450 in calloc+0x80 (libclang_rt.asan_osx_dynamic.dylib:arm64e+0x41450)
+    #1 0x0001088594e8 in xcalloc cmark.c:18
+    #2 0x0001088e169c in cmark_llist_append linked_list.c:7
+    #3 0x0001088620d8 in cmark_parser_attach_syntax_extension blocks.c:104
+    #4 0x00010a364a4c  (<unknown module>)
+    #5 0x000100d577ac in boot_call+0x28 (chez:arm64+0x1000837ac)
+    #6 0x000100d57b7c in run_script+0x124 (chez:arm64+0x100083b7c)
+    #7 0x000100cd5aa4 in main+0x7c4 (chez:arm64+0x100001aa4)
+    #8 0x000190083dfc in start+0x1b4c (dyld:arm64e+0x1fdfc)
+
+SUMMARY: AddressSanitizer: heap-use-after-free html.c:481 in cmark_render_html_with_mem
+Shadow bytes around the buggy address:
+  0x602000000100: fa fa fd fd fa fa fd fa fa fa 06 fa fa fa fd fd
+  0x602000000180: fa fa 00 06 fa fa 00 00 fa fa fd fd fa fa 00 01
+  0x602000000200: fa fa 00 00 fa fa 00 00 fa fa fd fd fa fa 00 02
+  0x602000000280: fa fa fd fd fa fa 00 01 fa fa fd fd fa fa 00 00
+  0x602000000300: fa fa 00 00 fa fa 00 00 fa fa 00 00 fa fa 00 00
+=>0x602000000380: fa fa fd[fd]fa fa fd fd fa fa fd fa fa fa fd fa
+  0x602000000400: fa fa fd fd fa fa fd fa fa fa fd fa fa fa 02 fa
+  0x602000000480: fa fa 01 fa fa fa fd fd fa fa fd fa fa fa fd fa
+  0x602000000500: fa fa 01 fa fa fa fd fd fa fa fd fa fa fa fd fa
+  0x602000000580: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x602000000600: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+Shadow byte legend (one shadow byte represents 8 application bytes):
+  Addressable:           00
+  Partially addressable: 01 02 03 04 05 06 07 
+  Heap left redzone:       fa
+  Freed heap region:       fd
+  Stack left redzone:      f1
+  Stack mid redzone:       f2
+  Stack right redzone:     f3
+  Stack after return:      f5
+  Stack use after scope:   f8
+  Global redzone:          f9
+  Global init order:       f6
+  Poisoned by user:        f7
+  Container overflow:      fc
+  Array cookie:            ac
+  Intra object redzone:    bb
+  ASan internal:           fe
+  Left alloca redzone:     ca
+  Right alloca redzone:    cb
+==28585==ABORTING
+```
 
 **Determinism:** both orderings were run twice. `correct` produced byte-identical stdout and empty stderr both times (exit `0` both times). `buggy` crashed both times at the identical site — same `heap-use-after-free html.c:481 in cmark_render_html_with_mem` summary, same `cmark_parser_free blocks.c:164` in the freed-by trace, same exit code `134` — differing only in process id and ASLR-shifted addresses (`==17019==` vs `==18495==`), which is expected and does not affect the finding.
 
