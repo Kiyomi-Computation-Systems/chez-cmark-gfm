@@ -653,8 +653,8 @@ Create `Akku.manifest`:
 
 (akku-package ("chez-cmark-gfm" "0.1.0-alpha")
   (synopsis "CommonMark and GitHub Flavored Markdown for Chez Scheme")
-  (authors "Darren Newton")
-  (license "MIT")
+  (authors "Kiyomi Computation Systems LLC")
+  (license "BSD-3-Clause")
   (depends ("chez-srfi" "^0.0.0-akku.280")))
 ```
 
