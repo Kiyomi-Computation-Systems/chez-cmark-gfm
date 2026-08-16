@@ -512,7 +512,11 @@ This task validates two things at once: that the defect found during design revi
 Stock cmark is not instrumented, so preloading ASan cannot catch a read inside `cmark_render_html`. The library under test must itself be built with ASan.
 
 ```bash
+# CMake 4.x hard-rejects the vendored tree's `cmake_minimum_required(VERSION 3.0)`.
+# CMAKE_POLICY_VERSION_MINIMUM is CMake's own documented remedy and changes no
+# compile flags.
 cmake -S vendor/cmark-gfm -B build/asan \
+  -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
   -DCMAKE_BUILD_TYPE=Debug \
   -DCMAKE_C_FLAGS="-fsanitize=address -fno-omit-frame-pointer -g" \
   -DCMAKE_SHARED_LINKER_FLAGS="-fsanitize=address" \
@@ -618,7 +622,9 @@ Create `spike/03-uaf.ss`:
 ```bash
 # A bare assignment does NOT glob-expand, so resolve the wildcard with ls.
 # Several clang version directories may match; they are the same runtime.
-ASAN_LIB=$(ls $(dirname $(xcrun --find clang))/../lib/clang/*/lib/darwin/libclang_rt.asan_osx_dynamic.dylib | head -1)
+# `command ls` bypasses any --color alias; a coloured path carries ANSI escapes
+# that make the file impossible to open, while still looking correct when echoed.
+ASAN_LIB=$(command ls $(dirname $(xcrun --find clang))/../lib/clang/*/lib/darwin/libclang_rt.asan_osx_dynamic.dylib | head -1)
 echo "ASan runtime: $ASAN_LIB"   # must be a real path, with no '*' left in it
 
 DYLD_INSERT_LIBRARIES="$ASAN_LIB" ASAN_OPTIONS=detect_leaks=0 \
@@ -804,6 +810,7 @@ $(CONFIG_SLS): $(SHIM)
 vendor:
 	git submodule update --init --recursive
 	cmake -S $(VENDOR_DIR) -B $(VENDOR_BUILD) \
+	  -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
 	  -DCMAKE_BUILD_TYPE=Release -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
 	  -DCMARK_TESTS=OFF -DCMARK_SHARED=OFF -DCMARK_STATIC=ON
 	cmake --build $(VENDOR_BUILD) -j
@@ -834,7 +841,7 @@ else
 	@echo "macOS: ASan preload only; LeakSanitizer is unsupported on arm64."
 	@echo "Leak claims must come from Linux CI (ADR-0003)."
 	CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) \
-	  DYLD_INSERT_LIBRARIES="$$(ls $$(dirname $$(xcrun --find clang))/../lib/clang/*/lib/darwin/libclang_rt.asan_osx_dynamic.dylib | head -1)" \
+	  DYLD_INSERT_LIBRARIES="$$(command ls $$(dirname $$(xcrun --find clang))/../lib/clang/*/lib/darwin/libclang_rt.asan_osx_dynamic.dylib | head -1)" \
 	  ASAN_OPTIONS=detect_leaks=0 \
 	  sh -c 'for t in $(TESTS); do $(CHEZ) --program $$t || exit 1; done'
 endif
