@@ -51,6 +51,25 @@
   (guard (e ((cmark-shim-unavailable? e) (cmark-shim-unavailable-path e)))
     (raise (make-cmark-shim-unavailable "/nope/libchezcmarkgfm.dylib"))))
 
+;; Every condition must also be catchable as the base type, so a caller can
+;; choose its granularity. Without these, deriving one of them from &error
+;; directly -- a plausible copy-paste slip -- would break no test.
+(test-assert "dead-document is a cmark-error"
+  (guard (e ((cmark-error? e) #t) (#t #f))
+    (raise (make-cmark-dead-document))))
+
+(test-assert "extension-unavailable is a cmark-error"
+  (guard (e ((cmark-error? e) #t) (#t #f))
+    (raise (make-cmark-extension-unavailable "table"))))
+
+(test-assert "invalid-input is a cmark-error"
+  (guard (e ((cmark-error? e) #t) (#t #f))
+    (raise (make-cmark-invalid-input 'embedded-nul))))
+
+(test-assert "shim-unavailable is a cmark-error"
+  (guard (e ((cmark-error? e) #t) (#t #f))
+    (raise (make-cmark-shim-unavailable "/nope/libchezcmarkgfm.dylib"))))
+
 (test-end "conditions")
 
 (exit (if (zero? (test-runner-fail-count runner)) 0 1))
