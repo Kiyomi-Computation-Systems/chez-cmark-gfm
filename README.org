@@ -1,1 +1,2 @@
-* chez-cmark-gfm: CommonMark GFM for Chez Sceme
+* chez-cmark-gfm
+** CommonMark GFM for Chez Sceme
