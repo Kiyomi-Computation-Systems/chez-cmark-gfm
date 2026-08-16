@@ -13,7 +13,7 @@
 
 ## Open questions
 
-- [ ] Q1: How does Chez marshal `const char *`? (Task 3)
+- [x] Q1: How does Chez marshal `const char *`? (Task 3) — ANSWERED below
 - [ ] Q2: Is the ADR-0005 use-after-free detectable by our tooling? (Task 5)
 
 ## Q0: loading
