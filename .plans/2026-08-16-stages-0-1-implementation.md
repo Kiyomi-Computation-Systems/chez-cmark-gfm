@@ -616,8 +616,12 @@ Create `spike/03-uaf.ss`:
 - [ ] **Step 3: Run the correct ordering under ASan — expect clean**
 
 ```bash
-ASAN_LIB=$(dirname $(xcrun --find clang))/../lib/clang/*/lib/darwin/libclang_rt.asan_osx_dynamic.dylib
-DYLD_INSERT_LIBRARIES=$ASAN_LIB ASAN_OPTIONS=detect_leaks=0 \
+# A bare assignment does NOT glob-expand, so resolve the wildcard with ls.
+# Several clang version directories may match; they are the same runtime.
+ASAN_LIB=$(ls $(dirname $(xcrun --find clang))/../lib/clang/*/lib/darwin/libclang_rt.asan_osx_dynamic.dylib | head -1)
+echo "ASan runtime: $ASAN_LIB"   # must be a real path, with no '*' left in it
+
+DYLD_INSERT_LIBRARIES="$ASAN_LIB" ASAN_OPTIONS=detect_leaks=0 \
   chez --script spike/03-uaf.ss \
     build/asan/src/libcmark-gfm.dylib \
     build/asan/extensions/libcmark-gfm-extensions.dylib correct
@@ -628,7 +632,7 @@ Expected: an HTML table, then `done: correct`, with no sanitizer output.
 - [ ] **Step 4: Run the buggy ordering under ASan — expect a report**
 
 ```bash
-DYLD_INSERT_LIBRARIES=$ASAN_LIB ASAN_OPTIONS=detect_leaks=0 \
+DYLD_INSERT_LIBRARIES="$ASAN_LIB" ASAN_OPTIONS=detect_leaks=0 \
   chez --script spike/03-uaf.ss \
     build/asan/src/libcmark-gfm.dylib \
     build/asan/extensions/libcmark-gfm-extensions.dylib buggy
@@ -830,7 +834,7 @@ else
 	@echo "macOS: ASan preload only; LeakSanitizer is unsupported on arm64."
 	@echo "Leak claims must come from Linux CI (ADR-0003)."
 	CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) \
-	  DYLD_INSERT_LIBRARIES=$$(dirname $$(xcrun --find clang))/../lib/clang/*/lib/darwin/libclang_rt.asan_osx_dynamic.dylib \
+	  DYLD_INSERT_LIBRARIES="$$(ls $$(dirname $$(xcrun --find clang))/../lib/clang/*/lib/darwin/libclang_rt.asan_osx_dynamic.dylib | head -1)" \
 	  ASAN_OPTIONS=detect_leaks=0 \
 	  sh -c 'for t in $(TESTS); do $(CHEZ) --program $$t || exit 1; done'
 endif
