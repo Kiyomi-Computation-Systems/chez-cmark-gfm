@@ -1098,10 +1098,9 @@ Create `tests/test-conditions.sps`:
 
 ```scheme
 #!r6rs
-(import (rnrs)
-        (srfi :64)
-        (only (chezscheme) exit)
-        (cmark gfm private conditions))
+(import (rnrs)          ; note: (rnrs) already exports `exit` via
+        (srfi :64)      ; (rnrs programs) -- importing it from
+        (cmark gfm private conditions))   ; (chezscheme) too is a conflict
 
 ;; SRFI-64's default runner does not set a process exit code, so a failing
 ;; suite would still exit 0 and `make test` would report success. Hold the
@@ -1266,10 +1265,9 @@ Create `tests/test-native.sps`:
 
 ```scheme
 #!r6rs
-(import (rnrs)
-        (srfi :64)
-        (only (chezscheme) exit)
-        (cmark gfm private native))
+(import (rnrs)          ; note: (rnrs) already exports `exit` via
+        (srfi :64)      ; (rnrs programs) -- importing it from
+        (cmark gfm private native))   ; (chezscheme) too is a conflict
 
 ;; SRFI-64's default runner does not set a process exit code, so a failing
 ;; suite would still exit 0 and `make test` would report success. Hold the
@@ -1523,7 +1521,7 @@ Create `tests/test-lifecycle.sps`:
 #!r6rs
 (import (rnrs)
         (srfi :64)
-        (only (chezscheme) call/1cc collect exit)
+        (only (chezscheme) call/1cc collect)  ; NOT exit: (rnrs) exports it
         (cmark gfm private native)
         (cmark gfm private conditions)
         (cmark gfm private scope))
