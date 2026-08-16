@@ -1,166 +1,317 @@
-# Project Plan: Chez Scheme `cmark-gfm` to SXML Documentation Pipeline
+# Project Plan: A `cmark-gfm` Library for Chez Scheme
 
 ## 1. Summary
 
-Build a lightweight documentation toolchain for Chez Scheme that:
+Build a focused, production-quality Chez Scheme binding for `cmark-gfm`. The library will provide:
 
-1. Parses CommonMark and GitHub Flavored Markdown with `cmark-gfm`.
-2. Traverses the native `cmark-gfm` abstract syntax tree (AST) from Chez Scheme.
-3. Converts the AST directly into Scheme-owned SXML/SHTML.
-4. Applies Scheme-native transformations such as heading IDs, navigation, tables of contents, link rewriting, and page templates.
-5. Serializes the final SXML/SHTML to HTML with `wak-htmlprag`.
+- CommonMark and GitHub Flavored Markdown parsing;
+- safe direct rendering to HTML and other formats supported by `cmark-gfm`;
+- a fully Scheme-owned AST for inspection and transformation;
+- an optional AST-to-SXML adapter;
+- explicit parser options and GFM extension selection;
+- robust native-memory ownership and cleanup;
+- safe defaults for raw HTML and unsafe links;
+- reproducible packaging and compatibility checks.
 
-The preferred pipeline is:
+The core project is a Markdown library, not a documentation generator. Page templates, navigation, site manifests, link checking, output-directory management, and static-site orchestration are outside its scope.
 
 ```text
-Markdown source
-    |
-    v
-cmark-gfm parser
-    |
-    v
-native cmark AST
-    |
-    v
-Chez AST-to-SXML converter
-    |
-    +-- security policy
-    +-- heading IDs and anchors
-    +-- table of contents
-    +-- link rewriting
-    +-- navigation and page template
-    |
-    v
-wak-htmlprag serializer
-    |
-    v
-static HTML site
+                         +--> cmark-gfm HTML renderer --> HTML string
+                         |
+Markdown --> cmark-gfm AST
+                         |
+                         +--> copy to Scheme AST --> caller transformations
+                                                   |
+                                                   +--> optional SXML adapter
 ```
-
-This avoids the less desirable Markdown -> HTML -> HTML parser -> SXML round trip.
 
 ## 2. Goals
 
-- Support CommonMark plus the standard GFM extensions:
-  - autolinks;
-  - strikethrough;
-  - tables;
-  - tag filtering;
-  - task-list items.
-- Expose a small, stable Chez API rather than the entire `cmark-gfm` C API.
-- Produce ordinary SXML/SHTML that downstream Scheme code can inspect and transform.
-- Keep all native AST ownership inside a single conversion call in the first release.
-- Be safe by default when processing untrusted or accidentally hostile Markdown.
-- Generate a small static documentation site without requiring a larger site generator.
-- Package the libraries so that they can be installed reproducibly, preferably through Akku.
+- Present an idiomatic Chez Scheme API rather than a thin collection of raw foreign procedures.
+- Support the standard GFM extensions:
+  - `autolink`;
+  - `strikethrough`;
+  - `table`;
+  - `tagfilter`;
+  - `tasklist`.
+- Support direct rendering through `cmark-gfm`'s native renderers.
+- Copy parsed documents into an implementation-independent Scheme AST.
+- Provide source positions when supplied reliably by `cmark-gfm`.
+- Keep native pointers private in the default public API.
+- Prevent leaks, double frees, dangling pointers, and use-after-free behavior.
+- Be safe by default when rendering Markdown to HTML.
+- Make unsafe behavior deliberate, named, and difficult to enable accidentally.
+- Package the library for reproducible use, preferably through Akku.
+- Test against supported Chez and `cmark-gfm` versions on Linux and macOS initially.
 
 ## 3. Non-goals for Version 1
 
-- A general-purpose binding for every `cmark-gfm` mutation API.
-- Editing Markdown by modifying the native AST and rendering it back to Markdown.
-- A long-lived Chez wrapper around individual native AST nodes.
-- JavaScript-powered search or client-side rendering.
-- Built-in syntax highlighting. Version 1 will emit language classes that an external highlighter or CSS can use.
-- Full compatibility with every GitHub.com post-processing behavior. `cmark-gfm` implements the documented GFM syntax, while GitHub applies additional processing and sanitization on its service.
-- Footnotes, YAML front matter, alerts/admonitions, or arbitrary Markdown plugins unless they are added as explicitly designed extensions later.
+- A full documentation or static-site pipeline.
+- Templating, navigation, tables of contents, or page manifests.
+- A binding for every internal or experimental `cmark-gfm` function.
+- Loading arbitrary third-party cmark plugins at runtime.
+- Exposing mutable native AST nodes as ordinary long-lived Scheme objects.
+- Converting a modified Scheme AST back into a native cmark AST.
+- Providing a general HTML sanitizer.
+- Syntax highlighting.
+- Defining syntax beyond what the selected `cmark-gfm` version supports.
+- Emulating GitHub.com post-processing that is not part of the published GFM specification.
 
-## 4. Proposed Package Structure
+## 4. Design Principles
 
-Use separate libraries so that the native binding, semantic conversion, and site builder remain independently testable.
+### 4.1 Layer the library
+
+Separate the package into four conceptual layers:
+
+1. A small C compatibility shim.
+2. Private Chez foreign-function bindings.
+3. A high-level parser, renderer, and Scheme AST API.
+4. An optional SXML interoperability library.
+
+### 4.2 Prefer Scheme-owned results
+
+Public parsing operations should return data owned by Chez. Native node and string pointers must not escape the dynamic extent in which the cmark document is alive.
+
+### 4.3 Use named options
+
+Callers should select options with symbols, records, or keyword-like arguments, not cmark bit masks. Numeric constants belong in the private native layer.
+
+### 4.4 Preserve parsing semantics; secure rendering separately
+
+The Scheme AST should faithfully represent what was parsed, including raw HTML and unsafe-looking URLs. It must be documented as untrusted structured input.
+
+Rendering APIs must apply a security policy:
+
+- native HTML rendering uses cmark's safe defaults;
+- SXML conversion escapes or rejects raw HTML by default and validates URLs;
+- unsafe rendering requires an explicit option.
+
+### 4.5 Fail clearly
+
+Library-loading problems, unsupported extensions, invalid options, resource-limit failures, and native errors should become structured Scheme conditions rather than crashes or vague foreign-interface errors.
+
+## 5. Proposed Package Structure
 
 ```text
 chez-cmark-gfm/
 ├── Akku.manifest
+├── Akku.lock
 ├── Makefile
 ├── README.md
 ├── LICENSE
 ├── src/
 │   ├── cmark-gfm-shim.c
 │   ├── cmark-gfm-shim.h
-│   ├── cmark/
-│   │   ├── gfm.sls
-│   │   ├── gfm/
-│   │   │   ├── native.sls
-│   │   │   ├── sxml.sls
-│   │   │   ├── security.sls
-│   │   │   └── transform.sls
-│   └── docs/
-│       ├── builder.sls
-│       ├── manifest.sls
-│       └── template.sls
+│   └── cmark/
+│       ├── gfm.sls
+│       └── gfm/
+│           ├── ast.sls
+│           ├── options.sls
+│           ├── render.sls
+│           ├── sxml.sls
+│           └── private/
+│               ├── native.sls
+│               ├── convert.sls
+│               └── conditions.sls
 ├── tests/
 │   ├── run.sps
 │   ├── fixtures/
 │   └── expected/
 └── examples/
-    ├── convert-file.sps
-    └── build-site.sps
+    ├── render-html.sps
+    ├── inspect-ast.sps
+    └── convert-sxml.sps
 ```
 
-Suggested public libraries:
+Suggested libraries:
 
-- `(cmark gfm)` — high-level Markdown parsing configuration.
-- `(cmark gfm sxml)` — safe one-shot Markdown-to-SXML conversion.
-- `(cmark gfm transform)` — heading, link, and table-of-contents transforms.
-- `(docs builder)` — page manifest, navigation, templating, and static-site output.
+- `(cmark gfm)` — primary convenient API.
+- `(cmark gfm ast)` — Scheme AST predicates, constructors, and accessors.
+- `(cmark gfm options)` — immutable option records and validation.
+- `(cmark gfm render)` — direct native renderers.
+- `(cmark gfm sxml)` — optional safe conversion from the Scheme AST to SXML.
+- `(cmark gfm private native)` — private FFI declarations; not a supported API.
 
-Keep `(cmark gfm native)` private or clearly marked unstable.
+The SXML library should not require `wak-htmlprag`. It should only produce ordinary SXML. Callers may choose any compatible serializer.
 
-## 5. Public Scheme API
+## 6. Public API
 
-Start with a narrow API that returns only Scheme-owned data:
+### 6.1 Version and capability inspection
 
 ```scheme
-(markdown->sxml markdown options)       ; string -> SXML
-(markdown-file->sxml pathname options) ; file -> SXML
+(cmark-gfm-version)              ; runtime native version string or record
+(cmark-gfm-version-compatible?)
+(cmark-gfm-available-extensions) ; list of symbols
+```
 
-(default-markdown-options)
-(make-markdown-options
+Check native compatibility when the library initializes. Report both the version expected by the compiled shim and the version loaded at runtime.
+
+### 6.2 Options
+
+```scheme
+(make-cmark-options
   extensions:
-  raw-html-policy:
-  allowed-url-schemes:
+  validate-utf8?:
+  smart-punctuation?:
+  hardbreaks?:
+  nobreaks?:
+  source-positions?:
+  unsafe-html?:
   max-input-bytes:
   max-nodes:
   max-depth:)
 
-(add-heading-ids sxml)
-(extract-table-of-contents sxml)
-(rewrite-document-links sxml mapping)
-(render-page metadata navigation body-sxml)
-(build-documentation-site manifest output-directory)
+(default-cmark-options)
 ```
 
 Recommended defaults:
 
 ```scheme
-extensions:          '(autolink strikethrough table tagfilter tasklist)
-raw-html-policy:     'escape
-allowed-url-schemes: '(http https mailto)
+extensions:         '(autolink strikethrough table tagfilter tasklist)
+validate-utf8?:     #t
+smart-punctuation?: #f
+hardbreaks?:        #f
+nobreaks?:          #f
+source-positions?:  #t
+unsafe-html?:       #f
 ```
 
-Relative URLs and fragment-only URLs should be allowed after validation.
+Reject contradictory settings such as enabling both `hardbreaks?` and `nobreaks?`.
 
-Do not expose native `cmark_node*` pointers through the public API in version 1. This makes memory ownership much easier to reason about and prevents use-after-free bugs in client code.
+Do not expose `CMARK_OPT_UNSAFE` under a vague name such as `safe?`. Use the explicit positive-risk name `unsafe-html?` and default it to `#f`.
 
-## 6. Native Binding Design
+### 6.3 Direct rendering
 
-### 6.1 Why use a small C shim
+Version 1 should expose:
 
-Chez can bind the C API directly with `foreign-procedure`, but a small C shim will:
+```scheme
+(markdown->html markdown options)       ; HTML fragment
+(markdown->commonmark markdown options)
+(markdown->plaintext markdown options)
+(markdown->xml markdown options)        ; cmark AST XML
+```
 
-- hide enum values and small ABI differences;
-- centralize extension registration and parser setup;
-- normalize null pointers and error reporting;
-- provide length-aware UTF-8 boundaries;
-- reduce the number of native calls made by Scheme;
-- make AddressSanitizer and native leak testing easier;
-- prevent Scheme code from depending on private C structs.
+Add these if their behavior and extension handling are verified:
 
-The shim must use only documented public headers and functions.
+```scheme
+(markdown->latex markdown options)
+(markdown->man markdown options)
+```
 
-### 6.2 Required parser functions
+Width-sensitive renderers should accept a validated width option or separate argument.
 
-The implementation will use or wrap:
+Direct rendering should parse and render within one native ownership scope, copy the result into a Chez string, and free every native allocation before returning.
+
+### 6.4 Scheme AST parsing
+
+```scheme
+(markdown->ast markdown options) ; returns a Scheme-owned document node
+```
+
+The result must contain no native pointers. It remains valid after all cmark objects have been freed.
+
+### 6.5 SXML interoperability
+
+```scheme
+(markdown-ast->sxml ast sxml-options)
+(markdown->sxml markdown cmark-options sxml-options)
+```
+
+The convenience operation may parse directly and then invoke `markdown-ast->sxml`. The SXML adapter must be optional and kept separate from the core AST API.
+
+## 7. Scheme AST Model
+
+### 7.1 Generic immutable node
+
+Use a generic immutable record so extension node types do not require changes to the base record definition:
+
+```scheme
+(make-markdown-node type properties children source-position)
+(markdown-node? value)
+(markdown-node-type node)        ; symbol
+(markdown-node-properties node)  ; immutable alist or mapping
+(markdown-node-children node)    ; list or vector
+(markdown-node-source node)      ; source-position record or #f
+```
+
+Provide functional update helpers rather than mutable fields:
+
+```scheme
+(markdown-node-with-properties node properties)
+(markdown-node-with-children node children)
+(markdown-node-map proc node)
+(markdown-node-fold proc seed node)
+```
+
+### 7.2 Source positions
+
+```scheme
+(make-source-position start-line start-column end-line end-column)
+```
+
+Source positions are diagnostic metadata, not security boundaries. Some `cmark-gfm` source positions for tables and inline constructs have known limitations.
+
+### 7.3 Node types and properties
+
+Document at least these types:
+
+| Type | Important properties |
+|---|---|
+| `document` | none |
+| `paragraph` | none |
+| `heading` | `level` |
+| `text` | `literal` |
+| `emph` | none |
+| `strong` | none |
+| `strikethrough` | none |
+| `blockquote` | none |
+| `list` | `kind`, `start`, `tight?`, `delimiter` |
+| `item` | `task?`, `checked?`, `index` |
+| `link` | `url`, `title` |
+| `image` | `url`, `title` |
+| `code` | `literal` |
+| `code-block` | `literal`, `fence-info` |
+| `thematic-break` | none |
+| `softbreak` | none |
+| `linebreak` | none |
+| `html-inline` | `literal` |
+| `html-block` | `literal` |
+| `table` | `columns`, `alignments` |
+| `table-row` | `header?` |
+| `table-cell` | alignment if needed |
+
+Autolinks normally become ordinary link nodes. Task-list state is attached to list-item metadata.
+
+### 7.4 Unknown extension nodes
+
+Do not silently discard unknown native node types. Either:
+
+- preserve them as `(extension ...)` nodes with the native type string and copied properties; or
+- raise an `unsupported-node-type` condition in strict mode.
+
+Default to preservation when it can be done without losing children or literals.
+
+## 8. Native Binding and C Shim
+
+### 8.1 Responsibilities of the C shim
+
+The shim should:
+
+- include the public `cmark-gfm` and core-extension headers;
+- expose compile-time and runtime version information;
+- register bundled GFM extensions once;
+- normalize extension lookup and attachment;
+- centralize option-bit construction where useful;
+- expose a correct function for freeing renderer buffers;
+- avoid exposing C structs by value;
+- provide stable, Chez-friendly functions for nullable strings and pointers;
+- return explicit status codes and error messages for initialization failures.
+
+The shim must not duplicate the parser or renderer.
+
+### 8.2 Required parser lifecycle
+
+Wrap or bind:
 
 ```c
 cmark_gfm_core_extensions_ensure_registered
@@ -173,20 +324,21 @@ cmark_parser_free
 cmark_node_free
 ```
 
-The parser flow is:
+Parser sequence:
 
-1. Register the bundled GFM extensions once per process.
-2. Create a parser with validated options.
-3. Find and attach the selected extensions by name.
-4. Feed the complete UTF-8 document or feed it incrementally.
-5. Finish parsing and obtain the document root.
-6. Free the parser.
-7. Traverse and copy the document into Scheme-owned SXML.
-8. Free the document root exactly once.
+1. Enforce the Scheme-side input-size limit.
+2. Convert the Chez string to a UTF-8 byte buffer.
+3. Create the parser.
+4. Attach each requested extension.
+5. Feed the buffer with its byte length.
+6. Finish parsing to obtain the document root.
+7. Free the parser.
+8. Render or copy the AST.
+9. Free the root exactly once.
 
-### 6.3 Required traversal and accessor functions
+### 8.3 Required traversal
 
-Core traversal:
+Use:
 
 ```c
 cmark_node_first_child
@@ -195,13 +347,15 @@ cmark_node_get_type_string
 cmark_node_get_literal
 ```
 
-Semantic properties:
+Use these semantic accessors as applicable:
 
 ```c
 cmark_node_get_heading_level
 cmark_node_get_list_type
+cmark_node_get_list_delim
 cmark_node_get_list_start
 cmark_node_get_list_tight
+cmark_node_get_item_index
 cmark_node_get_fence_info
 cmark_node_get_url
 cmark_node_get_title
@@ -211,7 +365,7 @@ cmark_node_get_end_line
 cmark_node_get_end_column
 ```
 
-GFM-specific properties:
+Use the extension accessors:
 
 ```c
 cmark_gfm_extensions_get_table_columns
@@ -220,184 +374,53 @@ cmark_gfm_extensions_get_table_row_is_header
 cmark_gfm_extensions_get_tasklist_item_checked
 ```
 
-Use `cmark_node_get_type_string` for dispatch, including extension node types. This avoids duplicating native enum values in Scheme and handles GFM node types such as tables and strikethrough more naturally.
+Dispatch on `cmark_node_get_type_string` instead of duplicating cmark's numeric node-type enum in the public Scheme API.
 
-### 6.4 Recursive traversal versus native iterator
+### 8.4 Rendering APIs
 
-Use child/sibling recursion for the first implementation because it maps directly to nested SXML. Enforce a maximum nesting depth before recursing further.
+Use the documented native renderers:
 
-The native `cmark_iter` API remains an alternative for later transformations or for replacing recursion if deeply nested inputs prove inconvenient.
-
-## 7. AST-to-SXML Mapping
-
-Initial mapping:
-
-| cmark type | SXML/SHTML result | Notes |
-|---|---|---|
-| `document` | `(*TOP* ...)` | May also return its child sequence internally. |
-| `paragraph` | `(p ...)` | Tight-list paragraph handling may be applied during list conversion. |
-| `heading` | `(h1 ...)` through `(h6 ...)` | Add a stable, unique `id`. |
-| `text` | Scheme string | Serializer must escape it. |
-| `emph` | `(em ...)` | |
-| `strong` | `(strong ...)` | |
-| `strikethrough` | `(del ...)` | GFM extension. |
-| `blockquote` | `(blockquote ...)` | |
-| `list` | `(ul ...)` or `(ol ...)` | Preserve ordered-list start when non-default. |
-| `item` | `(li ...)` | Add task-list checkbox when applicable. |
-| `link` | `(a (@ (href ...)) ...)` | URL must pass the security policy. |
-| `image` | `(img (@ (src ...) (alt ...)))` | URL must pass the security policy. |
-| `code` | `(code "...")` | Inline code. |
-| `code_block` | `(pre (code ...))` | Sanitize the fence info before creating a CSS class. |
-| `thematic_break` | `(hr)` | |
-| `softbreak` | newline or single space | Make this configurable if necessary. |
-| `linebreak` | `(br)` | |
-| `table` | `(table ...)` | Preserve alignment as controlled classes or styles. |
-| `table_row` | `(tr ...)` | Use extension metadata to identify header rows. |
-| `table_cell` | `(th ...)` or `(td ...)` | Depends on parent row metadata. |
-| `html_inline` | escaped text, rejected node, or parsed trusted HTML | Default is escaped text. |
-| `html_block` | escaped text, rejected node, or parsed trusted HTML | Default is escaped text. |
-
-Autolinks normally arrive as ordinary link nodes. Task-list state is metadata on a list item rather than necessarily a separate node type.
-
-### 7.1 Heading identifiers
-
-Heading IDs should be generated after AST conversion so that the policy is entirely under Scheme control.
-
-Requirements:
-
-- deterministic for the same heading text;
-- URL-safe;
-- unique within a page;
-- stable when unrelated headings are inserted;
-- able to preserve an explicit future heading-ID extension if one is introduced.
-
-For duplicates, append a suffix such as `-2`, `-3`, and so on.
-
-### 7.2 Code-fence language classes
-
-For a fence such as:
-
-````markdown
-```scheme
-(display "hello")
-```
-````
-
-emit:
-
-```scheme
-(pre
-  (code (@ (class "language-scheme"))
-        "(display \"hello\")\n"))
+```c
+cmark_render_html
+cmark_render_xml
+cmark_render_commonmark
+cmark_render_plaintext
+cmark_render_latex
+cmark_render_man
 ```
 
-Only accept a conservative language-token character set, such as ASCII letters, digits, `_`, `-`, and `+`. Do not copy arbitrary fence metadata into an HTML attribute.
+The HTML renderer needs the list of attached syntax extensions so extension nodes render correctly. The binding must retain or reconstruct the extension list for rendering within the native document's lifetime.
 
-## 8. Security Design
+Every renderer returns a native buffer that the caller must free. The C shim should provide one unambiguous release operation using the same allocator that created the buffer.
 
-### 8.1 Threat model
+## 9. Memory Management
 
-The tool will often process trusted files committed to the same repository, but it must remain safe if Markdown comes from an external contributor, downloaded package, generated input, or compromised dependency.
+### 9.1 Ownership rules
 
-Threats include:
+For a parsed document:
 
-- cross-site scripting through raw HTML;
-- `javascript:`, `data:`, `vbscript:`, or `file:` URLs;
-- malicious image sources;
-- attribute injection through code-fence metadata or generated IDs;
-- resource exhaustion through huge or pathologically nested input;
-- unsafe output paths escaping the build directory;
-- symlink surprises during site generation;
-- incorrect assumptions that cmark's HTML renderer has sanitized a custom SXML rendering.
+1. Chez owns the original Scheme string.
+2. The FFI layer creates or pins an explicit UTF-8 representation for the call.
+3. The parser owns parsing state until `cmark_parser_free`.
+4. `cmark_parser_finish` returns a root node that owns its entire descendant tree.
+5. The parser can be freed after finishing; the root remains valid.
+6. Node pointers and strings returned by node accessors are borrowed from the root.
+7. The AST converter copies all required values into Chez-owned objects.
+8. `cmark_node_free(root)` releases the root and all descendants exactly once.
+9. No native node or borrowed string survives the root's lifetime.
 
-### 8.2 Critical rule: custom rendering owns sanitization
+For direct rendering:
 
-The project will consume the AST and perform its own SXML rendering. Therefore, the safety behavior of `cmark-gfm`'s built-in HTML renderer does not automatically protect the generated output.
-
-In particular:
-
-- `CMARK_OPT_UNSAFE` and the built-in renderer's raw-HTML suppression are not a substitute for a custom SXML security policy.
-- The GFM `tagfilter` extension alone must not be treated as a complete sanitizer for custom rendering.
-- All text and attribute values must pass through SXML serialization or explicit escaping; never concatenate untrusted strings into HTML.
-
-### 8.3 Raw HTML policy
-
-Support three explicit policies:
-
-- `'escape` — default; emit raw HTML nodes as visible text.
-- `'reject` — fail conversion with a source position and explanatory condition.
-- `'trusted` — allow raw HTML only for explicitly trusted project documentation.
-
-For `'trusted`, either parse the fragment with `wak-htmlprag` and inspect the resulting SHTML or deliberately emit it through a separately named unsafe path. Do not silently treat ordinary strings as raw markup.
-
-Even trusted mode should reject or strip dangerous elements and attributes if the resulting site can include contributions from people who are not fully trusted.
-
-### 8.4 URL policy
-
-Apply validation to every link and image URL before placing it in an SXML attribute.
-
-Default rules:
-
-- allow relative URLs;
-- allow fragment-only references;
-- allow `http`, `https`, and `mailto` schemes;
-- reject `javascript`, `vbscript`, `data`, and `file` schemes;
-- compare schemes case-insensitively;
-- trim or reject leading control characters and whitespace;
-- reject embedded NUL characters;
-- normalize local `.md` links to the corresponding `.html` output only after validation;
-- do not add `target="_blank"` by default;
-- if external links later use `target="_blank"`, also add `rel="noopener noreferrer"`.
-
-Images may use a stricter policy than links. Data URIs should remain disabled by default.
-
-### 8.5 Output-path policy
-
-The site builder must:
-
-- resolve every output path beneath one explicit build directory;
-- reject absolute output paths from the page manifest;
-- reject `..` traversal that escapes the build directory;
-- avoid following unexpected symlinks when overwriting generated pages;
-- write to a temporary file and rename it into place when practical;
-- never delete directories outside the resolved build root.
-
-### 8.6 Resource limits
-
-Provide configurable limits, with conservative defaults:
-
-- maximum input bytes per Markdown file;
-- maximum number of AST nodes converted;
-- maximum AST/SXML nesting depth;
-- maximum output size, if practical;
-- maximum number of pages in a single build manifest.
-
-Failure should raise a structured Scheme condition identifying the limit and source file.
-
-### 8.7 Serializer verification
-
-Tests must verify that `wak-htmlprag` correctly escapes text and attribute values used by this project. Pin or lock the tested package version. Never assume serializer safety without regression tests for `<`, `>`, `&`, quotes, malformed Unicode, and adversarial attribute values.
-
-## 9. Memory Management and Native Ownership
-
-### 9.1 Ownership model
-
-Use this ownership sequence for every document:
-
-1. Chez owns the input Scheme string.
-2. A UTF-8 buffer is passed to the native parser with an explicit byte length.
-3. The parser owns its parsing state until `cmark_parser_free`.
-4. `cmark_parser_finish` returns a root node that owns its descendant tree.
-5. The parser may be freed after finishing; the returned root remains valid.
-6. Native node strings and node pointers are borrowed views tied to the root's lifetime.
-7. The converter copies every needed native string into a new Chez string.
-8. The converter constructs an entirely Scheme-owned SXML tree.
-9. `cmark_node_free(root)` frees the root and all descendants exactly once.
-10. No pointer, borrowed string, or native node wrapper may escape the conversion's dynamic extent.
+1. Parse to a native root.
+2. Render while the root and extension list remain alive.
+3. Copy the returned UTF-8 renderer buffer into a Chez string.
+4. Free the renderer buffer with the allocator expected by `cmark-gfm`.
+5. Free the root.
+6. Free any parser-owned or binding-owned extension-list container without freeing registry-owned extension objects.
 
 ### 9.2 Borrowed strings
 
-Values returned by functions such as these are borrowed:
+These return borrowed pointers:
 
 ```c
 cmark_node_get_type_string
@@ -407,357 +430,446 @@ cmark_node_get_url
 cmark_node_get_title
 ```
 
-Copy their contents into Chez strings before freeing the root. Do not store the returned C pointers in SXML, global tables, delayed computations, closures, or records that survive conversion.
+Copy their UTF-8 contents immediately. Never store a borrowed C pointer in:
 
-Handle nullable results explicitly. Some accessors return `NULL` when called for an incompatible node type.
+- a Scheme AST record;
+- a closure;
+- a delayed computation;
+- a global table;
+- an SXML tree;
+- an exception object that may outlive conversion.
 
-### 9.3 Exception-safe cleanup
+Handle `NULL` separately from an empty string. Several accessors return `NULL` when called for an incompatible node type.
 
-All native allocations must be released even when:
+### 9.3 Renderer buffers
 
-- UTF-8 decoding fails;
-- an unknown node type is encountered;
-- a security policy rejects a URL or raw HTML node;
-- a resource limit is exceeded;
-- an SXML transformation raises a Scheme condition.
+`cmark-gfm` documents renderer results as caller-owned. Do not rely on Chez's foreign-string conversion to free those buffers.
 
-Implement cleanup with `dynamic-wind`, a guarded helper, or an equivalent single-exit ownership abstraction. The design should make it impossible to call `cmark_node_free` twice.
+The shim should expose a function such as:
 
-Conceptually:
-
-```scheme
-(define (with-cmark-document markdown options proc)
-  (let ((root #f))
-    (dynamic-wind
-      (lambda ()
-        (set! root (parse-native-document markdown options)))
-      (lambda ()
-        (proc root))
-      (lambda ()
-        (when root
-          (cmark-node-free root)
-          (set! root #f))))))
+```c
+void chez_cmark_free_buffer(char *buffer);
 ```
 
-The final implementation must also free a partially created parser if setup or extension attachment fails before a root exists.
+implemented with the same cmark allocator used by the renderer. Copy the buffer into Chez before calling it.
 
-### 9.4 Extension ownership
+### 9.4 Exception-safe cleanup
 
-Call `cmark_gfm_core_extensions_ensure_registered` during process initialization. Extensions returned by `cmark_find_syntax_extension` are registry-owned. Attach them to parsers as documented; do not free registry-owned extension pointers from Scheme.
+Cleanup must occur if:
 
-### 9.5 UTF-8 boundary
+- an extension is missing;
+- parser setup fails;
+- UTF-8 conversion raises a condition;
+- AST conversion encounters an unsupported node;
+- node-count or depth limits are exceeded;
+- a security policy rejects content;
+- copying a result into Scheme fails.
+
+Centralize lifecycle handling in internal helpers equivalent to:
+
+```scheme
+(call-with-native-document markdown options proc)
+(call-with-native-render-buffer root renderer proc)
+```
+
+Use `dynamic-wind` or an equally reliable guard. After freeing a pointer, immediately replace the Scheme variable holding it with a null or false value so cleanup cannot run twice.
+
+The design must have exactly one owner for each parser, root, extension-list container, and renderer buffer.
+
+### 9.5 Extension ownership
+
+Call `cmark_gfm_core_extensions_ensure_registered` once during controlled initialization. Objects returned by `cmark_find_syntax_extension` are registry-owned. Do not free those extension objects from Scheme.
+
+If a temporary linked-list container is created for rendering, free the container according to the public cmark API without freeing the registry-owned extension data it references.
+
+### 9.6 UTF-8
 
 - Convert Chez strings to UTF-8 explicitly.
-- Pass the byte count rather than a character count.
-- Enable `CMARK_OPT_VALIDATE_UTF8` unless testing proves a stronger local validation path is preferable.
-- Reject embedded NUL characters at the public boundary even when the underlying length-aware parser could receive them; they complicate C-string accessors and downstream HTML handling.
-- Copy native UTF-8 results into Chez before freeing the native root.
-- Report invalid UTF-8 as a structured conversion condition rather than silently producing corrupted output.
+- Pass byte lengths, never Scheme character counts.
+- Enable `CMARK_OPT_VALIDATE_UTF8` by default.
+- Document that invalid native input is replaced with U+FFFD by this cmark option.
+- Reject embedded NUL characters at the public Scheme boundary because downstream accessors return NUL-terminated C strings.
+- Copy all native output into Chez before native cleanup.
 
-### 9.6 Concurrency
+### 9.7 Recursion and resource limits
 
-Treat extension registration as process-global initialization. Ensure it is invoked once before concurrent conversions begin. After initialization, test concurrent conversions before documenting them as supported. Until then, state that the first version's site builder is single-threaded.
+The first AST converter may recurse through child and sibling nodes because that closely matches the Scheme tree. Enforce:
 
-### 9.7 Native diagnostics
+- maximum input bytes before parsing;
+- maximum copied nodes;
+- maximum traversal depth.
 
-Run the native shim and integration tests under:
+If deeply nested valid documents are an important use case, replace recursive traversal with `cmark_iter` or an explicit Scheme stack.
+
+### 9.8 Native diagnostics
+
+Run the shim and integration tests under:
 
 - AddressSanitizer;
 - UndefinedBehaviorSanitizer where supported;
-- Valgrind or the platform's equivalent leak checker;
-- a repeated-conversion stress test.
+- Valgrind or a platform-equivalent leak checker;
+- a repeated parse/render/copy stress test.
 
-The stress test should convert a representative corpus thousands of times and verify stable process memory after allocator warm-up.
+Test successful and failing paths. Stable memory after allocator warm-up is required for long repeated runs.
 
-## 10. Error Model
+## 10. Security
 
-Define structured Scheme conditions for:
+### 10.1 Security boundary
 
-- native library unavailable or incompatible;
+Parsing is not sanitization. The Scheme AST faithfully represents potentially unsafe input.
+
+There are two distinct rendering paths:
+
+- Native HTML rendering relies on `cmark-gfm` safe mode, which is the default when `CMARK_OPT_UNSAFE` is absent.
+- SXML rendering is custom rendering and must enforce its own safety policy.
+
+### 10.2 Direct HTML rendering
+
+Default behavior:
+
+- do not set `CMARK_OPT_UNSAFE`;
+- keep raw HTML suppressed by cmark's renderer;
+- keep unsafe links suppressed by cmark's renderer;
+- enable requested GFM extensions explicitly;
+- return an HTML fragment, not claim to return a complete HTML document.
+
+Unsafe rendering must require `unsafe-html?: #t`. Document that callers who enable it must apply an HTML sanitizer appropriate to their application.
+
+Do not provide a global mutable switch for unsafe mode. Security behavior belongs to each immutable options object.
+
+### 10.3 Scheme AST
+
+The AST may contain:
+
+- `html-inline` and `html-block` literals;
+- links with dangerous schemes;
+- image sources with dangerous schemes;
+- oversized strings or deeply nested structures within configured limits.
+
+Document the AST as untrusted data. Generic AST operations must not imply that it is safe to serialize as HTML.
+
+### 10.4 SXML adapter
+
+The optional SXML adapter must default to:
+
+- emit text nodes as Scheme strings for serializer escaping;
+- escape raw HTML nodes as visible text or reject them;
+- validate link and image URLs;
+- reject unsafe attribute content;
+- sanitize code-fence language tokens before using them as CSS classes;
+- never concatenate untrusted strings into markup.
+
+Support explicit raw-HTML policies:
+
+- `'escape` — default;
+- `'reject` — raise a structured condition;
+- `'trusted` — return a distinguishable raw node only if the caller explicitly enables it.
+
+The core library should not claim that trusted mode is sanitized.
+
+### 10.5 URL policy for SXML
+
+Default URL rules:
+
+- allow relative URLs;
+- allow fragment-only URLs;
+- allow `http`, `https`, and `mailto`;
+- reject `javascript`, `vbscript`, `file`, and `data`;
+- compare schemes case-insensitively;
+- reject leading control characters and embedded NULs;
+- avoid adding `target="_blank"` automatically.
+
+Expose URL-policy customization as a procedure or immutable policy record rather than as ad hoc flags.
+
+### 10.6 Resource exhaustion
+
+Before parsing, enforce `max-input-bytes`. During Scheme AST conversion, enforce `max-nodes` and `max-depth`.
+
+Native parsing necessarily occurs before the final node count is known, so the input-size limit is the primary pre-allocation defense. Document that these limits reduce risk but do not form a hard real-time or constant-memory sandbox.
+
+### 10.7 Dynamic-library safety
+
+- Do not accept a shared-library path from Markdown input.
+- Do not search the current working directory before trusted package/system locations.
+- Verify the runtime `cmark-gfm` version against the compiled shim.
+- Fail closed on incompatible versions.
+- Do not load arbitrary cmark plugins in version 1.
+
+## 11. SXML Mapping
+
+The optional adapter should implement a minimal, predictable mapping:
+
+| Markdown AST | SXML |
+|---|---|
+| `document` | `(*TOP* ...)` |
+| `paragraph` | `(p ...)` |
+| `heading` | `(h1 ...)` through `(h6 ...)` |
+| `text` | string |
+| `emph` | `(em ...)` |
+| `strong` | `(strong ...)` |
+| `strikethrough` | `(del ...)` |
+| `blockquote` | `(blockquote ...)` |
+| bullet `list` | `(ul ...)` |
+| ordered `list` | `(ol ...)` |
+| `item` | `(li ...)` |
+| `link` | `(a (@ (href ...)) ...)` |
+| `image` | `(img (@ (src ...) (alt ...)))` |
+| inline `code` | `(code ...)` |
+| `code-block` | `(pre (code ...))` |
+| `thematic-break` | `(hr)` |
+| `softbreak` | configurable newline or space |
+| `linebreak` | `(br)` |
+| `table` | `(table ...)` |
+| `table-row` | `(tr ...)` |
+| header `table-cell` | `(th ...)` |
+| body `table-cell` | `(td ...)` |
+
+The adapter should not generate opinionated heading IDs, navigation, a table of contents, or a page wrapper. Those belong to downstream applications.
+
+Task-list items may prepend a disabled checkbox input. If emitted, checked state and attributes must be constructed by the adapter, not copied from input HTML.
+
+## 12. Conditions and Diagnostics
+
+Define structured conditions for:
+
+- native library unavailable;
+- runtime/compile-time version incompatibility;
 - extension unavailable;
+- invalid option combination;
+- embedded NUL input;
 - parser initialization failure;
-- invalid UTF-8 or embedded NUL;
-- unknown or unsupported AST node;
-- unsafe URL;
-- rejected raw HTML;
-- input, depth, node, or output limit exceeded;
-- invalid page manifest;
-- unsafe output path;
-- serialization failure.
+- renderer failure;
+- unsupported native node type;
+- input-size, node-count, or depth limit exceeded;
+- unsafe URL rejected by the SXML adapter;
+- raw HTML rejected by the SXML adapter.
 
-Every document-related condition should include the source pathname when known. Node-related conditions should include the cmark start and end positions when reliable.
+Include source positions in node-related conditions when available. Do not promise exact positions for every inline or extension node.
 
-Do not depend on exact inline source positions for security decisions. Some open `cmark-gfm` issues document imperfect source positions for tables and certain inline constructs.
+## 13. Testing Strategy
 
-## 11. Documentation Site Layer
+### 13.1 Initialization and ABI tests
 
-### 11.1 Page manifest
+- Load the native libraries from supported installation layouts.
+- Compare compile-time and runtime versions.
+- Fail correctly with a missing core library.
+- Fail correctly with a missing extension library.
+- Verify every standard GFM extension can be found and attached.
 
-Use ordinary Scheme data as the site manifest:
+### 13.2 Parser and AST tests
 
-```scheme
-(define documentation-pages
-  '(("index.md"     "index.html"     "Introduction")
-    ("install.md"   "install.html"   "Installation")
-    ("guide.md"     "guide.html"     "Guide")
-    ("reference.md" "reference.html" "API Reference")))
-```
+Test every documented node and property:
 
-Generate from this single source:
-
-- input and output paths;
-- page titles;
-- primary navigation;
-- active-page state;
-- previous/next links;
-- `.md` to `.html` link mapping;
-- an optional documentation index.
-
-### 11.2 Page template
-
-Use quasiquoted SXML rather than adding another template language:
-
-```scheme
-(define (page-template metadata navigation body)
-  `(html
-     (@ (lang "en"))
-     (head
-       (meta (@ (charset "utf-8")))
-       (meta (@ (name "viewport")
-                (content "width=device-width, initial-scale=1")))
-       (link (@ (rel "stylesheet") (href "assets/docs.css")))
-       (title ,(metadata-title metadata)))
-     (body
-       (header ,(site-header metadata))
-       (nav (@ (aria-label "Documentation")) ,@navigation)
-       (main ,@body)
-       (footer ,(site-footer metadata)))))
-```
-
-All untrusted values inserted into the template must remain SXML strings or validated attribute values.
-
-### 11.3 Transform order
-
-Apply transformations in a documented order:
-
-1. Convert cmark AST to safe SXML.
-2. Generate unique heading IDs.
-3. Extract the table of contents.
-4. Rewrite local documentation links.
-5. Validate internal fragments where possible.
-6. Insert page-level navigation and metadata.
-7. Serialize to HTML.
-
-## 12. Testing Strategy
-
-### 12.1 Unit tests
-
-Test each standard mapping independently:
-
-- text escaping;
-- headings at every level;
+- paragraphs and text;
+- headings and levels;
 - emphasis and strong emphasis;
-- links, titles, and images;
-- ordered and unordered lists;
-- tight and loose lists;
 - block quotes;
-- inline and fenced code;
+- tight and loose lists;
+- ordered-list start values and delimiters;
+- links, images, URLs, and titles;
+- inline and fenced code plus fence info;
+- raw inline and block HTML;
 - soft and hard line breaks;
-- raw HTML policies.
-
-Test each GFM extension:
-
-- autolink URL and email cases;
+- tables and alignment;
 - strikethrough;
-- aligned and unaligned tables;
-- table header/body distinction;
-- checked and unchecked task-list items;
-- disallowed raw HTML/tag-filter cases.
+- autolinks;
+- checked and unchecked task items;
+- source positions;
+- unknown-node preservation or strict failure.
 
-### 12.2 Security regression tests
+All results must remain valid after native cleanup to demonstrate that the AST is genuinely Scheme-owned.
 
-Include fixtures for:
+### 13.3 Renderer differential tests
+
+For the same pinned native version, compare binding output with the `cmark-gfm` command-line program for:
+
+- HTML;
+- CommonMark;
+- plaintext;
+- XML;
+- any additional renderer exposed in version 1.
+
+Test every extension combination supported by the public options API.
+
+### 13.4 Security tests
+
+Include at least:
 
 ```text
 <script>alert(1)</script>
 [click](javascript:alert(1))
 [click](JaVaScRiPt:alert(1))
-![image](data:text/html,...)
 [file](file:///etc/passwd)
+![image](data:text/html,...)
 <img src=x onerror=alert(1)>
 ```
 
-Also test:
+Verify separately that:
 
-- leading whitespace and control characters before a scheme;
-- percent-encoded or entity-obscured attacks;
-- quotes and angle brackets in titles and alt text;
-- malicious fence-info strings;
-- duplicate and hostile heading text;
-- output path traversal and absolute paths;
-- symlink handling;
-- maximum input, node, and depth limits.
+- direct HTML rendering is safe by default;
+- unsafe native rendering changes behavior only when explicitly requested;
+- the Scheme AST preserves the parsed information and is documented as untrusted;
+- SXML conversion escapes or rejects raw HTML by default;
+- SXML URL validation rejects dangerous schemes;
+- text and attribute values are represented in a form that a conforming SXML serializer will escape.
 
-Expected behavior must be explicit for every fixture: safely escaped output or a structured rejection.
+### 13.5 Memory and failure tests
 
-### 12.3 Golden output tests
+- Empty and minimal input.
+- Very large input at and beyond the configured limit.
+- Deeply nested input at and beyond the configured limit.
+- Failure during extension attachment.
+- Failure during AST copying.
+- Failure during renderer-result copying.
+- Repeated parsing, rendering, and AST conversion.
+- Cleanup following every structured condition.
+- No double frees when cleanup itself follows a partial failure.
+- No access to node strings after the root is freed.
 
-Store representative Markdown fixtures and expected SXML plus final HTML. Normalize only insignificant formatting; do not normalize away escaping or attribute differences that could conceal security regressions.
+Run these under native memory diagnostics.
 
-### 12.4 Differential tests
+### 13.6 Conformance corpus
 
-For constructs not intentionally transformed, compare the structural result with `cmark-gfm`'s own HTML renderer. Differences should be reviewed and documented rather than blindly accepted.
+Use the CommonMark examples and GFM specification examples as externally defined fixtures where licensing and test harness integration permit. The binding does not need to retest cmark's parser implementation exhaustively, but it must verify that its option selection, extension attachment, AST copying, and output do not change the native semantics.
 
-### 12.5 Native ownership tests
+## 14. Build and Packaging
 
-- Convert an empty document.
-- Fail during extension attachment.
-- Fail halfway through AST conversion.
-- Trigger each resource limit.
-- Repeat successful and failing conversions under a leak checker.
-- Verify no borrowed pointer is accessed after root cleanup.
-- Verify every parser and root has exactly one cleanup path.
+- Discover `cmark-gfm` and its core extensions through `pkg-config` where available.
+- Avoid hard-coded Homebrew, Linux, or user-directory paths.
+- Record supported native version ranges.
+- Pin the native version in continuous integration.
+- Build the compatibility shim with warnings enabled and treated as errors in CI.
+- Provide Akku metadata and a locked development environment.
+- Ensure the core package does not depend on `wak-htmlprag` or a site generator.
+- Test current supported Chez on Linux and macOS.
+- Document static versus dynamic linking behavior.
+- Include license notices for the binding and its native dependency.
 
-### 12.6 Integration tests
-
-Build a miniature site containing:
-
-- multiple pages;
-- cross-page links;
-- fragment links;
-- duplicate headings;
-- a table;
-- task lists;
-- Scheme code fences;
-- previous/next navigation.
-
-Check that all generated local links resolve and all output paths remain inside the build directory.
-
-## 13. Build and Packaging
-
-- Discover `cmark-gfm` and its extensions library through `pkg-config` where available instead of hard-coding platform-specific paths.
-- Record the exact tested `cmark-gfm` versions.
-- Provide clear errors when the shared libraries cannot be loaded.
-- Lock Akku dependencies, including `wak-htmlprag`.
-- Provide a reproducible native build path for environments without a system package.
-- Test at least Linux and macOS initially; add Windows only after the FFI and library-loading approach is validated there.
-- Keep generated documentation out of the source library path.
-
-## 14. Milestones
+## 15. Milestones
 
 ### Milestone 0: Compatibility spike
 
-- Install or build current `cmark-gfm`.
-- Confirm Chez can load both the core and extension shared libraries.
-- Parse one CommonMark document and one table document.
-- Confirm node type strings and table/task-list accessors.
-- Validate `wak-htmlprag` serialization and escaping.
+- Load current `cmark-gfm` and its core-extension library from Chez.
+- Report the runtime version.
+- Attach all five standard GFM extensions.
+- Parse a document containing a heading, table, strikethrough, autolink, and task list.
+- Traverse the AST and free it without leaks.
 
-Exit criterion: a small program prints safe HTML generated through AST -> SXML, including a GFM table.
+Exit criterion: a Chez program prints the expected native node types and exits cleanly under a leak checker.
 
-### Milestone 1: Native binding foundation
+### Milestone 1: Shim and lifecycle foundation
 
 - Implement the C shim.
-- Bind parser lifecycle, extension setup, traversal, and basic accessors.
-- Implement structured native errors.
-- Add ASan and leak-test builds.
+- Implement version checking and extension initialization.
+- Bind parser, root, renderer-buffer, and extension-list lifecycles.
+- Add structured initialization conditions.
+- Add sanitizer-enabled native tests.
 
-Exit criterion: Chez can parse and safely free representative documents without leaks.
+Exit criterion: every owned native allocation has a tested success and failure cleanup path.
 
-### Milestone 2: CommonMark-to-SXML conversion
+### Milestone 2: Direct renderers
 
-- Implement all core node mappings.
-- Add URL validation and raw HTML policies.
-- Add UTF-8 handling and resource limits.
-- Add golden SXML tests.
+- Implement immutable options.
+- Implement HTML, CommonMark, plaintext, and XML conversions.
+- Correctly pass attached extensions to the HTML renderer.
+- Copy and free renderer buffers.
+- Add differential tests against the native CLI.
 
-Exit criterion: the supported CommonMark fixture corpus converts deterministically and safely.
+Exit criterion: outputs match the pinned `cmark-gfm` CLI for the supported option matrix.
 
-### Milestone 3: GFM conversion
+### Milestone 3: Scheme AST
 
-- Enable all five GFM extensions.
-- Implement strikethrough, tables, autolinks, task lists, and tag-filter policy.
-- Add alignment and checkbox rendering.
+- Implement immutable Scheme node and source-position records.
+- Copy every supported core node.
+- Copy GFM tables, task-list state, autolinks, and strikethrough.
+- Enforce input, node, and depth limits.
+- Preserve or reject unknown node types according to options.
 
-Exit criterion: representative GFM fixtures match the intended HTML structure.
+Exit criterion: the returned AST contains no native pointers and remains valid after native cleanup.
 
-### Milestone 4: Documentation transforms
+### Milestone 4: Security hardening
 
-- Generate heading IDs.
-- Extract tables of contents.
-- Rewrite local Markdown links.
-- Validate duplicate IDs and broken local links.
+- Confirm native safe-mode behavior.
+- Make unsafe rendering explicitly opt-in.
+- Reject embedded NUL input.
+- Add malicious-input and resource-exhaustion tests.
+- Test dynamic-library resolution and version mismatch behavior.
 
-Exit criterion: a multi-page fixture site has correct navigation and internal links.
+Exit criterion: all documented safe defaults have regression tests.
 
-### Milestone 5: Site builder and packaging
+### Milestone 5: Optional SXML adapter
 
-- Add the page manifest and SXML template.
-- Add atomic output writing and safe path resolution.
-- Package for Akku.
-- Write user and API documentation.
-- Add continuous integration across supported Chez and platform versions.
+- Implement the minimal AST-to-SXML mapping.
+- Add raw-HTML and URL policies.
+- Test escaping assumptions with at least one supported serializer without making it a core dependency.
+- Document that the adapter returns a fragment/tree, not a full page.
 
-Exit criterion: a new project can install the package and build documentation with one documented command.
+Exit criterion: representative CommonMark and GFM documents produce safe, structurally correct SXML.
 
-### Milestone 6: Hardening and release
+### Milestone 6: Packaging and release
 
-- Complete the security corpus.
-- Run sanitizers, leak checks, and repeated-conversion tests.
-- Test malformed and fuzz-generated Markdown.
-- Pin dependencies and publish a compatibility matrix.
-- Tag version `0.1.0` once all acceptance criteria pass.
+- Publish Akku metadata.
+- Complete API and ownership documentation.
+- Add examples for rendering, AST inspection, and SXML conversion.
+- Publish the supported Chez/platform/native-version matrix.
+- Run sanitizer, leak, stress, and conformance tests.
 
-## 15. Acceptance Criteria
+Exit criterion: a clean project can install the package and use each public API from the documentation.
 
-The first release is complete when:
+## 16. Acceptance Criteria
 
-- CommonMark and the five standard GFM extensions convert to valid SXML/SHTML.
-- The public API never exposes native AST pointers.
-- All native strings are copied before root cleanup.
-- Every parser and document root is freed exactly once, including error paths.
-- Raw HTML is escaped by default.
-- Dangerous URL schemes are rejected by default.
-- Text and attribute escaping have adversarial regression tests.
-- Configurable input-size, node-count, and depth limits are enforced.
-- Generated output cannot escape the configured build directory.
-- Tables, task lists, heading IDs, navigation, and local link rewriting work in an integration site.
+Version 1 is complete when:
+
+- All five standard GFM extensions can be selected and are enabled by default.
+- HTML, CommonMark, plaintext, and XML renderers work through named Scheme options.
+- Direct HTML output uses cmark's safe mode unless unsafe behavior is explicitly requested.
+- Renderer buffers are copied and freed correctly.
+- `markdown->ast` returns only Scheme-owned objects.
+- Every borrowed native string is copied before root cleanup.
+- Parsers, roots, extension-list containers, and renderer buffers are freed exactly once on success and failure paths.
+- Embedded NUL input is rejected and UTF-8 handling is documented.
+- Input-size, node-count, and depth limits are enforced.
+- CommonMark and GFM node types are represented and tested.
+- The optional SXML adapter escapes or rejects raw HTML by default and validates URLs.
+- Runtime native-version incompatibility fails clearly.
 - Native tests pass under AddressSanitizer and a leak checker.
-- The supported Chez, `cmark-gfm`, operating system, and `wak-htmlprag` versions are documented.
+- Supported Chez, platform, and `cmark-gfm` versions are documented.
+- The core library has no dependency on a documentation-site framework.
 
-## 16. Risks and Mitigations
+## 17. Risks and Mitigations
 
 | Risk | Mitigation |
 |---|---|
-| Existing `chez-cmark` is too minimal | Build a separate focused binding rather than depending on its one-shot API. |
-| Native ABI or library names vary | Use a small shim, `pkg-config`, version checks, and platform CI. |
-| Extension nodes differ from core nodes | Dispatch by documented type strings and test every enabled extension. |
-| Custom rendering bypasses cmark HTML safety | Enforce security at AST-to-SXML conversion and test it adversarially. |
-| Borrowed strings outlive the native tree | Copy all strings immediately and keep native pointers private. |
-| Cleanup is skipped on Scheme exceptions | Centralize ownership in an exception-safe `with-cmark-document` helper. |
-| Old serializer behavior causes bad escaping | Pin `wak-htmlprag` and maintain serializer-specific security tests. |
-| Source positions are imperfect | Use them for diagnostics only, never as a security boundary. |
-| Deep input overflows recursive Scheme traversal | Enforce a depth limit and retain the iterator API as a fallback. |
-| Project grows into a general site generator | Keep the page manifest and transforms deliberately documentation-focused. |
+| Native ABI changes | Compile a shim against public headers, check runtime versions, and test pinned versions in CI. |
+| Renderer buffer leak | Centralize copy-and-free behavior in one internal helper and test repeated rendering. |
+| Borrowed node strings escape | Return only Scheme-owned AST records and keep native bindings private. |
+| Double free during conditions | Give each pointer one owner and clear it immediately after cleanup. |
+| Extension objects are freed incorrectly | Treat registry results as borrowed; free only binding-owned list containers. |
+| GFM nodes lose metadata during copying | Test table alignment, header rows, task state, autolinks, and strikethrough explicitly. |
+| Custom SXML output bypasses cmark safety | Give the adapter its own raw-HTML and URL policies. |
+| Users assume AST content is sanitized | State prominently that parsing preserves untrusted content and sanitization occurs during rendering. |
+| Deep documents overflow Scheme recursion | Enforce a depth limit and retain iterator-based traversal as a fallback. |
+| Dynamic loader selects an unintended library | Restrict search behavior and verify compile-time/runtime versions. |
+| Scope expands into a site generator | Keep templates, navigation, manifests, and output orchestration out of the package. |
 
-## 17. Future Enhancements
+## 18. Possible Future Work
 
-- Expose a safe, Scheme-owned Markdown AST distinct from SXML.
-- Add optional YAML front matter parsing before passing the remaining document to cmark.
-- Add footnotes or alerts through explicitly versioned extensions.
-- Add a syntax-highlighting hook that consumes fenced-code language metadata.
-- Generate a search index as JSON or S-expressions.
-- Add incremental builds based on source and template hashes.
-- Add an optional trusted-HTML sanitizer rather than only escape/reject modes.
-- Add a controlled advanced API for native AST inspection if a compelling need appears.
+- A controlled managed-native-document API for advanced users.
+- Native AST mutation with explicit lifetime scopes.
+- Rebuilding a native AST from the Scheme AST.
+- Additional cmark renderers or options after compatibility tests.
+- Optional footnote support.
+- Streaming input ports for very large documents.
+- Custom allocators or allocation accounting.
+- A generic visitor protocol for Scheme AST transformations.
+- Separate downstream packages for documentation generation or syntax highlighting.
 
-## 18. References
+## 19. References
 
 - [CommonMark specification](https://spec.commonmark.org/spec)
 - [`cmark`, the CommonMark C reference implementation](https://github.com/commonmark/cmark)
 - [`cmark-gfm`](https://github.com/github/cmark-gfm)
-- [`cmark-gfm` public AST API](https://github.com/github/cmark-gfm/blob/master/src/cmark-gfm.h)
+- [`cmark-gfm` public parser, AST, renderer, option, and version API](https://github.com/github/cmark-gfm/blob/master/src/cmark-gfm.h)
 - [`cmark-gfm` extension API](https://github.com/github/cmark-gfm/blob/master/src/cmark-gfm-extension_api.h)
-- [`cmark-gfm` core extension accessors](https://github.com/github/cmark-gfm/blob/master/extensions/cmark-gfm-core-extensions.h)
+- [`cmark-gfm` core-extension accessors](https://github.com/github/cmark-gfm/blob/master/extensions/cmark-gfm-core-extensions.h)
 - [GitHub Flavored Markdown specification](https://github.github.com/gfm/)
-- [`wak-htmlprag` Akku package](https://akkuscm.org/packages/wak-htmlprag/)
