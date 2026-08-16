@@ -1,3 +1,10 @@
 * chez-cmark-gfm
 
 CommonMark GFM for Chez Sceme
+
+#+begin_quote
+:sparkles: *AI Disclosure:* LLMs are used extensively the in the planning and development of this project.
+#+end_quote
+-----
+
+© [[https://kiyomicomputation.systems/][Kiyomi Computation Systems LLC]], all rights reserved.
