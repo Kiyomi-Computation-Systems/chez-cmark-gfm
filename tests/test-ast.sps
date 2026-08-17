@@ -93,6 +93,79 @@
     (list (markdown-node-type n) (markdown-node-properties n)
           (markdown-node-source n))))
 
+;; --- traversal helpers -------------------------------------------------
+;; The ORDER is the contract, so the order is what gets asserted. A helper
+;; that visited every node but in the wrong order would satisfy any
+;; count-based or set-based assertion, which is why both tests below record a
+;; sequence and compare it against an expected list.
+
+;; Pre-order: parent before children, children left to right.
+(test-equal "fold visits pre-order, parent before children"
+  '(document heading text paragraph text)
+  (reverse (markdown-node-fold
+            (lambda (n acc) (cons (markdown-node-type n) acc))
+            '() doc)))
+
+(test-equal "fold threads the accumulator and counts every node"
+  5 (markdown-node-fold (lambda (n acc) (+ acc 1)) 0 doc))
+
+;; Children-first: proc must already see mapped children. proc records, on
+;; each parent, the literal it observes on that parent's own first child AT
+;; THE MOMENT proc runs on the parent -- checking only the final assembled
+;; tree would NOT prove this: markdown-node-with-children always rewraps a
+;; node with the fully-recursed children regardless of order, so a proc that
+;; never inspects its children (as a naive "does the final tree look right"
+;; check would use) cannot tell parent-first from children-first apart. With
+;; a parent-first implementation, proc sees the child still in its ORIGINAL
+;; state, so the recorded literal would be "hi"/"word" instead of "marked".
+(test-equal "map rebuilds children-first, so proc sees mapped children"
+  '("marked" "marked")
+  (let ((out (markdown-node-map
+              (lambda (n)
+                (cond
+                  ((eq? (markdown-node-type n) 'text)
+                   (markdown-node-with-properties n '((literal . "marked"))))
+                  ((pair? (markdown-node-children n))
+                   (markdown-node-with-properties
+                    n `((observed-child-literal
+                         . ,(markdown-node-property
+                             (car (markdown-node-children n)) 'literal)))))
+                  (else n)))
+              doc)))
+    ;; document -> (heading paragraph), each with one text child
+    (map (lambda (block) (markdown-node-property block 'observed-child-literal))
+         (markdown-node-children out))))
+
+(test-equal "map can rewrite a node type and keeps the tree shape"
+  '(document paragraph text paragraph text)
+  (reverse
+   (markdown-node-fold
+    (lambda (n acc) (cons (markdown-node-type n) acc))
+    '()
+    (markdown-node-map
+     (lambda (n)
+       (if (eq? (markdown-node-type n) 'heading)
+           (make-markdown-node 'paragraph '() (markdown-node-children n)
+                               (markdown-node-source n))
+           n))
+     doc))))
+
+(test-equal "map leaves the original tree untouched"
+  '(document heading text paragraph text)
+  (begin
+    (markdown-node-map
+     (lambda (n) (make-markdown-node 'clobbered '() '() #f))
+     doc)
+    (reverse (markdown-node-fold
+              (lambda (n acc) (cons (markdown-node-type n) acc))
+              '() doc))))
+
+(test-equal "map on a leaf applies proc to the leaf itself"
+  'rewritten
+  (markdown-node-type
+   (markdown-node-map (lambda (n) (make-markdown-node 'rewritten '() '() #f))
+                      leaf-hi)))
+
 (test-end "ast")
 
 (exit (if (zero? (test-runner-fail-count runner)) 0 1))

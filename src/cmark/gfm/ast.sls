@@ -26,6 +26,7 @@
           markdown-node-children markdown-node-source
           markdown-node-property
           markdown-node-with-properties markdown-node-with-children
+          markdown-node-map markdown-node-fold
 
           make-source-position source-position?
           source-position-start-line source-position-start-column
@@ -69,4 +70,23 @@
     (make-markdown-node (markdown-node-type node)
                         (markdown-node-properties node)
                         children
-                        (markdown-node-source node))))
+                        (markdown-node-source node)))
+
+  ;; Children-first (bottom-up): proc receives a node whose children have
+  ;; already been mapped, so a rewrite can inspect its final subtree. Both
+  ;; orders here are asserted by test rather than merely documented -- an
+  ;; ordering guarantee stated only in a comment does not enforce itself.
+  ;;
+  ;; Recursive, like the converter, and for the same reason: it runs on trees
+  ;; already bounded by max-depth, so no separate limit applies.
+  (define (markdown-node-map proc node)
+    (proc (markdown-node-with-children
+           node
+           (map (lambda (child) (markdown-node-map proc child))
+                (markdown-node-children node)))))
+
+  ;; Pre-order: parent before children, children left to right.
+  (define (markdown-node-fold proc seed node)
+    (fold-left (lambda (acc child) (markdown-node-fold proc acc child))
+               (proc node seed)
+               (markdown-node-children node))))
