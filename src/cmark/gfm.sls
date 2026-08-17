@@ -57,7 +57,10 @@
 
           ;; new condition
           &cmark-resource-limit cmark-resource-limit?
-          cmark-resource-limit-value)
+          cmark-resource-limit-value
+
+          &cmark-unsupported-node cmark-unsupported-node?
+          cmark-unsupported-node-type)
   (import (rnrs)
           (cmark gfm options)
           (cmark gfm render)

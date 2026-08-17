@@ -31,7 +31,10 @@
           cmark-invalid-option-reason
 
           &cmark-render-failed make-cmark-render-failed
-          cmark-render-failed? cmark-render-failed-format)
+          cmark-render-failed? cmark-render-failed-format
+
+          &cmark-unsupported-node make-cmark-unsupported-node
+          cmark-unsupported-node? cmark-unsupported-node-type)
   (import (rnrs))
 
   (define-condition-type &cmark-error &error
@@ -93,4 +96,15 @@
   ;; 'html, 'xml, 'commonmark, 'plaintext.
   (define-condition-type &cmark-render-failed &cmark-error
     make-cmark-render-failed cmark-render-failed?
-    (format cmark-render-failed-format)))
+    (format cmark-render-failed-format))
+
+  ;; The SXML adapter has no HTML vocabulary for a node type it does not
+  ;; know. Derives from &cmark-error directly, NOT from
+  ;; &cmark-invalid-input: the document is well-formed, the adapter is
+  ;; incomplete, and a caller guarding bad input must not swallow a gap in
+  ;; our own coverage. Project plan 12 asked for this condition; Stage 3
+  ;; did not need it because it preserves unknown types as `extension`
+  ;; nodes rather than raising.
+  (define-condition-type &cmark-unsupported-node &cmark-error
+    make-cmark-unsupported-node cmark-unsupported-node?
+    (type cmark-unsupported-node-type)))
