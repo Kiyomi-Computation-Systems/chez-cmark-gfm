@@ -63,6 +63,7 @@ Every task's requirements implicitly include this section.
 | `Makefile` | `check-purity` covers `test-ast.sps`; `tests` on `CHEZ_LIBDIRS` | Modify (Tasks 2, 11) |
 | `.plans/stage-3-mutation-log.md` | Evidence that each assertion fails when its decision breaks | Create (Task 12) |
 | `Akku.manifest`, `CHANGELOG.md`, `README.org`, `.plans/decisions/0009-*.md`, `0010-*.md` | Release 0.2 | Modify/Create (Task 13) |
+| `.github/workflows/ci.yml` | Resync the `check-purity` step name with what it now gates | Modify (Task 13) |
 
 **One addition to the design spec's §2 module table:** the spec lists `convert.sls` but no layer-3 entry point for `markdown->ast`. Putting the public procedure in `convert.sls` would place a layer-3 export inside layer 2, so this plan adds `src/cmark/gfm/parse.sls`, which mirrors `render.sls` exactly: layer 3, imports `options` and the private libraries, unpacks the options record, holds no pointer. Task 13 syncs the spec's table.
 
@@ -3393,6 +3394,26 @@ Then extend §12's gap list — §4.3's guard turned out to be unreachable:
    created with `start_line 1` (`make_document`, `src/blocks.c`) and cmark emits
    `sourcepos="1:1-0:0"`. The guard is kept because it keeps the Task 10
    serializer a straight mapping from our record to cmark's output.
+```
+
+- [ ] **Step 3b: Resync the purity check's own description**
+
+Task 2 extended `check-purity` to gate `tests/test-ast.sps` as well as
+`tests/test-options.sps`, but two descriptions of it still say options-only. In
+a repo whose rule is "prefer a check to a comment", a comment that understates
+what its check protects is the failure mode that rule exists to prevent.
+
+In `Makefile`, the comment block above `check-purity` (around lines 122-124)
+opens with "options.sls must import no library that loads a shared object" and
+cites "test-options.sps's 36 assertions". Widen it to name both pure libraries
+and both suites, without dropping the existing explanation of the poisoned-path
+probe or its Chez-instantiation caveat.
+
+In `.github/workflows/ci.yml:74`, the step name is `Check options.sls stays free
+of native imports`. Change it to name both:
+
+```yaml
+      - name: Check options.sls and ast.sls stay free of native imports
 ```
 
 - [ ] **Step 4: Bump the version**
