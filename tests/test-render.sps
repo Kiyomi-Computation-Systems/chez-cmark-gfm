@@ -153,15 +153,42 @@
          (string-contains? s "<heading level=\"1\">")
          (string-contains? s "<text xml:space=\"preserve\">hi</text>"))))
 
-;; The extension list reaches the HTML renderer. Without it, a table parses
-;; but its extension nodes render as nothing -- so this discriminates the
-;; one argument only markdown->html passes.
-(test-assert "tables render through markdown->html, which requires the extension list"
+;; Extension NODE rendering (tables, strikethrough, tasklists) dispatches
+;; through each node's own ->extension pointer, set at PARSE time when
+;; call-with-native-document attaches the extension list to the parser
+;; (vendor/cmark-gfm/src/html.c:142-144). It does NOT go through the
+;; `extensions` argument render-html receives, so this test cannot and does
+;; not discriminate that argument -- see the test below for the one thing
+;; that argument actually controls. What this test does verify: that
+;; markdown->html's extension SYMBOLS reach the parser at all --
+;; options->native-names converts them and call-with-native-document
+;; attaches them, so a table parses into extension nodes and those nodes
+;; render.
+(test-assert "tables render through markdown->html, given the default extension set"
   (let ((s (markdown->html "| a |\n|---|\n| 1 |\n" (default-cmark-options))))
     (and (string-contains? s "<table>") (string-contains? s "<td>1</td>"))))
 
 (test-assert "strikethrough renders through markdown->html"
   (string-contains? (markdown->html "~~gone~~\n" (default-cmark-options)) "<del>"))
+
+;; What the `extensions` argument passed to render-html actually controls:
+;; cmark_render_html (vendor/cmark-gfm/src/html.c:480-485) filters it down
+;; to extensions with an html_filter_func -- tagfilter
+;; (vendor/cmark-gfm/extensions/tagfilter.c) is the ONLY extension that sets
+;; one. The filtered list becomes renderer.filter_extensions, consulted only
+;; when unsafe-html? is on, to defang dangerous raw tags such as <script> by
+;; escaping its leading '<' to '&lt;'. Drop this argument (e.g.
+;; markdown->html's `(doc-extensions h)` mutated to `0`) and table,
+;; strikethrough, and tasklist output are untouched -- only this collapses.
+;;
+;; Verified against the pinned CLI: `cmark-gfm --unsafe -e tagfilter` on
+;; "<script>alert(1)</script>" emits "&lt;script>alert(1)&lt;/script>" --
+;; only the opening '<' is escaped, not the closing one, so the expected
+;; substring below is "&lt;script>", not "&lt;script&gt;".
+(test-assert "tagfilter's <script> defanging under unsafe-html? requires the extension list reaching render-html"
+  (string-contains? (markdown->html "<script>alert(1)</script>\n"
+                                    (make-cmark-options 'unsafe-html? #t))
+                    "&lt;script>"))
 
 ;; --- width --------------------------------------------------------------
 (test-assert "a width argument actually wraps commonmark output"
