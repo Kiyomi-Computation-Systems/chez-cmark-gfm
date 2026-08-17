@@ -3142,6 +3142,9 @@ Then:
 ;; A missing or mismatched CLI FAILS this suite. It does not skip it: "skip
 ;; when unavailable" is how an exit criterion silently stops being enforced.
 ;; Both supported acquisition paths ship the binary.
+;;
+;; merge-stderr? = #t: a link or dyld failure reports on stderr, and that is
+;; the whole diagnostic when this probe fails.
 (test-equal "the CLI is the same build as the loaded library"
   #t
   (string-contains?
@@ -3230,17 +3233,19 @@ Then:
 
 ;; smart? changes the text literals cmark produces, so the AST must carry the
 ;; smart-punctuation forms. Verified against the CLI's own --smart output.
-;; Discrimination guard first, which test-differential.sps's preamble calls
-;; "the load-bearing part": a parity assertion means nothing unless the option
-;; actually moves the CLI's own output for this fixture.
-(define smart-fixture "\"quoted\" -- dashed --- and 'single'\n")
-(test-equal "--smart changes the CLI's own output for this fixture"
+;; Discrimination guard, same requirement test-differential.sps's layer 1
+;; imposes on every option: a parity assertion means nothing unless the flag
+;; actually moves the CLI's OWN output for this fixture.
+(test-equal "smart punctuation -- the CLI's own output changes"
   #t
-  (not (string=? (cli-xml smart-fixture with-exts+pos)
-                 (cli-xml smart-fixture
+  (not (string=? (cli-xml "\"quoted\" -- dashed --- and 'single'\n" with-exts+pos)
+                 (cli-xml "\"quoted\" -- dashed --- and 'single'\n"
                           (cmark-options-with with-exts+pos 'smart? #t)))))
+
+;; smart? changes the text literals cmark produces, so the AST must carry the
+;; smart-punctuation forms. Verified against the CLI's own --smart output.
 (check-cli "smart punctuation reaches the AST's literals"
-           smart-fixture
+           "\"quoted\" -- dashed --- and 'single'\n"
            (cmark-options-with with-exts+pos 'smart? #t))
 
 ;; unsafe-html? is a RENDERER policy and must not change the AST at all
