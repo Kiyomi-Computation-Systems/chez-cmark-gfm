@@ -43,14 +43,18 @@ src/cmark/gfm/options.sls           EDIT make-sxml-options, sxml-options-with
 src/cmark/gfm/private/conditions.sls EDIT &cmark-unsupported-node
 tests/test-sxml.sps                 NEW  pure unit suite
 tests/test-sxml-differential.sps    NEW  corpus differential
-tests/test-sxml-serializer.sps      NEW  third-party serializer suite
+tests/test-sxml-serializer.sps      NEW  unit suite for the serializer above
+tests/test-sxml-portability.sps     NEW  third-party serializer suite
 tests/sxml-html-serializer.sls      NEW  test-only, mirrors src/html.c
 tests/spec-corpus.sls               NEW  test-only, parses cmark's spec files
 ```
 
 ### 2.1 The adapter is pure; the convenience entry point is not
 
-`(cmark gfm sxml)` imports **only** `(rnrs)` and `(cmark gfm ast)`. The conversion
+`(cmark gfm sxml)` imports only pure libraries: `(rnrs)`, `(cmark gfm ast)`,
+`(cmark gfm options)` for the policy accessors, and `(cmark gfm private
+conditions)` for the raise. The last three are each `(import (rnrs))` and
+nothing more, so none of them can reach a shared object. The conversion
 is Scheme records to Scheme lists; nothing in it needs a shared object, and
 `tests/test-sxml.sps` therefore runs with `CHEZ_CMARK_GFM_SHIM=/nonexistent`.
 `make check-purity` gains it as a third entry alongside `test-options.sps` and
@@ -165,7 +169,8 @@ output.
 | `list`, ordered, start = 1 | `(ol …)` | `html.c:174` |
 | `list`, ordered, start ≠ 1 | `(ol (@ (start "N")) …)` | `html.c:178` |
 | `item`, plain | `(li …)` | `html.c:190` |
-| `item`, task | `(li (input (@ (type "checkbox") (checked "") (disabled ""))) " " …)` | `extensions/tasklist.c:124` |
+| `item`, task, checked | `(li (input (@ (type "checkbox") (checked "") (disabled ""))) " " …)` | `extensions/tasklist.c:125` |
+| `item`, task, unchecked | `(li (input (@ (type "checkbox") (disabled ""))) " " …)` — no `checked` at all | `extensions/tasklist.c:127` |
 | `link` | `(a (@ (href …) (title …)) …)` | `html.c:384` |
 | `image` | `(img (@ (src …) (alt …) (title …)))` | `html.c:402` |
 | `code` | `(code …)` | `html.c:329` |
@@ -506,7 +511,7 @@ A consumer of this package should not acquire either.
   off (§3.3), and with `tagfilter` on and off (§5.4).
 - A discrimination guard per leg.
 
-**`tests/test-sxml-serializer.sps`** — `wak-sxml-tools`, per §6.6.
+**`tests/test-sxml-portability.sps`** — `wak-sxml-tools`, per §6.6.
 
 - The tree from each of the four existing fixtures is accepted.
 - A `text` node holding `<script>alert(1)</script>` serializes escaped — asserted
@@ -565,7 +570,7 @@ Per `AGENTS.md`: a load-bearing comment is a signal it should not be a comment.
 | `tagfilter` does not affect SXML | differential no-effect assertion |
 | The corpus parser actually found the examples | example-count assertion |
 | The comparator can report a difference | discrimination guard, per leg |
-| Escaping happens in a real serializer | `test-sxml-serializer.sps` |
+| Escaping happens in a real serializer | `test-sxml-portability.sps` |
 
 ## 10. Deliberate coverage gaps
 
@@ -597,7 +602,7 @@ as a promise about their own pipeline.
 
 A **pretty-printing** serializer is a different matter: injected indentation
 corrupts `<pre>` content and changes inline spacing. That is a warning, and
-`test-sxml-serializer.sps` asserts our chosen serializer does not do it.
+`test-sxml-portability.sps` asserts our chosen serializer does not do it.
 
 ## 12. Release 0.3
 
