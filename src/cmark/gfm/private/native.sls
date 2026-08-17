@@ -21,7 +21,9 @@
           count-buffer-new! count-buffer-free!
           parser-new parser-feed parser-finish parser-free
           node-free find-extension attach-extension
-          parser-get-syntax-extensions render-html free-buffer)
+          parser-get-syntax-extensions render-html free-buffer
+          runtime-version-string shim-compiled-version shim-runtime-version
+          render-xml render-commonmark render-plaintext)
   ;; file-exists? is deliberately absent from this import: (rnrs) already
   ;; exports it (via (rnrs files)), so also importing it from (chezscheme)
   ;; raises "multiple definitions for file-exists? in body" -- the same
@@ -137,6 +139,16 @@
     (foreign-procedure "cmark_parser_get_syntax_extensions" (uptr) uptr))
   (define render-html
     (foreign-procedure "cmark_render_html" (uptr int uptr) uptr))
+  (define render-xml
+    (foreign-procedure "cmark_render_xml" (uptr int) uptr))
+  (define render-commonmark
+    (foreign-procedure "cmark_render_commonmark" (uptr int int) uptr))
+  (define render-plaintext
+    (foreign-procedure "cmark_render_plaintext" (uptr int int) uptr))
+  ;; Returns a static const char* owned by cmark. Borrowed like every other
+  ;; accessor here, so it is declared uptr and copied immediately.
+  (define raw-version-string
+    (foreign-procedure "cmark_version_string" () uptr))
 
   ;; --- one-time version check and extension registration ----------------
   ;; Chez here is threaded (tarm64osx) and
@@ -197,6 +209,8 @@
                      (bool->int nobreaks?)
                      (bool->int smart?)
                      (bool->int unsafe-html?)))
+
+  (define (runtime-version-string) (c-string->string (raw-version-string)))
 
   ;; --- borrowed string copying ------------------------------------------
   ;; Copies immediately into Scheme-owned storage. NULL becomes #f, which is
