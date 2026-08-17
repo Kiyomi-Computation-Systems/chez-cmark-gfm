@@ -16,8 +16,9 @@
 (library (cmark gfm private scope)
   (export call-with-native-document
           native-doc?
-          doc-root doc-parser doc-extensions
-          validate-markdown-input)
+          doc-root doc-parser doc-extensions doc-option-bits
+          validate-markdown-input
+          default-max-input-bytes)
   (import (rnrs)
           (cmark gfm private native)
           (cmark gfm private conditions))
@@ -26,6 +27,7 @@
     (fields (mutable parser)
             (mutable root)
             (mutable alive?)
+            option-bits                 ; immutable; for the renderer (design spec 5.1)
             (mutable extensions)))
 
   ;; --- checked accessors ----------------------------------------------
@@ -35,9 +37,10 @@
     (unless (and (native-doc? h) (native-doc-alive? h))
       (raise (make-cmark-dead-document))))
 
-  (define (doc-root h)       (check-alive h) (native-doc-root h))
-  (define (doc-parser h)     (check-alive h) (native-doc-parser h))
-  (define (doc-extensions h) (check-alive h) (native-doc-extensions h))
+  (define (doc-root h)        (check-alive h) (native-doc-root h))
+  (define (doc-parser h)      (check-alive h) (native-doc-parser h))
+  (define (doc-extensions h)  (check-alive h) (native-doc-extensions h))
+  (define (doc-option-bits h) (check-alive h) (native-doc-option-bits h))
 
   ;; --- input validation ------------------------------------------------
   ;; Embedded NUL is rejected because downstream accessors return
@@ -58,6 +61,28 @@
          (raise (make-cmark-invalid-input 'embedded-nul)))
         (else (loop (+ i 1))))))
 
+  ;; design spec 5.5: max-input-bytes is the only pre-allocation defence, so
+  ;; call-with-native-document must not be able to lose it by omission. 5
+  ;; MiB comfortably covers real Markdown documents while still bounding
+  ;; the UTF-8 bytevector validate-markdown-input allocates.
+  (define default-max-input-bytes (* 5 1024 1024))
+
+  ;; extension-names has to be validated before any native resource is
+  ;; acquired. find-extension's FFI binding is declared (string): a
+  ;; non-string element would otherwise reach it from inside acquire!'s
+  ;; for-each, which runs after count-parser-new! and before dynamic-wind
+  ;; is established -- raising there leaks the parser and surfaces a raw
+  ;; Chez FFI type error instead of a structured condition. Checking every
+  ;; element up front means a bad name is rejected before anything at all
+  ;; is allocated, so there is nothing for release! to clean up.
+  (define (validate-extension-names names)
+    (for-each
+     (lambda (name)
+       (unless (string? name)
+         (raise (make-cmark-invalid-input 'extension-name-not-a-string))))
+     names)
+    names)
+
   ;; --- acquisition ------------------------------------------------------
   ;; Ordering matters: the handle is created BEFORE extensions are attached,
   ;; so that if attachment fails the release path already has the parser to
@@ -68,7 +93,7 @@
       (when (zero? p)
         (raise (make-cmark-error)))
       (count-parser-new!)
-      (let ((h (make-native-doc p 0 #t 0)))
+      (let ((h (make-native-doc p 0 #t option-bits 0)))
         (for-each
          (lambda (name)
            (let ((ext (find-extension name)))
@@ -116,14 +141,23 @@
           (native-doc-parser-set! h 0)))))
 
   ;; --- the scope --------------------------------------------------------
-  (define (call-with-native-document markdown option-bits extension-names proc)
-    (let* ((bytes (validate-markdown-input markdown (greatest-fixnum)))
-           (h (acquire! bytes option-bits extension-names)))
-      (dynamic-wind
-        (lambda ()
-          ;; Re-entry via a captured continuation lands here. The document is
-          ;; gone and cannot be rebuilt, so refuse rather than proceed.
-          (unless (native-doc-alive? h)
-            (raise (make-cmark-dead-document))))
-        (lambda () (proc h))
-        (lambda () (release! h))))))
+  ;; max-bytes is optional and defaults to default-max-input-bytes, so
+  ;; existing 4-argument callers keep the design spec 5.5 pre-allocation
+  ;; defence rather than losing it silently.
+  (define call-with-native-document
+    (case-lambda
+      ((markdown option-bits extension-names proc)
+       (call-with-native-document markdown option-bits extension-names proc
+                                   default-max-input-bytes))
+      ((markdown option-bits extension-names proc max-bytes)
+       (let* ((bytes (validate-markdown-input markdown max-bytes))
+              (names (validate-extension-names extension-names))
+              (h (acquire! bytes option-bits names)))
+         (dynamic-wind
+           (lambda ()
+             ;; Re-entry via a captured continuation lands here. The document
+             ;; is gone and cannot be rebuilt, so refuse rather than proceed.
+             (unless (native-doc-alive? h)
+               (raise (make-cmark-dead-document))))
+           (lambda () (proc h))
+           (lambda () (release! h))))))))

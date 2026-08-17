@@ -43,7 +43,8 @@
     make-cmark-extension-unavailable cmark-extension-unavailable?
     (name cmark-extension-unavailable-name))
 
-  ;; reason is a symbol: 'embedded-nul, 'too-large, 'not-a-string.
+  ;; reason is a symbol: 'embedded-nul, 'too-large, 'not-a-string,
+  ;; 'extension-name-not-a-string.
   (define-condition-type &cmark-invalid-input &cmark-error
     make-cmark-invalid-input cmark-invalid-input?
     (reason cmark-invalid-input-reason))
