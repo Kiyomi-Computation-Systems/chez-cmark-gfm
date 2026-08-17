@@ -69,13 +69,21 @@ endif
 
 SRFI_SRC     := vendor/chez-srfi
 SRFI_LIBS    := $(BUILD_DIR)/scheme-libs
-CHEZ_LIBDIRS := src:$(SRFI_LIBS)
+CHEZ_LIBDIRS := src:tests:$(SRFI_LIBS)
 TESTS        := $(wildcard tests/test-*.sps)
 
 # The differential suite spawns ~400 cmark-gfm subprocesses. Those are separate
 # processes and are NOT instrumented by the memory tools, so they add no
 # coverage here -- test-render.sps already exercises every native allocation
 # this stage introduces. Excluded by name so the omission is visible.
+#
+# test-ast-differential.sps also spawns subprocesses -- its own pinned-CLI leg
+# -- but stays IN, unlike test-differential.sps above: it has a FIRST leg that
+# runs in-process, comparing our AST's XML serialization against cmark's own
+# render-xml on the same live root, which allocates and frees native objects
+# inside this very Chez process before the CLI leg ever runs. That is exactly
+# what Valgrind/ASan need to see, so excluding this suite would drop coverage
+# no other suite provides (design spec 2026-08-17-stage-3-ast-design.md 9.1).
 MEMORY_TESTS := $(filter-out tests/test-differential.sps,$(TESTS))
 
 .PHONY: all build deps check-pins check-purity dev test test-memory vendor clean prod deps-info
@@ -119,10 +127,11 @@ check-pins:
 	     exit 1 ;; \
 	esac
 
-# options.sls must import no library that loads a shared object, directly or
-# transitively (its own header comment states this). That purity is what
-# makes every one of test-options.sps's 36 assertions unable to pass by
-# accident because of native behaviour -- they exercise Scheme values only.
+# options.sls and ast.sls must import no library that loads a shared object,
+# directly or transitively (each file's own header comment states this).
+# That purity is what makes every one of test-options.sps's 49 assertions
+# and test-ast.sps's 30 unable to pass by accident because of native
+# behaviour -- they exercise Scheme values only.
 # Poisoning CHEZ_CMARK_GFM_SHIM with a path that looks absolute but does not
 # exist is a probe: if nothing in the suite's import chain ever reaches
 # (cmark gfm private native), the variable is never even read and the suite
@@ -131,26 +140,32 @@ check-pins:
 # and the suite fails outright. Per AGENTS.md ("prefer a check to a
 # comment"): the check-pins comment above was itself violated in the same
 # commit that introduced it, and only started holding once it became a
-# check. This is the same lesson applied to the options.sls boundary.
+# check. This is the same lesson applied to the options.sls and ast.sls
+# boundary.
 #
 # Caveat proven while wiring this up: Chez only instantiates an imported
 # library's body when something actually REFERENCES one of its bindings, so
-# an import added to options.sls but never called is invisible to this
-# check -- it is the same elision that lets an unused import pass silently
-# elsewhere. That is not a gap in practice: a real accidental dependency is
-# something options.sls actually CALLS, and that is exactly what trips this.
+# an import added to options.sls or ast.sls but never called is invisible to
+# this check -- it is the same elision that lets an unused import pass
+# silently elsewhere. That is not a gap in practice: a real accidental
+# dependency is something one of them actually CALLS, and that is exactly
+# what trips this.
 check-purity: build deps
-	@echo "=== check-purity: tests/test-options.sps, CHEZ_CMARK_GFM_SHIM poisoned ==="
-	@if CHEZ_CMARK_GFM_SHIM=/nonexistent CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) \
-	    $(CHEZ) --program tests/test-options.sps; then \
-	  echo "purity holds: options.sls pulled in no native code"; \
-	else \
-	  echo "PURITY VIOLATED: tests/test-options.sps failed with CHEZ_CMARK_GFM_SHIM" >&2; \
-	  echo "poisoned to a nonexistent path. Its import chain now reaches" >&2; \
-	  echo "(cmark gfm private native), which loads a shared object -- check what" >&2; \
-	  echo "options.sls (or something it imports) just started pulling in." >&2; \
-	  exit 1; \
-	fi
+	@fail=0; \
+	for t in tests/test-options.sps tests/test-ast.sps; do \
+	  echo "=== check-purity: $$t, CHEZ_CMARK_GFM_SHIM poisoned ==="; \
+	  if CHEZ_CMARK_GFM_SHIM=/nonexistent CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) \
+	      $(CHEZ) --program $$t; then \
+	    echo "purity holds: $$t pulled in no native code"; \
+	  else \
+	    echo "PURITY VIOLATED: $$t failed with CHEZ_CMARK_GFM_SHIM poisoned" >&2; \
+	    echo "to a nonexistent path. Its import chain now reaches" >&2; \
+	    echo "(cmark gfm private native), which loads a shared object -- check" >&2; \
+	    echo "what it (or something it imports) just started pulling in." >&2; \
+	    fail=1; \
+	  fi; \
+	done; \
+	exit $$fail
 
 # Always relinks rather than using a stamp file: a stamp keyed on nothing the
 # submodule pin touches would leave stale symlinks after a re-pin. `ln -sfn` is
@@ -236,7 +251,7 @@ test: build deps check-pins
 test-memory: build deps check-pins
 ifeq ($(UNAME_S),Linux)
 	@for t in $(MEMORY_TESTS); do \
-	  CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) valgrind --error-exitcode=9 \
+	  CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) CMARK_CLI=$(CMARK_CLI) valgrind --error-exitcode=9 \
 	    --leak-check=full --show-leak-kinds=definite \
 	    $(CHEZ) --program $$t || exit 1; \
 	done
@@ -249,6 +264,7 @@ else
 # trap") instead of the diagnostic this target exists to provide. Observed
 # on this exact recipe; see stage-2-mutation-log.md, Mutation C.
 	CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) \
+	  CMARK_CLI=$(CMARK_CLI) \
 	  DYLD_INSERT_LIBRARIES="$$(command ls $$(dirname $$(xcrun --find clang))/../lib/clang/*/lib/darwin/libclang_rt.asan_osx_dynamic.dylib | head -1)" \
 	  ASAN_OPTIONS=detect_leaks=0 \
 	  MallocNanoZone=0 \

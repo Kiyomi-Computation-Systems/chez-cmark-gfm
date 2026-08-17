@@ -57,7 +57,7 @@
         ((= i (string-length markdown))
          (let ((bv (string->utf8 markdown)))
            (if (> (bytevector-length bv) max-bytes)
-               (raise (make-cmark-invalid-input 'too-large))
+               (raise (make-cmark-resource-limit 'too-large max-bytes))
                bv)))
         ((char=? #\nul (string-ref markdown i))
          (raise (make-cmark-invalid-input 'embedded-nul)))

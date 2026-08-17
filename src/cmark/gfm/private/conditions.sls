@@ -20,6 +20,9 @@
           &cmark-invalid-input make-cmark-invalid-input
           cmark-invalid-input? cmark-invalid-input-reason
 
+          &cmark-resource-limit make-cmark-resource-limit
+          cmark-resource-limit? cmark-resource-limit-value
+
           &cmark-shim-unavailable make-cmark-shim-unavailable
           cmark-shim-unavailable? cmark-shim-unavailable-path
 
@@ -55,6 +58,22 @@
   (define-condition-type &cmark-invalid-input &cmark-error
     make-cmark-invalid-input cmark-invalid-input?
     (reason cmark-invalid-input-reason))
+
+  ;; A resource ceiling, not malformed input. Derives from
+  ;; &cmark-invalid-input rather than from &cmark-error directly so that 0.1
+  ;; callers guarding cmark-invalid-input? on an oversized document keep
+  ;; working unchanged (design spec 6.2), while new code can catch the whole
+  ;; class of "the input was fine, the budget was too small" -- the one input
+  ;; failure where retrying with a larger limit is a sensible response.
+  ;;
+  ;; One added field, not two. A `limit` field naming the category would be
+  ;; one-to-one redundant with the inherited `reason`, and two fields that
+  ;; must agree forever is the invariant limits.sls's header argues against.
+  ;; reason discriminates ('too-large, 'too-many-nodes, 'too-deep); value
+  ;; carries what reason cannot -- the ceiling as configured by the caller.
+  (define-condition-type &cmark-resource-limit &cmark-invalid-input
+    make-cmark-resource-limit cmark-resource-limit?
+    (value cmark-resource-limit-value))
 
   (define-condition-type &cmark-shim-unavailable &cmark-error
     make-cmark-shim-unavailable cmark-shim-unavailable?

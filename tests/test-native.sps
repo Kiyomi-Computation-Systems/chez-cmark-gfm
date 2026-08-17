@@ -3,6 +3,7 @@
         (srfi :64)      ; (rnrs programs) -- importing it from
         (cmark gfm private native)    ; (chezscheme) too is a conflict
         (cmark gfm private conditions)
+        (cmark gfm private scope)
         ;; foreign-alloc / foreign-set! / foreign-free build and mutate
         ;; real C buffers for the c-string->string tests below. current-
         ;; directory anchors the synthetic absolute paths used by the
@@ -258,6 +259,146 @@
   #f
   (= (option-bits #f #f #f #f #f #f)
      (option-bits #t #t #t #f #t #t)))
+
+;; --- Stage 3: node accessors -------------------------------------------
+;; Driven through call-with-native-document rather than a bare parser so the
+;; teardown rules of ADR-0005 and ADR-0006 keep applying to every probe here.
+(define (with-root markdown exts proc)
+  (call-with-native-document
+   markdown (option-bits #f #t #f #f #f #f) exts
+   (lambda (h) (proc (doc-root h)))))
+
+;; Walk a path of zero-based child indices down from a node.
+(define (walk node path)
+  (if (null? path)
+      node
+      (let loop ((n (node-first-child node)) (i (car path)))
+        (if (zero? i)
+            (walk n (cdr path))
+            (loop (node-next n) (- i 1))))))
+
+(define (type-at markdown exts path)
+  (with-root markdown exts
+             (lambda (root) (c-string->string (node-type-string (walk root path))))))
+
+(test-equal "the root's type string is document"
+  "document" (type-at "# hi\n" '() '()))
+(test-equal "a heading's type string is heading"
+  "heading" (type-at "# hi\n" '() '(0)))
+(test-equal "node-next reaches the second block, not the first"
+  "paragraph" (type-at "# hi\n\npara\n" '() '(1)))
+(test-equal "a heading's child is a text node"
+  "text" (type-at "# hi\n" '() '(0 0)))
+
+(test-equal "node-heading-level reads the level"
+  3 (with-root "### three\n" '() (lambda (r) (node-heading-level (walk r '(0))))))
+(test-equal "node-literal copies the text"
+  "hi" (with-root "# hi\n" '()
+         (lambda (r) (c-string->string (node-literal (walk r '(0 0)))))))
+(test-equal "node-url and node-title read a link"
+  '("http://e.example/" "T")
+  (with-root "[x](http://e.example/ \"T\")\n" '()
+    (lambda (r)
+      (let ((link (walk r '(0 0))))
+        (list (c-string->string (node-url link))
+              (c-string->string (node-title link)))))))
+(test-equal "node-fence-info reads a fence info string"
+  "scheme"
+  (with-root "```scheme\n(+ 1 2)\n```\n" '()
+    (lambda (r) (c-string->string (node-fence-info (walk r '(0)))))))
+;; Empty, not #f: cmark returns "" for a code block with no info string and
+;; NULL only for a node that is not a code block (src/cmark-gfm.h). Conflating
+;; the two would invent data, so the distinction is asserted.
+(test-equal "an indented code block has an empty, not absent, fence info"
+  ""
+  (with-root "    indented\n" '()
+    (lambda (r) (c-string->string (node-fence-info (walk r '(0)))))))
+
+;; 2 = CMARK_ORDERED_LIST, 1 = CMARK_PERIOD_DELIM. The numbers stay here in
+;; layer 2; convert.sls maps them to symbols.
+(test-equal "list accessors read kind, start, delim, and tightness"
+  '(2 3 1 1)
+  (with-root "3. one\n4. two\n" '()
+    (lambda (r)
+      (let ((l (walk r '(0))))
+        (list (node-list-type l) (node-list-start l)
+              (node-list-delim l) (node-list-tight l))))))
+(test-equal "a bullet list reports kind 1 and start 0"
+  '(1 0)
+  (with-root "- one\n" '()
+    (lambda (r)
+      (let ((l (walk r '(0))))
+        (list (node-list-type l) (node-list-start l))))))
+(test-equal "node-item-index reads the second item's index"
+  4 (with-root "3. one\n4. two\n" '()
+      (lambda (r) (node-item-index (walk r '(0 1))))))
+
+(test-equal "position accessors read the paragraph's span"
+  '(3 1 3 4)
+  (with-root "# hi\n\npara\n" '()
+    (lambda (r)
+      (let ((p (walk r '(1))))
+        (list (node-start-line p) (node-start-column p)
+              (node-end-line p) (node-end-column p))))))
+
+;; --- extension accessors ------------------------------------------------
+;; These three live in libcmark-gfm-extensions, not libcmark-gfm. They resolve
+;; only because native.sls loads both shared objects explicitly, ahead of the
+;; shim; if that ever regressed these would fail at IMPORT time on Linux while
+;; still passing on macOS, whose loader searches dependencies.
+(define table-md "| a | b |\n|:--|--:|\n| 1 | 2 |\n")
+
+(test-equal "a table's type string is table"
+  "table" (type-at table-md '("table") '(0)))
+(test-equal "a header row's type string is table_header, not table_row"
+  "table_header" (type-at table-md '("table") '(0 0)))
+(test-equal "a body row's type string is table_row"
+  "table_row" (type-at table-md '("table") '(0 1)))
+
+(test-equal "table-columns counts the columns"
+  2 (with-root table-md '("table") (lambda (r) (table-columns (walk r '(0))))))
+;; 108 = 'l', 114 = 'r' (vendor/cmark-gfm/extensions/table.c:387-391).
+(test-equal "table-alignments yields one byte per column"
+  '(108 114)
+  (with-root table-md '("table")
+    (lambda (r)
+      (let ((t (walk r '(0))))
+        (alignment-bytes (table-alignments t) (table-columns t))))))
+(test-equal "table-row-is-header agrees with the type string"
+  '(1 0)
+  (with-root table-md '("table")
+    (lambda (r)
+      (list (table-row-is-header (walk r '(0 0)))
+            (table-row-is-header (walk r '(0 1)))))))
+
+;; A task item's type string is "tasklist", which is the ONLY way to tell a
+;; task item from a plain one: get_tasklist_item_checked returns false both
+;; for an unchecked task and for a non-task
+;; (vendor/cmark-gfm/extensions/tasklist.c:30-40).
+(define task-md "- [x] done\n- [ ] todo\n")
+(test-equal "a task item's type string is tasklist"
+  "tasklist" (type-at task-md '("tasklist") '(0 0)))
+(test-equal "a plain item's type string is item"
+  "item" (type-at "- plain\n" '("tasklist") '(0 0)))
+(test-equal "tasklist-checked distinguishes checked from unchecked"
+  '(1 0)
+  (with-root task-md '("tasklist")
+    (lambda (r)
+      (list (tasklist-checked (walk r '(0 0)))
+            (tasklist-checked (walk r '(0 1)))))))
+;; The shim wrapper's reason for existing: the underlying entry point returns
+;; C _Bool, whose upper return-register bits are unspecified. Values other
+;; than exactly 1 and 0 above would be the symptom.
+(test-equal "tasklist-checked returns exactly 1 or 0, never a stray bit pattern"
+  #t
+  (with-root task-md '("tasklist")
+    (lambda (r) (and (memv (tasklist-checked (walk r '(0 0))) '(0 1)) #t))))
+
+;; alignment-bytes must not read through a NULL pointer.
+(test-equal "alignment-bytes yields zeros for a NULL array"
+  '(0 0 0) (alignment-bytes 0 3))
+(test-equal "alignment-bytes yields the empty list for zero columns"
+  '() (alignment-bytes 0 0))
 
 (test-end "native")
 

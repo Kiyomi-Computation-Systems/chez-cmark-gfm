@@ -43,4 +43,28 @@ long chez_cmark_live_parsers(void);
 long chez_cmark_live_roots(void);
 long chez_cmark_live_buffers(void);
 
+/* Tasklist checked state, normalised to int.
+ *
+ * cmark_gfm_extensions_get_tasklist_item_checked returns C _Bool. On the
+ * x86-64 SysV ABI a _Bool return occupies only the low byte of the return
+ * register, with the upper bits unspecified, so binding that entry point
+ * directly as `int` would read whatever happens to be there. Normalising in C
+ * -- where the return type is known to the compiler -- is exactly the
+ * "stable, Chez-friendly function" job plan 8.1 assigns the shim, and adds no
+ * traversal, parsing, or rendering (ADR-0002).
+ *
+ * Returns 1 if node is a checked task-list item, 0 otherwise (including for
+ * a node that is not a task-list item at all).
+ *
+ * `struct cmark_node` is forward-declared at file scope (rather than left to
+ * be introduced implicitly by the parameter list below) because a tag whose
+ * first appearance is inside a function's parameter-type-list has prototype
+ * scope only (C99 6.2.1p7): it does not extend to cmark-gfm-shim.c's
+ * definition of this same function, so without this line the header's
+ * `struct cmark_node` and the .c file's are two distinct, incompatible
+ * incomplete types, and the two declarations of chez_cmark_tasklist_checked
+ * conflict -- a hard error, independent of -Werror. */
+struct cmark_node;
+int chez_cmark_tasklist_checked(struct cmark_node *node);
+
 #endif /* CHEZ_CMARK_GFM_SHIM_H */
