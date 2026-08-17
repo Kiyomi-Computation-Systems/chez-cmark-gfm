@@ -2522,7 +2522,7 @@ Create `src/cmark/gfm/parse.sls`:
                                (cmark-options-max-nodes o)
                                (cmark-options-max-depth o)
                                (cmark-options-source-positions? o))))
-        (cmark-options-max-input-bytes o)))))
+        (cmark-options-max-input-bytes o))))))
 ```
 
 - [ ] **Step 4: Raise the input-size condition as a resource limit**
@@ -2583,8 +2583,12 @@ Expected: 13 new passes, `# of unexpected failures 0`.
 
 Change `parse.sls`'s one-argument case to use `(default-cmark-options)`. Run the
 suite. Expected: `the one-argument form attaches source positions` FAILS with
-`#f`, while `the two-argument form honours an explicit source-positions? #t`
-still passes — the arity default is what broke, and only that. Revert.
+`#f`, **and so do the two other assertions that call the one-argument form** —
+`positions carry cmark's real line and column spans` and `the empty document
+carries cmark's real 1:1-0:0 span`. That collateral is legitimate: all three
+read positions produced by the same defaulted call. What matters is that `the
+two-argument form honours an explicit source-positions? #t` still passes, which
+is what isolates the arity default from the flag's plumbing. Revert.
 
 Then, in `convert.sls`, make `node-source` ignore `convert-ctx-positions?` and
 always build a position. Run the suite. Expected: `the two-argument form
