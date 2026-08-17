@@ -370,6 +370,7 @@ be a make target, a test, or an assertion.
 | Options are validated after functional update | One `validate` shared by both constructors |
 | Our extension names match cmark's | Explicit alist plus a resolves-natively test |
 | The counters actually count | "Counters must move" assertion |
+| `options.sls` loads no native code | `make check-purity` |
 
 ## 10. Deliberate coverage gaps
 

@@ -78,7 +78,7 @@ TESTS        := $(wildcard tests/test-*.sps)
 # this stage introduces. Excluded by name so the omission is visible.
 MEMORY_TESTS := $(filter-out tests/test-differential.sps,$(TESTS))
 
-.PHONY: all build deps check-pins dev test test-memory vendor clean prod deps-info
+.PHONY: all build deps check-pins check-purity dev test test-memory vendor clean prod deps-info
 
 all: build
 
@@ -118,6 +118,39 @@ check-pins:
 	     echo "Consumers install what Akku.lock names; CI tests the submodule." >&2; \
 	     exit 1 ;; \
 	esac
+
+# options.sls must import no library that loads a shared object, directly or
+# transitively (its own header comment states this). That purity is what
+# makes every one of test-options.sps's 36 assertions unable to pass by
+# accident because of native behaviour -- they exercise Scheme values only.
+# Poisoning CHEZ_CMARK_GFM_SHIM with a path that looks absolute but does not
+# exist is a probe: if nothing in the suite's import chain ever reaches
+# (cmark gfm private native), the variable is never even read and the suite
+# passes untouched; if anything does reach it, native.sls's library body
+# raises &cmark-shim-unavailable at IMPORT time, before a single test runs,
+# and the suite fails outright. Per AGENTS.md ("prefer a check to a
+# comment"): the check-pins comment above was itself violated in the same
+# commit that introduced it, and only started holding once it became a
+# check. This is the same lesson applied to the options.sls boundary.
+#
+# Caveat proven while wiring this up: Chez only instantiates an imported
+# library's body when something actually REFERENCES one of its bindings, so
+# an import added to options.sls but never called is invisible to this
+# check -- it is the same elision that lets an unused import pass silently
+# elsewhere. That is not a gap in practice: a real accidental dependency is
+# something options.sls actually CALLS, and that is exactly what trips this.
+check-purity: build deps
+	@echo "=== check-purity: tests/test-options.sps, CHEZ_CMARK_GFM_SHIM poisoned ==="
+	@if CHEZ_CMARK_GFM_SHIM=/nonexistent CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) \
+	    $(CHEZ) --program tests/test-options.sps; then \
+	  echo "purity holds: options.sls pulled in no native code"; \
+	else \
+	  echo "PURITY VIOLATED: tests/test-options.sps failed with CHEZ_CMARK_GFM_SHIM" >&2; \
+	  echo "poisoned to a nonexistent path. Its import chain now reaches" >&2; \
+	  echo "(cmark gfm private native), which loads a shared object -- check what" >&2; \
+	  echo "options.sls (or something it imports) just started pulling in." >&2; \
+	  exit 1; \
+	fi
 
 # Always relinks rather than using a stamp file: a stamp keyed on nothing the
 # submodule pin touches would leave stale symlinks after a re-pin. `ln -sfn` is
@@ -210,9 +243,15 @@ ifeq ($(UNAME_S),Linux)
 else
 	@echo "macOS: ASan preload only; LeakSanitizer is unsupported on arm64."
 	@echo "Leak claims must come from Linux CI (ADR-0003)."
+# MallocNanoZone=0: macOS's Nano allocator validates a freed block's own
+# metadata and can SIGTRAP on a double-free before ASan's interposed free()
+# gets a chance to run its check -- an unattributed crash (bare "Trace/BPT
+# trap") instead of the diagnostic this target exists to provide. Observed
+# on this exact recipe; see stage-2-mutation-log.md, Mutation C.
 	CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) \
 	  DYLD_INSERT_LIBRARIES="$$(command ls $$(dirname $$(xcrun --find clang))/../lib/clang/*/lib/darwin/libclang_rt.asan_osx_dynamic.dylib | head -1)" \
 	  ASAN_OPTIONS=detect_leaks=0 \
+	  MallocNanoZone=0 \
 	  sh -c 'for t in $(MEMORY_TESTS); do $(CHEZ) --program $$t || exit 1; done'
 endif
 

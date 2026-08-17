@@ -44,8 +44,16 @@
           (cmark gfm private conditions)
           (cmark gfm private native))
 
+  ;; Deliberately does NOT call ensure-native-loaded!. runtime-version-string
+  ;; needs no initialisation: its foreign procedure is bound as soon as
+  ;; native.sls's library body loads the shared object, which has already
+  ;; happened by the time any code in this library runs. ensure-native-loaded!
+  ;; adds only the version-compatibility check and extension registration on
+  ;; top of that -- and the compatibility check is exactly what a caller
+  ;; reaches for this procedure to diagnose. Calling it here would make
+  ;; cmark-gfm-version raise &cmark-version-incompatible on the one runtime it
+  ;; exists to report on, instead of answering the question asked.
   (define (cmark-gfm-version)
-    (ensure-native-loaded!)
     (runtime-version-string))
 
   (define (cmark-gfm-version-compatible?)

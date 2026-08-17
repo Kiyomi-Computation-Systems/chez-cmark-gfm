@@ -71,6 +71,13 @@ jobs:
       - name: Build (vendored path)
         run: make HAVE_PKG=no build
 
+      # options.sls must import no library that loads a shared object,
+      # directly or transitively -- that purity is what makes every
+      # assertion in test-options.sps unable to pass by accident because of
+      # native behaviour. See the Makefile's check-purity target for how.
+      - name: Check options.sls stays free of native imports
+        run: make HAVE_PKG=no check-purity
+
       - name: Test (vendored path)
         run: make HAVE_PKG=no test
 
