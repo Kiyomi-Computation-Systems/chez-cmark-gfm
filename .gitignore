@@ -113,7 +113,10 @@ lsan.log*
 *.valgrind
 vgcore.*
 core
-core.*
+# PID-suffixed, not a bare extension wildcard: an unqualified `core.*` also
+# matches tests/fixtures/core.md (Task 8), silently dropping it from `git
+# add`. Real core dumps are core.<pid>, never core.<word>.
+core.[0-9]*
 
 # Local test scratch output
 tests/output/
