@@ -276,11 +276,14 @@
                             props children source))))
 
   ;; Exported so tests can drive it directly (see the type-string note at
-  ;; the top of this file), but never call this with type-string
-  ;; "table_cell": alignment is supplied positionally by convert-node/index,
-  ;; the only path convert-children takes, so a direct table_cell call here
-  ;; would silently produce a table-cell node with no alignment property.
+  ;; the top of this file). table_cell is refused rather than silently
+  ;; producing an alignment-less table-cell node: convert-node/index is the
+  ;; only path that has the child index alignment is drawn from.
   (define (convert-node p type-string depth ctx)
+    (when (string=? type-string "table_cell")
+      (assertion-violation 'convert-node
+        "table_cell must be converted through convert-node/index, which supplies alignment positionally; direct calls cannot"
+        type-string))
     (with-node p type-string depth ctx #f))
 
   ;; The document root is depth 1; a child is its parent's depth plus one.

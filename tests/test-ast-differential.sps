@@ -291,9 +291,9 @@
 (define (nested-quotes n) (string-append (make-string n #\>) " deep\n"))
 
 (test-equal "in-process XML agrees at 25 levels of nesting, past MAX_INDENT"
-  #f (divergence (nested-quotes 25) no-positions))
+  'agree (or (divergence (nested-quotes 25) no-positions) 'agree))
 (test-equal "in-process XML agrees at 25 levels with positions"
-  #f (divergence (nested-quotes 25) positions))
+  'agree (or (divergence (nested-quotes 25) positions) 'agree))
 
 ;; --- leg two: the pinned CLI --------------------------------------------
 ;; The in-process leg compares our serializer against cmark's renderer inside

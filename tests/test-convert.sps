@@ -139,9 +139,18 @@
 ;; assertion passes identically whether tight? was computed correctly or never
 ;; produced at all. Verified: deleting the tight? pair from list-props leaves the
 ;; two-argument form green.
+;;
+;; The outer '(reported #f), not a bare #f, for the same reason as the
+;; source-positions? #f test above: a bare #f expected value is exactly what
+;; SRFI-64 also reports when ast-of or first-of-type raises (an empty tree's
+;; first-of-type taking car of '(), say), which would be indistinguishable
+;; from a genuine, correctly-computed #f. Tagging the result is what keeps
+;; the 'absent sentinel's own protection from being undermined one level up.
 (test-equal "a loose list reports tight? #f"
-  #f (markdown-node-property (first-of-type (ast-of "- a\n\n- b\n") 'list)
-                             'tight? 'absent))
+  '(reported #f)
+  (list 'reported
+        (markdown-node-property (first-of-type (ast-of "- a\n\n- b\n") 'list)
+                                 'tight? 'absent)))
 
 ;; index is one of the three properties cmark's XML never emits, so the
 ;; differential harness of Tasks 10-11 cannot see it. It is asserted directly
@@ -513,11 +522,17 @@
    (markdown-node-source
     (first-of-type (markdown->ast "hi\n") 'paragraph))))
 
+;; '(honoured #f), not a bare #f: a bare #f is also what SRFI-64 reports for
+;; an exception raised anywhere in the expression (an empty tree's first-of-type
+;; taking car of '(), say), which would be indistinguishable from a genuine
+;; #f source. Wrapping the result in a tagged list means only a real #f
+;; source, read successfully, can produce the expected value.
 (test-equal "the two-argument form honours an explicit source-positions? #f"
-  #f
-  (markdown-node-source
-   (first-of-type (markdown->ast "hi\n" (make-cmark-options 'source-positions? #f))
-                  'paragraph)))
+  '(honoured #f)
+  (list 'honoured
+        (markdown-node-source
+         (first-of-type (markdown->ast "hi\n" (make-cmark-options 'source-positions? #f))
+                        'paragraph))))
 
 (test-equal "the two-argument form honours an explicit source-positions? #t"
   #t
