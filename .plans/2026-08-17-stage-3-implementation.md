@@ -48,17 +48,19 @@ Every task's requirements implicitly include this section.
 | `src/cmark/gfm/ast.sls` | **Pure** node and source-position records, accessors, functional update, `map`/`fold` | Create (Tasks 2–3) |
 | `src/cmark/gfm/options.sls` | Add `max-nodes`, `max-depth`, `default-ast-options` | Modify (Task 4) |
 | `src/cmark-gfm-shim.{c,h}` | Add `chez_cmark_tasklist_checked` — the `_Bool` ABI wrapper | Modify (Task 5) |
-| `src/cmark/gfm/private/native.sls` | Add 19 accessor bindings + `alignment-bytes` | Modify (Task 5) |
-| `src/cmark/gfm/private/convert.sls` | The native walk, the type table, the limit counters | Create (Tasks 6–10) |
-| `src/cmark/gfm/parse.sls` | Layer-3 entry point: `markdown->ast` | Create (Task 11) |
-| `src/cmark/gfm.sls` | Façade: re-export the AST bindings and `markdown->ast` | Modify (Task 11) |
+| `src/cmark/gfm/private/native.sls` | Add 21 accessor bindings + `alignment-bytes` | Modify (Task 5) |
+| `src/cmark/gfm/private/convert.sls` | The native walk, the type table, the limit counters | Create (Tasks 6–8) |
+| `src/cmark/gfm/parse.sls` | Layer-3 entry point: `markdown->ast` | Create (Task 9) |
+| `src/cmark/gfm.sls` | Façade: re-export the AST bindings and `markdown->ast` | Modify (Task 9) |
 | `tests/test-conditions.sps` | Extend for `&cmark-resource-limit` | Modify (Task 1) |
 | `tests/test-ast.sps` | **Pure** node-algebra suite — loads no shared object | Create (Tasks 2–3) |
 | `tests/test-options.sps` | Extend for the two limits and `default-ast-options` | Modify (Task 4) |
 | `tests/test-native.sps` | Extend for the new accessors and the `_Bool` wrapper | Modify (Task 5) |
-| `tests/test-convert.sps` | Per-type conversion, key sets, positions, limits, fallback | Create (Tasks 6–10) |
-| `tests/test-ast-differential.sps` | AST→XML serializer; in-process then CLI leg | Create (Tasks 12–13) |
-| `Makefile` | `check-purity` covers `test-ast.sps` | Modify (Task 2) |
+| `tests/test-convert.sps` | Per-type conversion, key sets, positions, limits, fallback | Create (Tasks 6–9) |
+| `tests/test-ast-differential.sps` | AST→XML serializer; in-process then CLI leg | Create (Tasks 10–11) |
+| `tests/cmark-testing.sls` | Helpers shared by the two differential suites | Create (Task 11) |
+| `tests/test-differential.sps` | Migrate onto the shared helpers; no behaviour change | Modify (Task 11) |
+| `Makefile` | `check-purity` covers `test-ast.sps`; `tests` on `CHEZ_LIBDIRS` | Modify (Tasks 2, 11) |
 | `.plans/stage-3-mutation-log.md` | Evidence that each assertion fails when its decision breaks | Create (Task 12) |
 | `Akku.manifest`, `CHANGELOG.md`, `README.org`, `.plans/decisions/0009-*.md`, `0010-*.md` | Release 0.2 | Modify/Create (Task 13) |
 
@@ -2744,7 +2746,8 @@ Create `tests/test-ast-differential.sps`:
 ;; Without this, every agreement assertion below could be passing because
 ;; divergence always returns #f. Seeded with a document whose XML differs
 ;; under two option settings.
-(test-assert "the comparison detects a real difference when one exists"
+(test-equal "the comparison detects a real difference when one exists"
+  #t
   (let ((a (ast->xml (markdown->ast "# hi\n" positions)))
         (b (markdown->xml "# hi\n" no-positions)))
     (not (string=? a b))))
@@ -2867,21 +2870,115 @@ git commit -m "test: verify the AST against cmark's own XML serialization"
 
 ---
 
-# Task 11: The CLI differential leg
+# Task 11: Shared test helpers and the CLI differential leg
 
 **Files:**
+- Create: `tests/cmark-testing.sls`
+- Modify: `Makefile` (add `tests` to `CHEZ_LIBDIRS`)
+- Modify: `tests/test-differential.sps` (migrate onto the shared helpers)
 - Modify: `tests/test-ast-differential.sps`
 
 **Interfaces:**
-- Consumes: the serializer and `divergence` from Task 10.
-- Produces: a second comparison leg against the pinned `cmark-gfm` binary, so the in-process agreement cannot be two halves of the same mistake.
+- Consumes: the serializer, `ast->xml`, `divergence`, `positions`, `no-positions`, `with-exts`, `with-exts+pos`, and `nested-quotes` from Task 10.
+- Produces: `(cmark-testing)` exporting `file->bytevector`, `string-contains?`, and `capture-command`; plus a second comparison leg against the pinned `cmark-gfm` binary.
 
-The CLI helpers mirror `tests/test-differential.sps:49-86`, which already
-established the rules: a missing or mismatched CLI **fails** the suite rather
-than skipping it, and the flag string is derived from the options record so the
-two sides cannot describe different configurations by accident.
+**Why a shared library.** Task 10's suite needs the same
+`file->bytevector`, `string-contains?`, and subprocess-capture helpers that
+`tests/test-differential.sps:29-71` already has. Writing them again is about
+40 duplicated lines, and this repo's standing preference is to remove a
+duplicated invariant rather than assert it. The three helpers extracted are
+generic — read a file, find a substring, run a command and capture its bytes.
+`options->flags` is **not** extracted: Stage 2's takes a format argument and
+Stage 3's is xml-only, so sharing it would couple two suites that should be
+free to diverge.
 
-- [ ] **Step 1: Write the failing tests**
+The single-element library name `(cmark-testing)` keeps the file at
+`tests/cmark-testing.sls` with no directory nesting; Chez resolves it against
+`CHEZ_LIBDIRS`, which this task extends to include `tests`.
+
+- [ ] **Step 1: Write the shared library**
+
+Create `tests/cmark-testing.sls`:
+
+```scheme
+#!r6rs
+;;; Helpers shared by the two differential suites.
+;;;
+;;; Only genuinely generic operations live here: read a file, find a
+;;; substring, run a command and capture its bytes. Suite-specific logic --
+;;; notably each suite's options-to-CLI-flags mapping -- stays in the suite,
+;;; because the two differ (Stage 2's is per-format, Stage 3's is xml-only)
+;;; and coupling them would stop either from changing independently.
+;;;
+;;; This library is test-only and deliberately NOT under src/. It is reachable
+;;; because the Makefile puts tests/ on CHEZ_LIBDIRS.
+(library (cmark-testing)
+  (export file->bytevector string-contains? capture-command)
+  (import (rnrs)
+          (only (chezscheme) system))
+
+  (define (file->bytevector path)
+    (let* ((p (open-file-input-port path))
+           (bv (get-bytevector-all p)))
+      (close-port p)
+      (if (eof-object? bv) (make-bytevector 0) bv)))
+
+  (define (string-contains? hay needle)
+    (let ((h (string-length hay)) (n (string-length needle)))
+      (let loop ((i 0))
+        (cond ((> (+ i n) h) #f)
+              ((string=? needle (substring hay i (+ i n))) #t)
+              (else (loop (+ i 1)))))))
+
+  ;; Runs cmd with stdout redirected to out-path and stderr discarded, then
+  ;; returns the captured bytes. A non-zero exit is an ERROR, not an empty
+  ;; result: a silently empty capture would make a byte comparison pass
+  ;; against a CLI that never ran.
+  (define (capture-command cmd out-path)
+    (let ((rc (system (string-append cmd " > " out-path " 2>/dev/null"))))
+      (unless (zero? rc)
+        (error 'capture-command "command failed" cmd rc))
+      (file->bytevector out-path))))
+```
+
+- [ ] **Step 2: Put `tests` on the library path and migrate the Stage 2 suite**
+
+In `Makefile`, extend line 72:
+
+```make
+CHEZ_LIBDIRS := src:tests:$(SRFI_LIBS)
+```
+
+In `tests/test-differential.sps`, add `(cmark-testing)` to the import list,
+delete the now-duplicated `file->bytevector` and `string-contains?`
+definitions, and rewrite the two places that ran the CLI in terms of
+`capture-command`:
+
+```scheme
+(define (cli-version-line)
+  (utf8->string (capture-command (string-append cli " --version 2>&1")
+                                 out-path)))
+
+(define (run-cli flags fixture)
+  (capture-command (string-append cli " " flags " " fixture) out-path))
+```
+
+Note the `2>&1` stays inside the command string for the version probe, because
+`capture-command` discards stderr and `--version` output is worth capturing in
+full when the probe fails.
+
+- [ ] **Step 3: Prove the migration changed no behaviour**
+
+```bash
+make test
+```
+
+Expected: `test-differential` reports the same pass count as before this task
+(check `git stash` / re-run if unsure), and `ALL SUITES PASSED`. A refactor that
+changes a test count has changed behaviour and must be investigated, not
+accepted.
+
+- [ ] **Step 4: Write the failing CLI-leg tests**
 
 Insert into `tests/test-ast-differential.sps`, immediately **before** the final
 `(test-end "ast-differential")` line. First extend the import list at the top of
@@ -2891,7 +2988,8 @@ the file:
         ;; file-exists? is deliberately absent: (rnrs) already exports it and
         ;; requesting it here too fails the library body with "multiple
         ;; definitions for file-exists?".
-        (only (chezscheme) system getenv mkdir)
+        (only (chezscheme) getenv mkdir)
+        (cmark-testing)
 ```
 
 Then:
@@ -2900,43 +2998,28 @@ Then:
 ;; --- leg two: the pinned CLI --------------------------------------------
 ;; The in-process leg compares our serializer against cmark's renderer inside
 ;; one process. If both were wrong in the same way -- say, our AST and our
-;; understanding of xml.c drifted together -- that leg would still pass. The
-;; CLI is an independent witness.
+;; reading of xml.c drifted together -- that leg would still pass. The CLI is
+;; an independent witness.
 (define cli (or (getenv "CMARK_CLI") "cmark-gfm"))
 (define tmp-dir "tests/tmp")
 (define out-path "tests/tmp/ast-diff-out.bin")
+(define fixture-path "tests/tmp/ast-diff-in.md")
 
 (unless (file-exists? tmp-dir) (mkdir tmp-dir))
 
-(define (file->bytevector path)
-  (let* ((p (open-file-input-port path))
-         (bv (get-bytevector-all p)))
-    (close-port p)
-    (if (eof-object? bv) (make-bytevector 0) bv)))
-
-(define (string-contains? hay needle)
-  (let ((h (string-length hay)) (n (string-length needle)))
-    (let loop ((i 0))
-      (cond ((> (+ i n) h) #f)
-            ((string=? needle (substring hay i (+ i n))) #t)
-            (else (loop (+ i 1)))))))
-
 ;; A missing or mismatched CLI FAILS this suite. It does not skip it: "skip
 ;; when unavailable" is how an exit criterion silently stops being enforced.
-(define (cli-version-line)
-  (let ((rc (system (string-append cli " --version > " out-path " 2>&1"))))
-    (unless (zero? rc)
-      (error 'cli-version-line
-             "cmark-gfm CLI is not runnable -- set CMARK_CLI or run via make test"
-             cli rc))
-    (utf8->string (file->bytevector out-path))))
+;; Both supported acquisition paths ship the binary.
+(test-equal "the CLI is the same build as the loaded library"
+  #t
+  (string-contains?
+   (utf8->string (capture-command (string-append cli " --version 2>&1") out-path))
+   (string-append " " (cmark-gfm-version) " ")))
 
-(test-assert "the CLI is the same build as the loaded library"
-  (string-contains? (cli-version-line)
-                    (string-append " " (cmark-gfm-version) " ")))
-
-;; The flags come from the options record, so a mismatch between the two sides
-;; is impossible by construction. --to xml is fixed; this suite has one format.
+;; The flags come from the options record, so the two sides cannot describe
+;; different configurations by accident. --to xml is fixed: this suite has one
+;; format. Not shared with test-differential.sps's version, which is
+;; per-format -- see this task's preamble.
 (define (options->flags o)
   (string-append
    "--to xml"
@@ -2949,8 +3032,6 @@ Then:
    (fold-left (lambda (acc e) (string-append acc " -e " (symbol->string e)))
               "" (cmark-options-extensions o))))
 
-(define fixture-path "tests/tmp/ast-diff-in.md")
-
 (define (write-fixture markdown)
   (let ((p (open-file-output-port fixture-path (file-options no-fail))))
     (put-bytevector p (string->utf8 markdown))
@@ -2958,11 +3039,9 @@ Then:
 
 (define (cli-xml markdown o)
   (write-fixture markdown)
-  (let* ((cmd (string-append cli " " (options->flags o) " " fixture-path
-                             " > " out-path " 2>/dev/null"))
-         (rc (system cmd)))
-    (unless (zero? rc) (error 'cli-xml "CLI invocation failed" cmd rc))
-    (utf8->string (file->bytevector out-path))))
+  (utf8->string
+   (capture-command (string-append cli " " (options->flags o) " " fixture-path)
+                    out-path)))
 
 (define (cli-divergence markdown o)
   (let ((mine (ast->xml (markdown->ast markdown o)))
@@ -2971,7 +3050,8 @@ Then:
 
 ;; Same guard as the in-process leg: prove the detector can report a
 ;; difference before trusting it to report none.
-(test-assert "the CLI comparison detects a real difference when one exists"
+(test-equal "the CLI comparison detects a real difference when one exists"
+  #t
   (not (string=? (ast->xml (markdown->ast "# hi\n" positions))
                  (cli-xml "# hi\n" no-positions))))
 
@@ -3028,7 +3108,7 @@ Then:
                                                          'unsafe-html? #t)))))
 ```
 
-- [ ] **Step 2: Run it to verify it fails, then passes**
+- [ ] **Step 5: Run it to verify it fails, then passes**
 
 ```bash
 make test
@@ -3043,7 +3123,7 @@ Expected: any failure here is a genuine divergence between our serializer and
 the CLI. Fix and re-run until every case reports `#f`. Expected final state:
 `ast-differential` reports 76 passes, `# of unexpected failures 0`.
 
-- [ ] **Step 3: Confirm the new suite runs under the memory gate**
+- [ ] **Step 6: Confirm the new suite runs under the memory gate**
 
 `MEMORY_TESTS` filters out only `tests/test-differential.sps`, so
 `test-ast-differential.sps` is included automatically — and it should be: unlike
@@ -3058,11 +3138,12 @@ On macOS this reports the ASan-only caveat and cannot support a leak claim
 (ADR-0003). On Linux, expect a clean Valgrind run. If only macOS is available,
 say so when reporting rather than claiming the memory gate passed.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add tests/test-ast-differential.sps
-git commit -m "test: verify the AST against the pinned cmark-gfm CLI"
+git add tests/cmark-testing.sls tests/test-differential.sps \
+        tests/test-ast-differential.sps Makefile
+git commit -m "test: verify the AST against the pinned CLI, on shared helpers"
 ```
 
 ---
