@@ -208,6 +208,57 @@
   (guard (e ((cmark-shim-unavailable? e) (cmark-shim-unavailable-path e)))
     (load-shim a-real-non-library-file)))
 
+;; --- Stage 2: version string ------------------------------------------
+;; Not asserted against a hardcoded "0.29.0.gfm.13", which would only pin the
+;; fixture. Decoded from the packed runtime integer using the four-byte
+;; layout the Stage 0 spike established (major<<24 | minor<<16 | patch<<8 |
+;; gfm), so a binding that returned the wrong string, an empty string, or a
+;; stale pointer fails here.
+(define (decode-version v)
+  (string-append
+   (number->string (bitwise-arithmetic-shift-right v 24)) "."
+   (number->string (bitwise-and (bitwise-arithmetic-shift-right v 16) #xff)) "."
+   (number->string (bitwise-and (bitwise-arithmetic-shift-right v 8) #xff)) ".gfm."
+   (number->string (bitwise-and v #xff))))
+
+(test-equal "runtime-version-string agrees with the packed runtime version"
+  (decode-version (shim-runtime-version))
+  (runtime-version-string))
+
+(test-assert "the compiled and runtime versions are both in the supported range"
+  (and (version-supported? (shim-compiled-version))
+       (version-supported? (shim-runtime-version))))
+
+;; --- Stage 2: option bits are six DISTINCT bits ------------------------
+;; This is the only coverage validate-utf8? can have: the public API takes a
+;; Scheme string and string->utf8 always emits valid UTF-8, so
+;; CMARK_OPT_VALIDATE_UTF8 has no observable effect on any reachable input
+;; and no differential cell can discriminate it (design spec 10.1). Testing
+;; the BIT is honest; testing the behaviour would be an assertion that
+;; passes either way.
+(define (all-distinct? xs)
+  (cond ((null? xs) #t)
+        ((memv (car xs) (cdr xs)) #f)
+        (else (all-distinct? (cdr xs)))))
+
+(test-assert "each of the six option flags sets a distinct bit"
+  (all-distinct?
+   (list (option-bits #t #f #f #f #f #f)
+         (option-bits #f #t #f #f #f #f)
+         (option-bits #f #f #t #f #f #f)
+         (option-bits #f #f #f #t #f #f)
+         (option-bits #f #f #f #f #t #f)
+         (option-bits #f #f #f #f #f #t))))
+
+(test-assert "validate-utf8? is wired to a real bit even though its behaviour is unreachable"
+  (not (= (option-bits #t #f #f #f #f #f)
+          (option-bits #f #f #f #f #f #f))))
+
+(test-equal "all flags off is the default mask, and differs from all flags on"
+  #f
+  (= (option-bits #f #f #f #f #f #f)
+     (option-bits #t #t #t #f #t #t)))
+
 (test-end "native")
 
 (exit (if (zero? (test-runner-fail-count runner)) 0 1))

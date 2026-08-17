@@ -15,12 +15,14 @@
 ;;;      plus checked accessors turn that into a condition.
 (library (cmark gfm private scope)
   (export call-with-native-document
+          call-with-render-buffer
           native-doc?
           doc-root doc-parser doc-extensions doc-option-bits
           validate-markdown-input
           default-max-input-bytes)
   (import (rnrs)
           (cmark gfm private native)
+          (cmark gfm private limits)
           (cmark gfm private conditions))
 
   (define-record-type native-doc
@@ -60,12 +62,6 @@
         ((char=? #\nul (string-ref markdown i))
          (raise (make-cmark-invalid-input 'embedded-nul)))
         (else (loop (+ i 1))))))
-
-  ;; design spec 5.5: max-input-bytes is the only pre-allocation defence, so
-  ;; call-with-native-document must not be able to lose it by omission. 5
-  ;; MiB comfortably covers real Markdown documents while still bounding
-  ;; the UTF-8 bytevector validate-markdown-input allocates.
-  (define default-max-input-bytes (* 5 1024 1024))
 
   ;; extension-names has to be validated before any native resource is
   ;; acquired. find-extension's FFI binding is declared (string): a
@@ -160,4 +156,34 @@
              (unless (native-doc-alive? h)
                (raise (make-cmark-dead-document))))
            (lambda () (proc h))
-           (lambda () (release! h))))))))
+           (lambda () (release! h)))))))
+
+  ;; --- renderer buffer ---------------------------------------------------
+  ;; cmark documents renderer results as caller-owned, allocated by cmark's
+  ;; own allocator. chez_cmark_free_buffer releases them with that same
+  ;; allocator; libc free() must never be used on one.
+  ;;
+  ;; Two properties here are structural, not documented:
+  ;;
+  ;;   1. The buffer address never reaches caller-supplied code. make-buffer
+  ;;      only invokes a foreign procedure, and the body is a single
+  ;;      c-string->string with no user code in it -- so no continuation can
+  ;;      be captured inside this extent. That is why ADR-0006's liveness
+  ;;      flag is not needed here, and why a caller cannot arrange for it to
+  ;;      be needed.
+  ;;   2. buf is zeroed immediately after being freed, exactly as release!
+  ;;      does, so the after-thunk is idempotent by construction rather than
+  ;;      by argument.
+  (define (call-with-render-buffer format make-buffer)
+    (let ((buf (make-buffer)))
+      (when (zero? buf)
+        (raise (make-cmark-render-failed format)))
+      (count-buffer-new!)
+      (dynamic-wind
+        (lambda () #f)
+        (lambda () (c-string->string buf))
+        (lambda ()
+          (unless (zero? buf)
+            (free-buffer buf)
+            (count-buffer-free!)
+            (set! buf 0)))))))

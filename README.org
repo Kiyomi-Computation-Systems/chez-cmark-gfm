@@ -8,3 +8,158 @@ CommonMark GFM for Chez Sceme
 -----
 
 © [[https://kiyomicomputation.systems/][Kiyomi Computation Systems LLC]], all rights reserved.
+
+* Requirements and Build
+
+** Prerequisites
+
+- *Chez Scheme* 10.4.1 or later. The binary is ~chez~.
+- *cmark-gfm*, in the ~0.29.0.gfm.x~ range, pinned to ~0.29.0.gfm.13~ — the
+  range ~make build~ writes into ~cmark-supported-version-range~ in the
+  generated ~src/cmark/gfm/private/config.sls~ (~(#x001d0000 . #x001dffff)~,
+  fixing cmark's major/minor at 0.29 and leaving the patch and gfm-patch
+  numbers free). A runtime library outside that range makes the first parse
+  raise ~&cmark-version-incompatible~. Satisfied either by a system package
+  ~pkg-config~ can see, or by the vendored submodule below.
+
+** Build
+
+#+begin_src sh
+make build
+#+end_src
+
+compiles the C shim and writes ~src/cmark/gfm/private/config.sls~ — the
+shim's absolute path, the absolute paths of the cmark shared libraries to
+load before it, and the version range above. *This file is generated and
+gitignored*, not part of the repository, so a fresh clone has to run
+~make build~ before ~(import (cmark gfm))~ can resolve; skip it and the
+import fails on ~library (cmark gfm private config) not found~.
+
+Where the C library comes from depends on ~pkg-config --exists
+libcmark-gfm~:
+
+- *Succeeds* (e.g. ~brew install cmark-gfm~ on macOS): the shim is compiled
+  directly against that installed copy. Nothing under ~vendor/~ is touched.
+- *Fails* (the common case on a bare Linux box): the Makefile's ~HAVE_PKG~
+  check evaluates to ~no~, which makes the shim target depend on ~vendor~ —
+  so the same ~make build~ first runs
+  ~git submodule update --init --recursive~ and builds the pinned
+  ~vendor/cmark-gfm~ submodule with CMake (shared libraries only), then
+  links the shim against that build instead. Force this path deliberately,
+  even with a system package present — this is what CI's vendored-path job
+  does — with:
+
+  #+begin_src sh
+  make HAVE_PKG=no build
+  #+end_src
+
+** Running
+
+Chez has to be told where the library lives; ~CHEZSCHEMELIBDIRS~ must
+include ~src~:
+
+#+begin_src sh
+CHEZSCHEMELIBDIRS=src chez --program your-script.sps
+#+end_src
+
+#+begin_src sh
+make dev
+#+end_src
+
+does this for interactive use. It runs ~build~ and ~deps~ first — the
+latter vendors ~chez-srfi~ into ~build/scheme-libs~ for the test suites;
+~(cmark gfm)~ itself needs none of it — then starts a REPL with
+~CHEZSCHEMELIBDIRS=src:build/scheme-libs~.
+
+** ~CHEZ_CMARK_GFM_SHIM~
+
+Environment override for the shim's absolute path, read once at import time
+by ~resolve-shim-path~ in ~src/cmark/gfm/private/native.sls~ — config in the
+environment is 12-factor. It is validated, never searched:
+
+- Unset: the default path ~make build~ recorded in ~config.sls~ is used,
+  and must itself exist as a regular file.
+- Set: must be an *absolute* path (leading ~/~) to an *existing regular
+  file*; that exact file is loaded.
+- Anything else — a relative path, a path that does not exist, a
+  directory — raises ~&cmark-shim-unavailable~ immediately. There is no
+  PATH search, no falling back to the default, and the working directory
+  is never consulted.
+
+** Tests
+
+#+begin_src sh
+make test
+#+end_src
+
+runs every ~tests/test-*.sps~ suite and fails if any of them do.
+
+#+begin_src sh
+make test-memory
+#+end_src
+
+runs them again (minus the differential suite, which only spawns separate
+~cmark-gfm~ subprocesses no memory tool here instruments) under Valgrind on
+Linux, or an AddressSanitizer preload on macOS. Only the Linux run can
+support a leak claim — LeakSanitizer does not exist on macOS/ARM64
+(ADR-0003).
+
+* Usage
+
+#+begin_src scheme
+(import (cmark gfm))
+
+;; Safe by default: raw HTML and unsafe link schemes are suppressed.
+(markdown->html "# Hello\n\n~~struck~~\n" (default-cmark-options))
+
+;; Options are named symbols. Unknown keys, duplicate keys, and unknown
+;; extensions are rejected before anything native is allocated.
+(markdown->html "<b>raw</b>\n" (make-cmark-options 'unsafe-html? #t))
+
+;; Functional update; the original is unchanged.
+(define base (make-cmark-options 'extensions '(table)))
+(markdown->html "| a |\n|---|\n| 1 |\n" (cmark-options-with base 'smart? #t))
+
+;; Wrap width applies only to the renderers that wrap. Passing one to
+;; markdown->html is an arity error, not a silently ignored setting.
+(markdown->commonmark "long paragraph text here\n" base 72)
+(markdown->plaintext  "long paragraph text here\n" base 72)
+(markdown->xml        "# Hello\n" base)
+
+;; Which native library is loaded, and what it can do.
+(cmark-gfm-version)                 ;; => "0.29.0.gfm.13"
+(cmark-gfm-version-compatible?)     ;; => #t
+(cmark-gfm-available-extensions)    ;; => (autolink strikethrough table tagfilter tasklist)
+#+end_src
+
+** Options
+
+| Key                 | Default                                             |
+|---------------------+-----------------------------------------------------|
+| ~extensions~        | ~(autolink strikethrough table tagfilter tasklist)~ |
+| ~validate-utf8?~    | ~#t~                                                |
+| ~source-positions?~ | ~#f~ (see ADR-0008)                                 |
+| ~hardbreaks?~       | ~#f~                                                |
+| ~nobreaks?~         | ~#f~                                                |
+| ~smart?~            | ~#f~                                                |
+| ~unsafe-html?~      | ~#f~                                                |
+| ~max-input-bytes~   | ~5242880~ (5 MiB)                                   |
+
+~hardbreaks?~ and ~nobreaks?~ cannot both be set. cmark gives hardbreaks
+precedence rather than leaving the combination undefined, so this is a
+deliberate policy: honouring one of two explicit requests and silently
+dropping the other would hide a caller's mistake.
+
+** Errors
+
+Every failure is a structured condition deriving from ~&cmark-error~, so a
+caller can catch the whole family or discriminate precisely.
+
+#+begin_src scheme
+(guard (e ((cmark-invalid-option? e)
+           (list 'bad-option (cmark-invalid-option-key e)
+                             (cmark-invalid-option-reason e)))
+          ((cmark-error? e) 'some-other-cmark-failure))
+  (markdown->html "# hi\n" (make-cmark-options 'unsaef-html? #t)))
+;; => (bad-option unsaef-html? unknown-key)
+#+end_src

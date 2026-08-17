@@ -70,6 +70,43 @@
   (guard (e ((cmark-error? e) #t) (#t #f))
     (raise (make-cmark-shim-unavailable "/nope/libchezcmarkgfm.dylib"))))
 
+;; --- Stage 2: invalid option ------------------------------------------
+;; key is #f for whole-plist problems (odd length), a symbol otherwise.
+(test-equal "invalid-option carries the offending key"
+  'smart?
+  (guard (e ((cmark-invalid-option? e) (cmark-invalid-option-key e)))
+    (raise (make-cmark-invalid-option 'smart? 'invalid-value))))
+
+(test-equal "invalid-option carries the reason"
+  'invalid-value
+  (guard (e ((cmark-invalid-option? e) (cmark-invalid-option-reason e)))
+    (raise (make-cmark-invalid-option 'smart? 'invalid-value))))
+
+(test-equal "invalid-option accepts #f as the key for whole-plist problems"
+  #f
+  (guard (e ((cmark-invalid-option? e) (cmark-invalid-option-key e)))
+    (raise (make-cmark-invalid-option #f 'malformed-plist))))
+
+(test-assert "invalid-option is a cmark-error"
+  (guard (e ((cmark-error? e) #t) (#t #f))
+    (raise (make-cmark-invalid-option 'smart? 'invalid-value))))
+
+(test-assert "invalid-option is distinguishable from invalid-input"
+  (guard (e ((cmark-invalid-input? e) #f)
+            ((cmark-invalid-option? e) #t)
+            (#t #f))
+    (raise (make-cmark-invalid-option 'smart? 'invalid-value))))
+
+;; --- Stage 2: renderer failure ----------------------------------------
+(test-equal "render-failed names the format that failed"
+  'commonmark
+  (guard (e ((cmark-render-failed? e) (cmark-render-failed-format e)))
+    (raise (make-cmark-render-failed 'commonmark))))
+
+(test-assert "render-failed is a cmark-error"
+  (guard (e ((cmark-error? e) #t) (#t #f))
+    (raise (make-cmark-render-failed 'html))))
+
 (test-end "conditions")
 
 (exit (if (zero? (test-runner-fail-count runner)) 0 1))

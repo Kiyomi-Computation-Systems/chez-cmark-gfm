@@ -21,7 +21,14 @@
           cmark-invalid-input? cmark-invalid-input-reason
 
           &cmark-shim-unavailable make-cmark-shim-unavailable
-          cmark-shim-unavailable? cmark-shim-unavailable-path)
+          cmark-shim-unavailable? cmark-shim-unavailable-path
+
+          &cmark-invalid-option make-cmark-invalid-option
+          cmark-invalid-option? cmark-invalid-option-key
+          cmark-invalid-option-reason
+
+          &cmark-render-failed make-cmark-render-failed
+          cmark-render-failed? cmark-render-failed-format)
   (import (rnrs))
 
   (define-condition-type &cmark-error &error
@@ -51,4 +58,20 @@
 
   (define-condition-type &cmark-shim-unavailable &cmark-error
     make-cmark-shim-unavailable cmark-shim-unavailable?
-    (path cmark-shim-unavailable-path)))
+    (path cmark-shim-unavailable-path))
+
+  ;; Raised by the options layer before any native resource exists. key is a
+  ;; field name, or #f when the problem is the argument list as a whole
+  ;; (odd length). reason is a symbol: 'malformed-plist, 'unknown-key,
+  ;; 'duplicate-key, 'invalid-value, 'unknown-extension, 'contradictory,
+  ;; 'invalid-width.
+  (define-condition-type &cmark-invalid-option &cmark-error
+    make-cmark-invalid-option cmark-invalid-option?
+    (key    cmark-invalid-option-key)
+    (reason cmark-invalid-option-reason))
+
+  ;; Raised when a cmark renderer returns NULL. format is a symbol:
+  ;; 'html, 'xml, 'commonmark, 'plaintext.
+  (define-condition-type &cmark-render-failed &cmark-error
+    make-cmark-render-failed cmark-render-failed?
+    (format cmark-render-failed-format)))
