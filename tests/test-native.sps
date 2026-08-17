@@ -110,6 +110,27 @@
 (test-assert "live-counts starts balanced at zero"
   (for-all zero? (live-counts)))
 
+;; --- I3: every option flag must move an independent, non-zero bit -----
+;; The composition test above only ever exercises positions 1 and 2
+;; (validate-utf8, sourcepos) together. A shim where sourcepos aliased
+;; validate-utf8, or where hardbreaks/nobreaks/smart/unsafe_html did
+;; nothing at all -- including the security-relevant unsafe_html flag --
+;; would still pass every assertion above this one.
+(define (pairwise-distinct? lst)
+  (or (null? lst)
+      (and (for-all (lambda (y) (not (= (car lst) y))) (cdr lst))
+           (pairwise-distinct? (cdr lst)))))
+
+(test-assert "each of the six option flags sets a distinct, non-zero bit"
+  (let ((flags (list (option-bits #t #f #f #f #f #f)    ; validate-utf8
+                      (option-bits #f #t #f #f #f #f)    ; sourcepos
+                      (option-bits #f #f #t #f #f #f)    ; hardbreaks
+                      (option-bits #f #f #f #t #f #f)    ; nobreaks
+                      (option-bits #f #f #f #f #t #f)    ; smart
+                      (option-bits #f #f #f #f #f #t)))) ; unsafe_html
+    (and (for-all (lambda (x) (> x 0)) flags)
+         (pairwise-distinct? flags))))
+
 ;; --- I4: compiled-vs-runtime version comparison -------------------------
 ;; ensure-native-loaded! runs at most once per process (init-mutex plus
 ;; the initialized? guard), against the real, matching shim and library,
