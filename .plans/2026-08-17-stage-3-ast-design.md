@@ -389,25 +389,37 @@ constant keeps exactly one definition.
 ```scheme
 (define-condition-type &cmark-resource-limit &cmark-invalid-input
   make-cmark-resource-limit cmark-resource-limit?
-  (limit cmark-resource-limit-limit)     ; input-bytes | nodes | depth
-  (value cmark-resource-limit-value))    ; the limit that was exceeded
+  (value cmark-resource-limit-value))    ; the ceiling that was exceeded
 ```
 
-Constructed as `(make-cmark-resource-limit reason limit value)`, inheriting
-`reason` from its parent.
+Constructed as `(make-cmark-resource-limit reason value)`, inheriting `reason` from
+its parent.
+
+One added field, not two. A `limit` field naming the category (`nodes` / `depth` /
+`input-bytes`) would be one-to-one redundant with the inherited `reason`, and two
+fields that must be kept in agreement forever is the invariant `limits.sls`'s own
+header argues against: removing it beats asserting it. `reason` is the discriminator;
+`value` is what `reason` cannot carry.
 
 Plan §12 groups the three limits into one condition category, but 0.1 already ships
 input-size overflow as `&cmark-invalid-input` with reason `'too-large`. Deriving the
 new type from that one satisfies both: existing code guarding `cmark-invalid-input?`
 keeps working unchanged, new code discriminates with `cmark-resource-limit?` and
-reads which limit and what value, and all three limits live in one type hierarchy.
+reads the reason and the exceeded ceiling, and all three limits live in one type
+hierarchy.
+
+The split also separates two things `&cmark-invalid-input` currently conflates:
+`'not-a-string` and `'embedded-nul` mean the input is malformed and retrying is
+pointless, while a ceiling means the input is fine and the budget was too small —
+the one input failure where retrying with a larger limit is a sensible response.
 
 Input-size overflow starts raising the subtype as well. That is not a breaking
 change: it is still `cmark-invalid-input?` with reason `'too-large`, so the 0.1
 regression test for it passes untouched.
 
-Reasons: `'too-large` (`limit` `input-bytes`), `'too-many-nodes` (`nodes`),
-`'too-deep` (`depth`).
+Reasons: `'too-large`, `'too-many-nodes`, `'too-deep`. `value` is the ceiling that
+was exceeded — `max-input-bytes`, `max-nodes`, or `max-depth` as configured, not the
+library default, so a caller that passed its own limit sees its own number back.
 
 No `&cmark-unsupported-node-type` is added. Plan §12 lists one, but §7 chose
 preservation over strictness, so nothing raises it.
@@ -552,7 +564,7 @@ is exactly what Valgrind needs to see.
   not evidence).
 - The AST survives native teardown: a tree returned out of the scope is fully
   readable afterwards, and `live-counts` is at baseline.
-- Both limits raise `&cmark-resource-limit` with the right `limit` and `value`, and
+- Both limits raise `&cmark-resource-limit` with the right `reason` and `value`, and
   leave counters balanced.
 - Serialized AST matches `cmark_render_xml` and the pinned CLI byte-for-byte across
   the fixture and option matrix.
@@ -665,7 +677,7 @@ already been caught by once.
 5. **Source positions are not attached to resource-limit conditions.** Plan §12 asks
    for them "when available"; a depth overflow is structural and the offending
    node's position would be `#f` whenever positions are off, so the condition
-   carries the limit and its value instead.
+   carries the reason and the exceeded ceiling instead.
 6. **The `_Bool` ABI hazard is justified by contract, not by an observed failure**
    (§9.3).
 7. **`validate-utf8?` remains behaviourally unreachable** from the public API, as
