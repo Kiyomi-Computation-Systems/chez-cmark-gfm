@@ -2,12 +2,16 @@
 (import (rnrs)          ; note: (rnrs) already exports `exit` via
         (srfi :64)      ; (rnrs programs) -- importing it from
         (cmark gfm private native)    ; (chezscheme) too is a conflict
+        (cmark gfm private conditions)
         ;; foreign-alloc / foreign-set! / foreign-free build and mutate
-        ;; real C buffers for the c-string->string tests below. Neither
-        ;; name collides with an (rnrs) export, so unlike file-exists?
-        ;; and exit above, this import needs no `only` justification beyond
-        ;; keeping the list minimal.
-        (only (chezscheme) foreign-alloc foreign-set! foreign-free))
+        ;; real C buffers for the c-string->string tests below. current-
+        ;; directory anchors the synthetic absolute paths used by the
+        ;; shim-path-validation tests below. None of these names collide
+        ;; with an (rnrs) export, so unlike file-exists? and exit above,
+        ;; this import needs no `only` justification beyond keeping the
+        ;; list minimal.
+        (only (chezscheme) foreign-alloc foreign-set! foreign-free
+              current-directory))
 
 ;; SRFI-64's default runner does not set a process exit code, so a failing
 ;; suite would still exit 0 and `make test` would report success. Hold the
@@ -105,6 +109,74 @@
 
 (test-assert "live-counts starts balanced at zero"
   (for-all zero? (live-counts)))
+
+;; --- I4: compiled-vs-runtime version comparison -------------------------
+;; ensure-native-loaded! runs at most once per process (init-mutex plus
+;; the initialized? guard), against the real, matching shim and library,
+;; which always succeeds -- so its raise path is untested by anything
+;; that calls it. version-compatible? is the pure predicate it now gates
+;; on; calling it directly with synthetic values exercises both the
+;; compiled/runtime equality check and the range check independently,
+;; with no need for an actually mismatched library.
+(test-assert "version-supported? accepts both ends of the configured range"
+  (and (version-supported? #x001d0000)
+       (version-supported? #x001dffff)))
+
+(test-assert "version-supported? rejects a version below the range"
+  (not (version-supported? #x001c0000)))
+
+(test-assert "version-supported? rejects a version above the range"
+  (not (version-supported? #x001e0000)))
+
+(test-assert "version-compatible? accepts equal compiled/runtime versions inside the range"
+  (version-compatible? #x001d000d #x001d000d))
+
+(test-assert "version-compatible? rejects a compiled/runtime mismatch even though both are in range"
+  (not (version-compatible? #x001d0000 #x001d0001)))
+
+(test-assert "version-compatible? rejects an equal compiled/runtime pair outside the range"
+  (not (version-compatible? #x001c0000 #x001c0000)))
+
+;; --- I2: shim-path validation and load wrapping -------------------------
+;; native.sls's own shim-file/shim-loaded top-level bindings run once per
+;; process (see tests/test-shim-loading.sps for subprocess coverage of
+;; that actual default-path/override wiring). resolve-shim-path and
+;; load-shim are the reusable procedures behind them, and are callable
+;; directly here, any number of times, with synthetic paths -- including
+;; a real dlopen call in the load-shim case, which is safe to repeat
+;; against a bogus path even after the real shim has already loaded.
+(define a-real-directory (current-directory))
+(define a-real-non-library-file
+  (string-append (current-directory) "/Makefile"))
+
+(test-equal "resolve-shim-path rejects a directory given as an override"
+  a-real-directory
+  (guard (e ((cmark-shim-unavailable? e) (cmark-shim-unavailable-path e)))
+    (resolve-shim-path "/irrelevant/default" a-real-directory)))
+
+(test-equal "resolve-shim-path rejects a directory as the default path when there is no override"
+  a-real-directory
+  (guard (e ((cmark-shim-unavailable? e) (cmark-shim-unavailable-path e)))
+    (resolve-shim-path a-real-directory #f)))
+
+(test-equal "resolve-shim-path rejects a non-absolute override"
+  "relative/path.dylib"
+  (guard (e ((cmark-shim-unavailable? e) (cmark-shim-unavailable-path e)))
+    (resolve-shim-path a-real-non-library-file "relative/path.dylib")))
+
+(test-equal "resolve-shim-path rejects a nonexistent override"
+  "/no/such/path.dylib"
+  (guard (e ((cmark-shim-unavailable? e) (cmark-shim-unavailable-path e)))
+    (resolve-shim-path a-real-non-library-file "/no/such/path.dylib")))
+
+(test-assert "resolve-shim-path accepts a valid absolute, existing, regular-file override"
+  (equal? a-real-non-library-file
+          (resolve-shim-path "/irrelevant/default" a-real-non-library-file)))
+
+(test-equal "load-shim wraps a real dlopen failure in cmark-shim-unavailable, carrying the path"
+  a-real-non-library-file
+  (guard (e ((cmark-shim-unavailable? e) (cmark-shim-unavailable-path e)))
+    (load-shim a-real-non-library-file)))
 
 (test-end "native")
 

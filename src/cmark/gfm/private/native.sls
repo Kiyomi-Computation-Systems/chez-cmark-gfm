@@ -11,6 +11,8 @@
 ;;; IMPORT time with an unresolved-entry error, not at first use.
 (library (cmark gfm private native)
   (export ensure-native-loaded!
+          version-supported? version-compatible?
+          resolve-shim-path load-shim
           c-string->string
           option-bits
           live-counts
@@ -27,7 +29,7 @@
   (import (rnrs)
           (only (chezscheme)
                 load-shared-object foreign-procedure foreign-ref
-                make-mutex with-mutex getenv)
+                file-regular? make-mutex with-mutex getenv)
           (cmark gfm private config)
           (cmark gfm private conditions))
 
@@ -35,23 +37,43 @@
   ;; The override exists because config-in-the-environment is 12-factor. It
   ;; is validated, never searched: an absolute path to an existing regular
   ;; file, or nothing at all. There is no fallback search and the working
-  ;; directory is never consulted (design spec 6.2).
+  ;; directory is never consulted (design spec 6.2). "Existing" alone is
+  ;; not enough: file-exists? is also true of a directory, which would
+  ;; otherwise reach load-shared-object directly and escape as a raw
+  ;; dlopen error instead of a structured condition -- and the same is
+  ;; true of the default, generated path if the built shim is corrupt.
+  ;;
+  ;; Both steps below (path validation, and wrapping the load itself) are
+  ;; ordinary, exported procedures rather than bare expressions, so they
+  ;; can be unit-tested directly with synthetic paths from a single
+  ;; process. The shim itself still loads exactly once per process either
+  ;; way; see tests/test-shim-loading.sps for why the actual default-path
+  ;; / override wiring below still needs a subprocess on top of that.
+  (define (regular-file? path)
+    (and (file-exists? path) (file-regular? path)))
+
+  (define (resolve-shim-path default-path override)
+    (cond
+      ((not override)
+       (if (regular-file? default-path)
+           default-path
+           (raise (make-cmark-shim-unavailable default-path))))
+      ((and (> (string-length override) 0)
+            (char=? (string-ref override 0) #\/)
+            (regular-file? override))
+       override)
+      (else (raise (make-cmark-shim-unavailable override)))))
+
+  (define (load-shim path)
+    (guard (e (#t (raise (make-cmark-shim-unavailable path))))
+      (load-shared-object path)))
+
   (define shim-file
-    (let ((override (getenv "CHEZ_CMARK_GFM_SHIM")))
-      (cond
-        ((not override)
-         (if (file-exists? shim-path)
-             shim-path
-             (raise (make-cmark-shim-unavailable shim-path))))
-        ((and (> (string-length override) 0)
-              (char=? (string-ref override 0) #\/)
-              (file-exists? override))
-         override)
-        (else (raise (make-cmark-shim-unavailable override))))))
+    (resolve-shim-path shim-path (getenv "CHEZ_CMARK_GFM_SHIM")))
 
   ;; A definition, not a bare expression, so it is legal at this position in
   ;; an R6RS library body while still running before every binding below.
-  (define shim-loaded (load-shared-object shim-file))
+  (define shim-loaded (load-shim shim-file))
 
   ;; --- shim bindings ----------------------------------------------------
   (define shim-compiled-version
@@ -115,13 +137,28 @@
           (hi (cdr cmark-supported-version-range)))
       (and (>= runtime lo) (<= runtime hi))))
 
-  ;; Idempotent. Fails closed on an out-of-range runtime version.
+  ;; design spec 6.3: initialisation compares the version the shim was
+  ;; COMPILED against to the version cmark_version() reports at RUNTIME. In
+  ;; an ordinary build these are identical -- the shim links directly
+  ;; against the library its own headers came from -- so any mismatch means
+  ;; the two have come apart, e.g. a shim built against one cmark-gfm
+  ;; checkout now loading a different library's runtime object because it
+  ;; was never rebuilt after an in-place library upgrade. The range check
+  ;; is kept alongside equality, not replaced by it: a compiled/runtime
+  ;; pair that agrees with itself but both predate what this binding
+  ;; supports must still be rejected.
+  (define (version-compatible? compiled runtime)
+    (and (= compiled runtime)
+         (version-supported? runtime)))
+
+  ;; Idempotent. Fails closed on a compiled/runtime mismatch or an
+  ;; out-of-range version.
   (define (ensure-native-loaded!)
     (with-mutex init-mutex
       (unless initialized?
         (let ((compiled (shim-compiled-version))
               (runtime  (shim-runtime-version)))
-          (unless (version-supported? runtime)
+          (unless (version-compatible? compiled runtime)
             (raise (make-cmark-version-incompatible compiled runtime))))
         (ensure-extensions-registered)
         (set! initialized? #t))))
