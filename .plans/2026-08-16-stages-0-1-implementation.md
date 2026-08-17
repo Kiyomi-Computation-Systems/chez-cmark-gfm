@@ -1676,20 +1676,46 @@ Create `tests/test-lifecycle.sps`:
     (equal? before (live-counts))))
 
 ;; --- liveness (ADR-0006) ---------------------------------------------
-(test-assert "the handle is dead after the scope exits"
+;; A guard whose body never raises simply returns the body's own value.
+;; release! zeroes freed fields to 0, and 0 is truthy in Scheme, so
+;; comparing that fall-through value for truthiness would not discriminate
+;; a checked accessor from an unchecked one. Each guard clause below is
+;; rewritten to return a distinguishable sentinel symbol in all three
+;; outcomes -- condition raised, wrong condition raised, nothing raised --
+;; and the assertions compare against the expected sentinel, never a
+;; truthiness.
+(test-eq "the handle is dead after the scope exits"
+  'dead-document-raised
   (let ((escaped #f))
     (call-with-native-document "# hello\n" opts gfm-extensions
       (lambda (h) (set! escaped h) #t))
-    (guard (e ((cmark-dead-document? e) #t) (#t #f))
-      (doc-root escaped))))
+    (guard (e ((cmark-dead-document? e) 'dead-document-raised)
+              (#t 'wrong-condition-raised))
+      (doc-root escaped)
+      'no-condition-raised)))
 
-(test-assert "every checked accessor rejects a dead handle"
+;; The three accessors are checked independently and compared as a list
+;; rather than folded together with `and`, so a single accessor whose
+;; liveness check is broken shows up as a mismatch at its own position
+;; instead of being masked by the others' truthy results.
+(test-equal "every checked accessor rejects a dead handle"
+  '(dead-document-raised dead-document-raised dead-document-raised)
   (let ((escaped #f))
     (call-with-native-document "# hello\n" opts gfm-extensions
       (lambda (h) (set! escaped h) #t))
-    (and (guard (e ((cmark-dead-document? e) #t) (#t #f)) (doc-root escaped))
-         (guard (e ((cmark-dead-document? e) #t) (#t #f)) (doc-parser escaped))
-         (guard (e ((cmark-dead-document? e) #t) (#t #f)) (doc-extensions escaped)))))
+    (list
+     (guard (e ((cmark-dead-document? e) 'dead-document-raised)
+               (#t 'wrong-condition-raised))
+       (doc-root escaped)
+       'no-condition-raised)
+     (guard (e ((cmark-dead-document? e) 'dead-document-raised)
+               (#t 'wrong-condition-raised))
+       (doc-parser escaped)
+       'no-condition-raised)
+     (guard (e ((cmark-dead-document? e) 'dead-document-raised)
+               (#t 'wrong-condition-raised))
+       (doc-extensions escaped)
+       'no-condition-raised))))
 
 ;; --- extension failure ------------------------------------------------
 (test-equal "a missing extension is named in the condition"
@@ -2029,6 +2055,32 @@ make test; echo "exit=$?"
 ```
 
 Expected: FAIL on every counter-balance test. Revert.
+
+- [ ] **Step 6b: Mutation G — disable the re-entry guard**
+
+In `scope.sls`, replace the `dynamic-wind` before-thunk with `(lambda () #f)`. Then:
+
+```bash
+make test; echo "exit=$?"
+```
+
+Expected: still passes. Record this honestly as **not covered**. `call/1cc` is
+escape-only and structurally cannot construct the re-entry scenario the guard
+exists for; catching this needs a full continuation captured inside the scope and
+reinvoked after teardown. Note it as a known gap rather than pretending the guard
+is protected. Revert.
+
+- [ ] **Step 6c: Mutation H — make `release!` genuinely double-callable**
+
+No current test invokes `release!` twice on one handle, so idempotency is
+asserted but never exercised. Rather than mutating, add a test that calls the
+scope, lets it tear down, and then triggers a second release — via a handle
+captured out of the scope — and asserts the counters do not go negative.
+
+If the current interface makes a second `release!` unreachable from outside the
+library, record that as the finding: the property is enforced structurally rather
+than tested, which is an acceptable answer, but it must be written down rather
+than assumed.
 
 - [ ] **Step 7: Confirm the tree is clean and green**
 
