@@ -202,6 +202,74 @@
 (test-equal "default options agree with the CLI in plaintext"
   #f (mismatch "tests/fixtures/gfm.md" 'plaintext DEFAULTS DEFAULTS))
 
+;; --- layer 2: cartesian sweep -------------------------------------------
+;; Every valid boolean combination against every format. No discrimination
+;; guard here -- layer 1 owns that. This is bulk parity.
+(define bool-keys
+  '(validate-utf8? source-positions? hardbreaks? nobreaks? smart? unsafe-html?))
+
+(define (plist-ref plist key)
+  (cond ((null? plist) #f)
+        ((eq? key (car plist)) (cadr plist))
+        (else (plist-ref (cddr plist) key))))
+
+(define (all-boolean-configs)
+  (let loop ((keys bool-keys) (acc '(())))
+    (if (null? keys)
+        acc
+        (loop (cdr keys)
+              (apply append
+                     (map (lambda (cfg)
+                            (list (append cfg (list (car keys) #f))
+                                  (append cfg (list (car keys) #t))))
+                          acc))))))
+
+;; The pair our validator rejects (design spec 3.4) is unreachable through
+;; the public API, so it is excluded here rather than expected to fail.
+(define (valid-config? cfg)
+  (not (and (eq? #t (plist-ref cfg 'hardbreaks?))
+            (eq? #t (plist-ref cfg 'nobreaks?)))))
+
+(define valid-configs (filter valid-config? (all-boolean-configs)))
+
+;; Pins the arithmetic: 2^6 = 64 combinations, minus the 16 in which both
+;; hardbreaks? and nobreaks? are set.
+(test-equal "the sweep covers exactly the 48 valid boolean combinations"
+  48 (length valid-configs))
+
+(define sweep-formats '(html xml commonmark plaintext))
+(define sweep-fixtures '("tests/fixtures/core.md" "tests/fixtures/gfm.md"))
+
+(define (sweep-mismatches)
+  (let ((found '()))
+    (for-each
+     (lambda (cfg)
+       (for-each
+        (lambda (fmt)
+          (for-each
+           (lambda (fx)
+             (let ((m (mismatch fx fmt cfg cfg)))
+               (when m (set! found (cons m found)))))
+           sweep-fixtures))
+        sweep-formats))
+     valid-configs)
+    (reverse found)))
+
+;; SEED FIRST. An "assert the list is empty" test passes trivially against a
+;; detector that can only ever return '(). This proves the detector reports
+;; something when the two sides genuinely differ: our --smart output against
+;; the CLI's non-smart output. If this test fails, every empty result below
+;; is meaningless.
+(test-assert "the mismatch detector reports a deliberately mismatched cell"
+  (list? (mismatch "tests/fixtures/smart.md" 'html
+                   (cfg '() 'smart? #t)     ; what WE render
+                   (cfg '()))))             ; what the CLI is asked for
+
+;; Compared against '() rather than asserted empty, so a failure names the
+;; diverging (fixture, format, config) triples instead of just saying "false".
+(test-equal "cartesian sweep: no valid boolean combination diverges from the CLI"
+  '() (sweep-mismatches))
+
 (test-end "differential")
 
 (exit (if (zero? (test-runner-fail-count runner)) 0 1))

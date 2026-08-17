@@ -72,6 +72,12 @@ SRFI_LIBS    := $(BUILD_DIR)/scheme-libs
 CHEZ_LIBDIRS := src:$(SRFI_LIBS)
 TESTS        := $(wildcard tests/test-*.sps)
 
+# The differential suite spawns ~400 cmark-gfm subprocesses. Those are separate
+# processes and are NOT instrumented by the memory tools, so they add no
+# coverage here -- test-render.sps already exercises every native allocation
+# this stage introduces. Excluded by name so the omission is visible.
+MEMORY_TESTS := $(filter-out tests/test-differential.sps,$(TESTS))
+
 .PHONY: all build deps check-pins dev test test-memory vendor clean prod deps-info
 
 all: build
@@ -196,7 +202,7 @@ test: build deps check-pins
 
 test-memory: build deps check-pins
 ifeq ($(UNAME_S),Linux)
-	@for t in $(TESTS); do \
+	@for t in $(MEMORY_TESTS); do \
 	  CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) valgrind --error-exitcode=9 \
 	    --leak-check=full --show-leak-kinds=definite \
 	    $(CHEZ) --program $$t || exit 1; \
@@ -207,7 +213,7 @@ else
 	CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) \
 	  DYLD_INSERT_LIBRARIES="$$(command ls $$(dirname $$(xcrun --find clang))/../lib/clang/*/lib/darwin/libclang_rt.asan_osx_dynamic.dylib | head -1)" \
 	  ASAN_OPTIONS=detect_leaks=0 \
-	  sh -c 'for t in $(TESTS); do $(CHEZ) --program $$t || exit 1; done'
+	  sh -c 'for t in $(MEMORY_TESTS); do $(CHEZ) --program $$t || exit 1; done'
 endif
 
 # prod compiles directly rather than reusing $(SHIM), so it needs the same
