@@ -2141,7 +2141,14 @@ Note `spike/FINDINGS.md` is deliberately kept — it is the record of what Stage
 
 ## Stage 1 Exit Gate
 
-- [ ] `make build` succeeds with warnings-as-errors on both acquisition paths (test the vendored path with `HAVE_PKG=no make build`).
+- [ ] `make build` succeeds with warnings-as-errors on both acquisition paths. Test
+      the vendored path with **`make HAVE_PKG=no build`** — note the argument order.
+      `HAVE_PKG=no make build` does NOT work: the Makefile uses
+      `HAVE_PKG := $(shell …)`, and a makefile assignment overrides an environment
+      variable, so that form silently builds the pkg-config path twice and records
+      the vendored path as verified without ever selecting it.
+- [ ] `make HAVE_PKG=no test` passes — the vendored path must be exercised end to
+      end, not merely linked.
 - [ ] `make test` passes and exits 0; a deliberately broken test makes it exit 1.
 - [ ] Every mutation in Task 12 behaves as recorded in the mutation log.
 - [ ] `make test-memory` is clean on the platform that can make the claim.
