@@ -43,6 +43,21 @@
     (and (bytevector? bv) (= 2 (bytevector-length bv)))))
 
 ;; --- balanced teardown ------------------------------------------------
+;; C3: built without -DCHEZ_CMARK_DEBUG_COUNTERS, chez_cmark_live_* are
+;; hardcoded to return 0 (src/cmark-gfm-shim.c), so every "counters
+;; balance" test below would compare (0 0 0) to (0 0 0) and pass against a
+;; shim that never counts anything at all. This is the one assertion that
+;; makes those tests mean what they claim to mean: it demands the counters
+;; actually MOVE while a document is live, which fails against a
+;; counters-free shim and passes against a counting one.
+(test-assert "live-counts moves during a scope: at least one live parser and root while the body runs"
+  (let ((before (live-counts)))
+    (call-with-native-document "# hello\n" opts gfm-extensions
+      (lambda (h)
+        (let ((during (live-counts)))
+          (and (> (car during) (car before))      ; live-parsers
+               (> (cadr during) (cadr before)))))))) ; live-roots
+
 (test-assert "counters balance after a successful scope"
   (let ((before (live-counts)))
     (call-with-native-document "# hello\n" opts gfm-extensions
