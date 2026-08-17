@@ -764,11 +764,16 @@ Create `tests/test-sxml.sps`:
    (make-sxml-options 'raw-html 'escape)))
 
 ;; --- unknown node types -------------------------------------------------
+;; "custom_block" is a string cmark genuinely produces
+;; (vendor/cmark-gfm/src/node.c:238-295) for a node type this adapter does
+;; not map. Do NOT use "footnote_definition": cmark_node_get_type_string has
+;; no case for footnote nodes at all and falls through to "<unknown>", so
+;; that string only looks real.
 (test-equal "an extension node raises, carrying its native type"
-  "footnote_definition"
+  "custom_block"
   (guard (e ((cmark-unsupported-node? e) (cmark-unsupported-node-type e))
             (#t 'wrong-condition))
-    (->sxml (doc (node 'extension '((native-type . "footnote_definition")) '())))
+    (->sxml (doc (node 'extension '((native-type . "custom_block")) '())))
     'no-raise))
 
 (test-end "sxml")
