@@ -2953,7 +2953,7 @@ This is the step that proves the harness is worth having. Four mutations in
 
 Then one mutation in the **serializer** itself, to prove the cap is load-bearing:
 
-5. In `emit-indent`, remove the `min` so indentation is `(* 2 depth)`. Expected: **only** `in-process XML agrees at 25 levels of nesting, past MAX_INDENT` FAILS; every other case still passes.
+5. In `emit-indent`, remove the `min` so indentation is `(* 2 depth)`. Expected: **only the two deep-nesting assertions** fail — the with-positions sibling goes too, since indentation is independent of positions — and every other case still passes. That narrowness is the point: the cap is invisible until a document nests past 20 levels.
 
 Revert each. Record all five for Task 12.
 
