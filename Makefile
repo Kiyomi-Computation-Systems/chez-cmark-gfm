@@ -70,7 +70,7 @@ SRFI_LIBS    := $(BUILD_DIR)/scheme-libs
 CHEZ_LIBDIRS := src:$(SRFI_LIBS)
 TESTS        := $(wildcard tests/test-*.sps)
 
-.PHONY: all build deps dev test test-memory vendor clean prod deps-info
+.PHONY: all build deps check-pins dev test test-memory vendor clean prod deps-info
 
 all: build
 
@@ -91,9 +91,29 @@ build: $(SHIM) $(CONFIG_SLS)
 # chez-srfi ships Akku's percent-encoded filenames (%3a64.sls). Chez resolves
 # (srfi :64) only from the decoded spelling, so link both into a build tree and
 # leave the submodule's own working tree untouched.
-deps: $(SRFI_LIBS)/.stamp
+# The submodule pin and Akku.lock name the same chez-srfi commit, and nothing
+# else enforces that. They drifted within minutes of the rule being written: a
+# `git submodule update --init` (from `deps`, below) resets the working tree to
+# the RECORDED gitlink, silently undoing a manual detach that had not been
+# staged yet. So this is a check, not a comment.
+check-pins:
+	@rec=$$(git ls-files -s $(SRFI_SRC) | awk '{print $$2}'); \
+	lock=$$(sed -n 's/.*akku\.[0-9]*\.\([a-f0-9]*\)_repack.*/\1/p' Akku.lock | head -1); \
+	if [ -z "$$rec" ] || [ -z "$$lock" ]; then \
+	  echo "check-pins: could not read both pins (submodule='$$rec' lock='$$lock')" >&2; \
+	  exit 1; \
+	fi; \
+	case "$$rec" in \
+	  "$$lock"*) echo "pins agree: chez-srfi $$lock" ;; \
+	  *) echo "PIN DRIFT: submodule $$rec but Akku.lock names $$lock." >&2; \
+	     echo "Consumers install what Akku.lock names; CI tests the submodule." >&2; \
+	     exit 1 ;; \
+	esac
 
-$(SRFI_LIBS)/.stamp:
+# Always relinks rather than using a stamp file: a stamp keyed on nothing the
+# submodule pin touches would leave stale symlinks after a re-pin. `ln -sfn` is
+# idempotent and the whole loop is well under a second.
+deps:
 	git submodule update --init $(SRFI_SRC)
 	mkdir -p $(SRFI_LIBS)/srfi
 	src=$(abspath $(SRFI_SRC)); dst=$(abspath $(SRFI_LIBS))/srfi; \
@@ -103,7 +123,6 @@ $(SRFI_LIBS)/.stamp:
 	  d=$$(printf '%s' "$$b" | sed 's/%3a/:/g'); \
 	  [ "$$d" = "$$b" ] || ln -sfn "$$f" "$$dst/$$d"; \
 	done
-	touch $@
 
 $(LIB_DIR):
 	mkdir -p $(LIB_DIR)
@@ -162,7 +181,7 @@ dev: build deps
 
 # Each suite sets its own exit status. Keep going after a failure so one
 # broken suite cannot hide the others, then fail the target if any failed.
-test: build deps
+test: build deps check-pins
 	@fail=0; \
 	for t in $(TESTS); do \
 	  echo "=== $$t ==="; \
@@ -172,7 +191,7 @@ test: build deps
 	else echo "SUITE FAILED"; fi; \
 	exit $$fail
 
-test-memory: build deps
+test-memory: build deps check-pins
 ifeq ($(UNAME_S),Linux)
 	@for t in $(TESTS); do \
 	  CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) valgrind --error-exitcode=9 \
