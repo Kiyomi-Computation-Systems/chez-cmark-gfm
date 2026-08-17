@@ -24,6 +24,19 @@
   - Prefer comparing against an expected value over asserting truthiness. In Scheme
     almost everything is true, so `test-assert` is where empty tests hide — see the
     truthiness trap below.
+* **Prefer a check to a comment.** When you are about to write a comment stating
+  an invariant — these two things must stay equal, this must run before that,
+  never call X from here — ask first whether it can be a make target, a test, or
+  an assertion. A stated rule does not enforce itself, and the person who most
+  needs the comment is the one who did not read it.
+
+  This is not abstract. The rule above about empty tests was already written down
+  here, and five tests violating it shipped anyway; it only started holding once
+  it carried an executable standard. A Makefile comment requiring the `chez-srfi`
+  submodule and `Akku.lock` to name the same commit was violated *in the same
+  commit that introduced it*, and only became true once it was `make check-pins`.
+  When a comment is load-bearing, that is the signal it should not be a comment.
+
 * Project is specific to Chez Scheme and will be a Chez library.
 * Project requires C ffi and handling C libraries *safely*
 * Project should be portable across macos (darwin), linux, and windows
