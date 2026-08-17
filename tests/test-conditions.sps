@@ -107,6 +107,46 @@
   (guard (e ((cmark-error? e) #t) (#t #f))
     (raise (make-cmark-render-failed 'html))))
 
+;; --- Stage 3: resource limits (design spec 6.2) -------------------------
+;; The parentage is the whole point of this type: a 0.1 caller guarding
+;; cmark-invalid-input? on an oversized document must keep working, while new
+;; code discriminates precisely. Both directions are asserted.
+(test-equal "resource-limit satisfies its parent's predicate"
+  #t
+  (guard (e ((cmark-invalid-input? e) #t) (#t 'wrong-condition))
+    (raise (make-cmark-resource-limit 'too-many-nodes 250000))
+    'no-condition))
+
+(test-equal "resource-limit satisfies cmark-error?"
+  #t
+  (guard (e ((cmark-error? e) #t) (#t 'wrong-condition))
+    (raise (make-cmark-resource-limit 'too-deep 1000))
+    'no-condition))
+
+(test-equal "resource-limit inherits the reason field"
+  'too-deep
+  (guard (e ((cmark-resource-limit? e) (cmark-invalid-input-reason e))
+            (#t 'wrong-condition))
+    (raise (make-cmark-resource-limit 'too-deep 1000))
+    'no-condition))
+
+(test-equal "resource-limit carries the exceeded ceiling"
+  1000
+  (guard (e ((cmark-resource-limit? e) (cmark-resource-limit-value e))
+            (#t 'wrong-condition))
+    (raise (make-cmark-resource-limit 'too-deep 1000))
+    'no-condition))
+
+;; The converse: a plain invalid-input is NOT a resource limit. Without this,
+;; a mutation that made every &cmark-invalid-input a resource-limit would go
+;; unnoticed, and the discrimination the type exists to provide would be gone.
+(test-equal "a malformed-input condition is not a resource limit"
+  #f
+  (guard (e ((cmark-invalid-input? e) (cmark-resource-limit? e))
+            (#t 'wrong-condition))
+    (raise (make-cmark-invalid-input 'embedded-nul))
+    'no-condition))
+
 (test-end "conditions")
 
 (exit (if (zero? (test-runner-fail-count runner)) 0 1))
