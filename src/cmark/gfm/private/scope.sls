@@ -21,6 +21,7 @@
           default-max-input-bytes)
   (import (rnrs)
           (cmark gfm private native)
+          (cmark gfm private limits)
           (cmark gfm private conditions))
 
   (define-record-type native-doc
@@ -60,12 +61,6 @@
         ((char=? #\nul (string-ref markdown i))
          (raise (make-cmark-invalid-input 'embedded-nul)))
         (else (loop (+ i 1))))))
-
-  ;; design spec 5.5: max-input-bytes is the only pre-allocation defence, so
-  ;; call-with-native-document must not be able to lose it by omission. 5
-  ;; MiB comfortably covers real Markdown documents while still bounding
-  ;; the UTF-8 bytevector validate-markdown-input allocates.
-  (define default-max-input-bytes (* 5 1024 1024))
 
   ;; extension-names has to be validated before any native resource is
   ;; acquired. find-extension's FFI binding is declared (string): a
