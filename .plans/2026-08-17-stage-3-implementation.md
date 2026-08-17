@@ -1066,12 +1066,26 @@ Append to `src/cmark-gfm-shim.h`, before the closing `#endif`:
  * traversal, parsing, or rendering (ADR-0002).
  *
  * Returns 1 if node is a checked task-list item, 0 otherwise (including for
- * a node that is not a task-list item at all). */
+ * a node that is not a task-list item at all).
+ *
+ * `struct cmark_node` is forward-declared at file scope (rather than left to
+ * be introduced implicitly by the parameter list below) because a tag whose
+ * first appearance is inside a function's parameter-type-list has prototype
+ * scope only (C99 6.2.1p7): it does not extend to cmark-gfm-shim.c's
+ * definition of this same function, so without this line the header's
+ * `struct cmark_node` and the .c file's are two distinct, incompatible
+ * incomplete types, and the two declarations of chez_cmark_tasklist_checked
+ * conflict -- a hard error, independent of -Werror. */
+struct cmark_node;
 int chez_cmark_tasklist_checked(struct cmark_node *node);
 ```
 
-`struct cmark_node` is used rather than the `cmark_node` typedef so the header
-stays self-contained. In `src/cmark-gfm-shim.c`, add the extensions include
+The `struct cmark_node;` line is load-bearing, not decoration. `cmark-gfm-shim.c`
+includes its own header **before** `<cmark-gfm.h>`, so at the point the prototype
+is parsed the tag is not yet known at file scope. Omit the forward declaration
+and the build fails with a conflicting-types error on the function's own
+definition. The `struct` form is used rather than the `cmark_node` typedef so the
+header stays self-contained. In `src/cmark-gfm-shim.c`, add the extensions include
 below the existing includes:
 
 ```c
