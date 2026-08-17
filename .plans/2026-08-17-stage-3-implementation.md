@@ -35,6 +35,7 @@ Every task's requirements implicitly include this section.
 - **A test is not finished when it passes. It is finished when you have watched it fail.** Every new assertion gets a mutation that breaks it *through the asserted property*, recorded in `.plans/stage-3-mutation-log.md` (Task 12).
 - **Prefer comparing against an expected value over `test-assert`.** `0` is truthy in Scheme and `guard` returns its body's value when nothing raises. Use a distinct sentinel (`'no-condition`, `'wrong-condition`) for the no-raise case.
 - **Prefer a check to a comment.** If you are about to write a comment stating an invariant, ask whether it can be a make target, a test, or an assertion first.
+- **Where a step predicts a test count, the plan's own test code is authoritative, not the prose.** Several of these counts were wrong on the first pass and were caught by implementers who transcribed the code and reported the real number. Do the same: use the code, report what you actually saw, and flag the mismatch.
 - **Commits:** Conventional Commits. Run `make test` before every commit.
 
 ---
@@ -845,7 +846,7 @@ Append to `src/cmark/gfm/options.sls`, after `default-cmark-options`:
 CHEZSCHEMELIBDIRS=src:build/scheme-libs chez --program tests/test-options.sps
 ```
 
-Expected: 13 new passes, `# of unexpected failures 0`.
+Expected: 12 new passes, `# of unexpected failures 0`.
 
 - [ ] **Step 6: Watch the validator assertion fail**
 
@@ -1183,7 +1184,7 @@ existing bindings are already positioned correctly:
 make build && CHEZSCHEMELIBDIRS=src:build/scheme-libs chez --program tests/test-native.sps
 ```
 
-Expected: 24 new passes, `# of unexpected failures 0`.
+Expected: 25 new passes, `# of unexpected failures 0`.
 
 - [ ] **Step 7: Watch the extension-library assertion fail**
 
@@ -1716,7 +1717,7 @@ Create `src/cmark/gfm/private/convert.sls`:
 CHEZSCHEMELIBDIRS=src:build/scheme-libs chez --program tests/test-convert.sps
 ```
 
-Expected: 30 passes, `# of unexpected failures 0`.
+Expected: 29 passes, `# of unexpected failures 0`.
 
 `convert-node` will raise `&cmark-error` from `node-entry-type` applied to `#f`
 if a type string has no entry — that is Task 8's branch and is not reachable
@@ -2036,7 +2037,7 @@ Finally add the six entries to `node-table`, after the `"item"` entry:
 CHEZSCHEMELIBDIRS=src:build/scheme-libs chez --program tests/test-convert.sps
 ```
 
-Expected: 14 new passes, `# of unexpected failures 0`, and
+Expected: 15 new passes, `# of unexpected failures 0`, and
 `the table covers exactly the 24 reachable type strings and no more` reporting 24.
 
 - [ ] **Step 5: Watch the extension assertions fail**
@@ -2504,7 +2505,7 @@ have to know which file a record lives in.
 CHEZSCHEMELIBDIRS=src:build/scheme-libs chez --program tests/test-convert.sps
 ```
 
-Expected: 15 new passes, `# of unexpected failures 0`.
+Expected: 13 new passes, `# of unexpected failures 0`.
 
 - [ ] **Step 7: Watch the arity default fail**
 
@@ -2858,7 +2859,11 @@ shows exactly which bytes differ. Fix the serializer, not the converter, unless
 the difference is a genuine converter bug (a wrong property value rather than a
 formatting difference). Repeat until every case reports `#f`.
 
-Expected final state: 62 passes, `# of unexpected failures 0`.
+Expected final state: every `check` and `check-ext` case reports `#f`, and
+`# of unexpected failures 0`. Do not chase a specific total -- each `check`
+emits two assertions (with and without positions), so the number moves
+whenever a case is added, and the gate that matters is that no case reports
+a divergence.
 
 - [ ] **Step 3: Watch the oracle catch converter bugs**
 
@@ -3137,7 +3142,8 @@ guard working correctly.
 
 Expected: any failure here is a genuine divergence between our serializer and
 the CLI. Fix and re-run until every case reports `#f`. Expected final state:
-`ast-differential` reports 76 passes, `# of unexpected failures 0`.
+every `check-cli` case reports `#f` and the suite reports
+`# of unexpected failures 0`.
 
 - [ ] **Step 6: Confirm the new suite runs under the memory gate**
 
