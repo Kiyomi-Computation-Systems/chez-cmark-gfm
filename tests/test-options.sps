@@ -130,6 +130,91 @@
 (test-equal "a positive exact max-input-bytes is accepted"
   1024 (cmark-options-max-input-bytes (make-cmark-options 'max-input-bytes 1024)))
 
+;; --- functional update -------------------------------------------------
+(test-equal "cmark-options-with overrides the named field"
+  #t (cmark-options-smart? (cmark-options-with (default-cmark-options) 'smart? #t)))
+
+(test-equal "cmark-options-with leaves other fields alone"
+  #f (cmark-options-unsafe-html?
+      (cmark-options-with (default-cmark-options) 'smart? #t)))
+
+(test-equal "cmark-options-with preserves a non-default field it did not touch"
+  1024
+  (cmark-options-max-input-bytes
+   (cmark-options-with (make-cmark-options 'max-input-bytes 1024) 'smart? #t)))
+
+(test-equal "cmark-options-with does not mutate its argument"
+  #f
+  (let ((base (default-cmark-options)))
+    (cmark-options-with base 'smart? #t)
+    (cmark-options-smart? base)))
+
+(test-equal "cmark-options-with rejects an unknown key"
+  'unknown-key
+  (guard (e ((cmark-invalid-option? e) (cmark-invalid-option-reason e))
+            (#t 'wrong-condition))
+    (cmark-options-with (default-cmark-options) 'nope #t)
+    'no-condition))
+
+(test-equal "cmark-options-with rejects a non-options first argument"
+  'invalid-value
+  (guard (e ((cmark-invalid-option? e) (cmark-invalid-option-reason e))
+            (#t 'wrong-condition))
+    (cmark-options-with 'not-an-options-record 'smart? #t)
+    'no-condition))
+
+;; --- extensions --------------------------------------------------------
+(test-equal "supported-extensions lists the five standard GFM extensions"
+  '(autolink strikethrough table tagfilter tasklist)
+  (supported-extensions))
+
+(test-equal "extension->native-name maps a symbol to cmark's own spelling"
+  "strikethrough" (extension->native-name 'strikethrough))
+
+(test-equal "an unknown extension symbol is rejected at construction"
+  'unknown-extension
+  (guard (e ((cmark-invalid-option? e) (cmark-invalid-option-reason e))
+            (#t 'wrong-condition))
+    (make-cmark-options 'extensions '(table footnotes))
+    'no-condition))
+
+(test-equal "a string extension name is rejected -- the public API takes symbols"
+  'invalid-value
+  (guard (e ((cmark-invalid-option? e) (cmark-invalid-option-reason e))
+            (#t 'wrong-condition))
+    (make-cmark-options 'extensions '("table"))
+    'no-condition))
+
+(test-equal "an empty extension list is accepted"
+  '() (cmark-options-extensions (make-cmark-options 'extensions '())))
+
+;; --- the contradictory pair --------------------------------------------
+;; Verified in vendor/cmark-gfm/src/html.c:319-325: these are NOT undefined
+;; together -- HARDBREAKS is tested first and NOBREAKS is its else-if, so
+;; hardbreaks wins. Rejecting the pair is policy: honouring one of two
+;; explicit requests and silently dropping the other is the failure this
+;; library refuses.
+(test-equal "hardbreaks? and nobreaks? together are rejected"
+  'contradictory
+  (guard (e ((cmark-invalid-option? e) (cmark-invalid-option-reason e))
+            (#t 'wrong-condition))
+    (make-cmark-options 'hardbreaks? #t 'nobreaks? #t)
+    'no-condition))
+
+(test-equal "either of the pair alone is accepted"
+  '(#t #t)
+  (list (cmark-options-hardbreaks? (make-cmark-options 'hardbreaks? #t))
+        (cmark-options-nobreaks?   (make-cmark-options 'nobreaks? #t))))
+
+;; The rule must survive functional update, which is the whole reason
+;; validate runs on the RESULTING record rather than on the plist.
+(test-equal "cmark-options-with cannot reach the contradictory pair either"
+  'contradictory
+  (guard (e ((cmark-invalid-option? e) (cmark-invalid-option-reason e))
+            (#t 'wrong-condition))
+    (cmark-options-with (make-cmark-options 'nobreaks? #t) 'hardbreaks? #t)
+    'no-condition))
+
 (test-end "options")
 
 (exit (if (zero? (test-runner-fail-count runner)) 0 1))

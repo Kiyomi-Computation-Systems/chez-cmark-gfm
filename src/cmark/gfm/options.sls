@@ -10,7 +10,7 @@
 ;;; (cmark gfm render), because in cmark's own factoring option bits go to
 ;;; both the parser and the renderer while width goes only to some renderers.
 (library (cmark gfm options)
-  (export make-cmark-options default-cmark-options
+  (export make-cmark-options default-cmark-options cmark-options-with
           cmark-options?
           cmark-options-extensions
           cmark-options-validate-utf8?
@@ -110,6 +110,12 @@
          (unless (assq x extension-names)
            (raise (make-cmark-invalid-option 'extensions 'unknown-extension))))
        xs))
+    ;; Not a defence against undefined behaviour: html.c:319-325 gives
+    ;; hardbreaks precedence over nobreaks, so cmark is well-defined here.
+    ;; This is policy -- a caller who set both made a mistake, and silently
+    ;; discarding one of their two explicit requests would hide it.
+    (when (and (cmark-options-hardbreaks? o) (cmark-options-nobreaks? o))
+      (raise (make-cmark-invalid-option 'hardbreaks? 'contradictory)))
     o)
 
   (define (build a
@@ -130,10 +136,34 @@
   ;; ADR-0008: source-positions? is #f, diverging from project plan 6.2.
   ;; 0.1 has no AST, so the flag's only observable effect is data-sourcepos
   ;; attributes in HTML and sourcepos in XML.
+  ;;
+  ;; Delegates to make-cmark-options with an empty plist instead of
+  ;; restating the eight positional defaults here: make-cmark-options's call
+  ;; to build below is then the ONE place those values are written, so a
+  ;; future default change cannot desync the two constructors the way it
+  ;; could when each called %make-cmark-options with its own copy of the
+  ;; tuple (Task 2 review).
   (define (default-cmark-options)
-    (%make-cmark-options default-extensions #t #f #f #f #f #f
-                         default-max-input-bytes))
+    (make-cmark-options))
 
   (define (make-cmark-options . plist)
     (build (plist->alist plist)
-           default-extensions #t #f #f #f #f #f default-max-input-bytes)))
+           default-extensions #t #f #f #f #f #f default-max-input-bytes))
+
+  ;; Functional update. Rebuilds from o's current field values plus plist's
+  ;; overrides through the same build/validate path as construction, so
+  ;; every rule validate enforces -- including the contradictory-pair check
+  ;; above -- applies to the result and cannot be bypassed by starting from
+  ;; an existing record instead of a fresh plist.
+  (define (cmark-options-with o . plist)
+    (unless (cmark-options? o)
+      (raise (make-cmark-invalid-option #f 'invalid-value)))
+    (build (plist->alist plist)
+           (cmark-options-extensions o)
+           (cmark-options-validate-utf8? o)
+           (cmark-options-source-positions? o)
+           (cmark-options-hardbreaks? o)
+           (cmark-options-nobreaks? o)
+           (cmark-options-smart? o)
+           (cmark-options-unsafe-html? o)
+           (cmark-options-max-input-bytes o))))
