@@ -131,8 +131,15 @@
 (test-equal "a bullet list maps kind bullet and no delimiter"
   '((kind . bullet) (start . 0) (tight? . #t) (delimiter . none))
   (markdown-node-properties (first-of-type (ast-of "- a\n") 'list)))
+;; The three-argument form with a sentinel is load-bearing here, not verbosity:
+;; markdown-node-property's two-argument form returns #f for an ABSENT key, and
+;; #f is also the correct value for a loose list -- so without the sentinel this
+;; assertion passes identically whether tight? was computed correctly or never
+;; produced at all. Verified: deleting the tight? pair from list-props leaves the
+;; two-argument form green.
 (test-equal "a loose list reports tight? #f"
-  #f (markdown-node-property (first-of-type (ast-of "- a\n\n- b\n") 'list) 'tight?))
+  #f (markdown-node-property (first-of-type (ast-of "- a\n\n- b\n") 'list)
+                             'tight? 'absent))
 
 ;; index is one of the three properties cmark's XML never emits, so the
 ;; differential harness of Tasks 10-11 cannot see it. It is asserted directly
