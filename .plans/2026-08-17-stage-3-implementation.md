@@ -3260,6 +3260,13 @@ enforces: a mutation that fails for some *other* reason — a syntax error, an
 import failure, a side effect of the edit — has proved nothing. Narrow the
 mutation until the failure is the one predicted.
 
+**Run every mutation in the table below. Do not transcribe it.** Several rows
+were added by reviewers who ran them during earlier tasks, and several
+assertions in this stage turned out to be empty precisely because someone
+trusted a prediction instead of watching the failure. A log certifying a
+mutation nobody re-ran is worse than no log: it is evidence of something that
+was true once.
+
 - [ ] **Step 1: Create the log with one entry per mutation already performed**
 
 Create `.plans/stage-3-mutation-log.md`. Each entry records: the file and
@@ -3283,14 +3290,28 @@ Tasks 1–11 were:
 | 8 | `extension-props` always includes the literal pair | no literal key is invented for a node that has none |
 | 8 | `with-node` returns `'()` for a missing entry | the extension node records the native type string verbatim |
 | 8 | `"heading"` entry deleted from the table | a heading and a paragraph convert to the exact expected tree |
-| 9 | one-argument form uses `default-cmark-options` | the one-argument form attaches source positions |
+| 9 | one-argument form uses `default-cmark-options` | the one-argument form attaches source positions — **plus two legitimate collateral**: `positions carry cmark's real line and column spans` and `the empty document carries cmark's real 1:1-0:0 span`, both of which call the one-argument form. `the two-argument form honours an explicit source-positions? #t` must keep passing |
 | 9 | `node-source` ignores `positions?` | the two-argument form honours an explicit source-positions? #f |
+| 9 | swap `(cmark-options-max-nodes o)` / `(cmark-options-max-depth o)` in `parse.sls` | max-depth from the options record is enforced; max-nodes from the options record is enforced — both fail with the *other* limit's reason |
+| 9 | `scope.sls` raises the limit with `(bytevector-length bv)` instead of `max-bytes` | max-input-bytes still raises too-large, now as a resource limit — proves the assertion pins the **ceiling value**, not merely the reason |
+| 9 | `parse.sls` passes `(supported-extensions)` instead of `(cmark-options-extensions o)` | an extension the record omits is not attached — and `extensions from the options record are attached` must keep passing, which is what shows the pair is not redundant |
+| 9 | move the `cmark-options?` check inside `call-with-native-document`'s callback | a non-options argument is rejected before anything is allocated — **but read the caveat below** |
 | 10 | `heading-props` returns level 1 | in-process XML agrees: headings of every level |
 | 10 | `task-item-props` hardcodes `checked? #f` | in-process XML agrees: a task list, checked and unchecked |
 | 10 | row extractors swapped | in-process XML agrees: a table with every alignment |
 | 10 | `convert-children` drops its `reverse` | every multi-child in-process case |
 | 10 | `emit-indent` drops the `min` cap | in-process XML agrees at 25 levels of nesting, past MAX_INDENT — **and nothing else** |
 | 2 | `ast.sls` given a native import it calls | `make check-purity` |
+
+The last of those needs its result written down honestly rather than ticked off.
+Moving the `cmark-options?` check into the callback **does** still fail the
+assertion — but not for the reason the assertion's name claims. `options->bits`
+runs first and its own accessor raises a raw R6RS `&assertion` on the bad
+argument before `call-with-native-document` is ever entered, and `live-counts`
+stays at `(0 0 0)` either way. So the assertion proves the argument is
+*rejected*; it does not prove rejection happens *before acquisition*. Record
+that distinction — the property the name asserts is only partly covered, and the
+reason it is hard to cover is that no reachable ordering leaks a resource.
 
 - [ ] **Step 2: Record the properties that no mutation can break**
 
