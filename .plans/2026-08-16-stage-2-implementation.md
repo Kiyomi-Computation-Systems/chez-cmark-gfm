@@ -879,11 +879,6 @@ Create `tests/test-render.sps`:
 
 (test-begin "render")
 
-;; Assigned by the counter-movement test below, which has to observe the
-;; buffer counter from INSIDE the render extent -- once the scope exits the
-;; buffer is already freed and the count is back to baseline.
-(define during-count 0)
-
 ;; R6RS has no string-contains?; several assertions below check for a
 ;; substring of rendered output.
 (define (string-contains? hay needle)
@@ -917,21 +912,25 @@ Create `tests/test-render.sps`:
     s))
 
 ;; --- counter balance and MOVEMENT --------------------------------------
-;; live-buffers is the third element of live-counts. Built without
-;; -DCHEZ_CMARK_DEBUG_COUNTERS the shim hardcodes 0, so every balance test
-;; below would compare 0 to 0 and pass against a shim that counts nothing.
-;; This assertion is what makes them mean something: it demands the buffer
-;; counter actually MOVE while a buffer is alive.
-(test-assert "live-buffers moves while a render buffer is alive"
-  (let ((before (live-counts)))
-    (call-with-native-document "# hi\n" opts gfm-extensions
-      (lambda (h)
-        (call-with-render-buffer 'html
-          (lambda ()
-            (let ((buf (render-html (doc-root h) (doc-option-bits h) (doc-extensions h))))
-              (set! during-count (caddr (live-counts)))
-              buf)))))
-    (> during-count (caddr before))))
+;; live-buffers is the third element of live-counts. Built WITHOUT
+;; -DCHEZ_CMARK_DEBUG_COUNTERS the shim hardcodes chez_cmark_live_buffers to
+;; return 0 (src/cmark-gfm-shim.c), so every balance test below would compare
+;; 0 to 0 and pass against a shim that counts nothing at all.
+;;
+;; Movement is asserted at the PRIMITIVE level, not from inside a render.
+;; call-with-render-buffer runs no caller code inside its extent -- that is
+;; the safety property this task is built around -- so there is nowhere for a
+;; test to observe the counter mid-flight, and a thunk passed as make-buffer
+;; runs BEFORE count-buffer-new! is reached. This form fails against a
+;; counters-free shim and passes against a counting one, which is all the
+;; balance tests below need in order to mean anything.
+(test-assert "the buffer counter actually moves"
+  (let ((before (caddr (live-counts))))
+    (count-buffer-new!)
+    (let ((during (caddr (live-counts))))
+      (count-buffer-free!)
+      (and (> during before)
+           (= before (caddr (live-counts)))))))
 
 (test-assert "counters balance after a successful render"
   (let ((before (live-counts)))
@@ -949,6 +948,11 @@ Create `tests/test-render.sps`:
           (error 'test "deliberate failure after rendering"))))
     (equal? before (live-counts))))
 
+;; What the two balance tests above catch on their own: deleting EITHER
+;; count-buffer-new! or count-buffer-free! breaks them. Without new! the
+;; counter goes negative (buffer allocated uncounted, then counted on free);
+;; without free! it climbs. Only deleting BOTH would still balance -- and
+;; "the buffer counter actually moves" is what rules that out.
 (test-assert "200 renders leave the counters balanced"
   (let ((before (live-counts)))
     (let loop ((n 0))
@@ -1067,7 +1071,11 @@ cp /tmp/scope.sls.bak src/cmark/gfm/private/scope.sls && rm /tmp/scope.sls.bak
 make test 2>&1 | tail -3
 ```
 
-Expected: with the decrement gone, "counters balance after a successful render", "counters balance after the render scope's body raises", and "200 renders leave the counters balanced" all fail by name. After restoring, `ALL SUITES PASSED`. Record for Task 10 (mutation D).
+Expected: with the decrement gone, "counters balance after a successful render", "counters balance after the render scope's body raises", and "200 renders leave the counters balanced" all fail by name.
+
+Then repeat with `(count-buffer-new!)` deleted instead (restore the decrement first). Expected: the same three tests fail, because the counter goes negative rather than climbing. Both halves must be covered — a mutation log that only exercises the decrement leaves the increment untested.
+
+After restoring, `ALL SUITES PASSED`. Record both for Task 10 (mutation D).
 
 - [ ] **Step 7: Commit**
 
@@ -1105,9 +1113,15 @@ Add `(cmark gfm options)` and `(cmark gfm render)` to the import list of `tests/
 (test-equal "markdown->plaintext strips the markup"
   "hi\n" (markdown->plaintext "# hi\n" plain))
 
-(test-assert "markdown->xml emits an XML document"
+;; Not merely "a non-empty string" -- that would pass for literally any
+;; output. Checked against the shape cmark actually emits, confirmed with
+;; `cmark-gfm --to xml`.
+(test-assert "markdown->xml emits a CommonMark XML document"
   (let ((s (markdown->xml "# hi\n" plain)))
-    (and (string? s) (> (string-length s) 0))))
+    (and (string-contains? s "<?xml version=\"1.0\" encoding=\"UTF-8\"?>")
+         (string-contains? s "<document xmlns=\"http://commonmark.org/xml/1.0\">")
+         (string-contains? s "<heading level=\"1\">")
+         (string-contains? s "<text xml:space=\"preserve\">hi</text>"))))
 
 ;; The extension list reaches the HTML renderer. Without it, a table parses
 ;; but its extension nodes render as nothing -- so this discriminates the
@@ -1165,6 +1179,12 @@ Add `(cmark gfm options)` and `(cmark gfm render)` to the import list of `tests/
 (test-assert "raw HTML is suppressed by default"
   (string-contains? (markdown->html "<script>alert(1)</script>\n" (default-cmark-options))
                     "<!-- raw HTML omitted -->"))
+
+;; Verified against the CLI: in safe mode cmark empties the href rather than
+;; dropping the anchor.
+(test-assert "a javascript: link has its href emptied by default"
+  (string-contains? (markdown->html "[c](javascript:alert(1))\n" (default-cmark-options))
+                    "<a href=\"\">c</a>"))
 
 (test-assert "unsafe-html? #t is required to emit raw HTML"
   (string-contains? (markdown->html "<script>alert(1)</script>\n"
