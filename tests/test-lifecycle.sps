@@ -67,20 +67,46 @@
     (equal? before (live-counts))))
 
 ;; --- liveness (ADR-0006) ---------------------------------------------
-(test-assert "the handle is dead after the scope exits"
+;; A guard whose body never raises simply returns the body's own value.
+;; release! zeroes freed fields to 0, and 0 is truthy in Scheme, so
+;; comparing that fall-through value for truthiness would not discriminate
+;; a checked accessor from an unchecked one. Each guard clause below is
+;; rewritten to return a distinguishable sentinel symbol in all three
+;; outcomes -- condition raised, wrong condition raised, nothing raised --
+;; and the assertions compare against the expected sentinel, never a
+;; truthiness.
+(test-eq "the handle is dead after the scope exits"
+  'dead-document-raised
   (let ((escaped #f))
     (call-with-native-document "# hello\n" opts gfm-extensions
       (lambda (h) (set! escaped h) #t))
-    (guard (e ((cmark-dead-document? e) #t) (#t #f))
-      (doc-root escaped))))
+    (guard (e ((cmark-dead-document? e) 'dead-document-raised)
+              (#t 'wrong-condition-raised))
+      (doc-root escaped)
+      'no-condition-raised)))
 
-(test-assert "every checked accessor rejects a dead handle"
+;; The three accessors are checked independently and compared as a list
+;; rather than folded together with `and`, so a single accessor whose
+;; liveness check is broken shows up as a mismatch at its own position
+;; instead of being masked by the others' truthy results.
+(test-equal "every checked accessor rejects a dead handle"
+  '(dead-document-raised dead-document-raised dead-document-raised)
   (let ((escaped #f))
     (call-with-native-document "# hello\n" opts gfm-extensions
       (lambda (h) (set! escaped h) #t))
-    (and (guard (e ((cmark-dead-document? e) #t) (#t #f)) (doc-root escaped))
-         (guard (e ((cmark-dead-document? e) #t) (#t #f)) (doc-parser escaped))
-         (guard (e ((cmark-dead-document? e) #t) (#t #f)) (doc-extensions escaped)))))
+    (list
+     (guard (e ((cmark-dead-document? e) 'dead-document-raised)
+               (#t 'wrong-condition-raised))
+       (doc-root escaped)
+       'no-condition-raised)
+     (guard (e ((cmark-dead-document? e) 'dead-document-raised)
+               (#t 'wrong-condition-raised))
+       (doc-parser escaped)
+       'no-condition-raised)
+     (guard (e ((cmark-dead-document? e) 'dead-document-raised)
+               (#t 'wrong-condition-raised))
+       (doc-extensions escaped)
+       'no-condition-raised))))
 
 ;; --- extension failure ------------------------------------------------
 (test-equal "a missing extension is named in the condition"
