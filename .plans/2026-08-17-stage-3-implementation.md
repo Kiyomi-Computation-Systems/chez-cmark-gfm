@@ -1758,7 +1758,7 @@ through the property it claims to guard:
 3. Delete the `check-depth!` call from `convert-node`. Expected: `one level past the depth limit raises too-deep` FAILS with `no-condition`.
 4. Delete the `count-node!` call. Expected: `one node past the node limit raises too-many-nodes` FAILS with `no-condition`.
 
-Confirm all 30 pass after each revert. Record all four for Task 12.
+Confirm all 29 pass after each revert. Record all four for Task 12.
 
 - [ ] **Step 6: Run the full suite and commit**
 
