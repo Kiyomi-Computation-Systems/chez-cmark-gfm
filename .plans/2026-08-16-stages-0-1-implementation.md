@@ -1942,16 +1942,38 @@ Expected: three `=== tests/… ===` headers, `ALL SUITES PASSED`, `exit=0`.
 
 - [ ] **Step 3: Sabotage one suite and confirm a non-zero exit**
 
+Do **not** append the sabotage with `>>`. Each suite ends with its own
+unconditional `(exit …)`, so anything appended after that line is dead code that
+never runs — the suite would pass and you would wrongly conclude the target
+works. Insert the failing assertion *before* the final `(exit …)` instead:
+
 ```bash
-printf '\n(test-begin "sabotage")\n(test-equal "deliberate" 1 2)\n(test-end "sabotage")\n' >> tests/test-conditions.sps
+python3 - <<'EOF'
+import io
+p = "tests/test-conditions.sps"
+s = io.open(p).read()
+i = s.rindex("(exit ")
+io.open(p, "w").write(
+    s[:i] + '(test-equal "deliberate sabotage" 1 2)\n\n' + s[i:])
+EOF
 make test; echo "exit=$?"
 ```
 
-Expected: the conditions suite reports a failure, `SUITE FAILED`, `exit=1`.
+Expected: the conditions suite reports `FAIL deliberate sabotage`, then
+`SUITE FAILED`, and a **non-zero** exit.
 
-If this prints `exit=0`, the target is broken. The usual cause is the recipe
-losing the `fail` variable across lines — every line of a `make` recipe runs in
-its own shell unless joined with backslashes, so the loop must remain one
+Note the exact code is not 1. The recipe's `exit $$fail` does evaluate to 1 — you
+will see `make: *** [test] Error 1` — but GNU Make itself then exits **2** on any
+recipe error. Non-zero is the contract that matters; every real consumer (CI,
+shell `&&`/`||`) treats both alike. Do not "fix" the Makefile to force a 1.
+
+If this prints `exit=0`, either the target is broken or your sabotage never ran.
+Check the output for `FAIL deliberate sabotage` first — if that line is absent,
+the assertion was inserted somewhere unreachable and you have proved nothing yet.
+
+If the sabotage did run and the target still exited 0, the usual cause is the
+recipe losing the `fail` variable across lines: every line of a `make` recipe runs
+in its own shell unless joined with backslashes, so the loop must remain one
 continuation-joined command.
 
 - [ ] **Step 4: Confirm one failing suite does not mask the others**
