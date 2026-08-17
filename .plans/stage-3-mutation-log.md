@@ -749,18 +749,51 @@ unrecognised type string.
 types (11 block + 11 inline) plus 4 extension-registered types
 (`cmark_syntax_extension_add_node`, confirmed by grep: 1 in
 `strikethrough.c`, 3 in `table.c`, none in `autolink.c`/`tagfilter.c`/
-`tasklist.c`) = 26 total node-type constants — but `node-table` maps exactly
-24 type strings, and `"the table covers exactly the 24 reachable type
-strings and no more"` already checks this. The 2-constant gap is
-`CMARK_NODE_FOOTNOTE_DEFINITION`/`CMARK_NODE_FOOTNOTE_REFERENCE` — genuine
-**core** node types, not behind any syntax-extension gate. Grepped
+`tasklist.c`) = 26 total node-type constants. `node-table` maps exactly 24
+type strings, confirmed by count and by
+`"the table covers exactly the 24 reachable type strings and no more"`
+already checking it.
+
+**Recounted by constant, not by string.** 26 and 24 are different units —
+constants versus type strings — so subtracting them directly understates
+the gap: two constants each surface under two `node-table` entries.
+`CMARK_NODE_ITEM` covers both `"item"` and `"tasklist"`, because
+`tasklist.c`'s `open_tasklist_item` never allocates a new node or changes
+`->type` — it only tags an existing item via
+`cmark_node_set_syntax_extension`, so `cmark_node_get_type_string`
+dispatches to the extension's own `get_type_string` (unconditionally
+`"tasklist"`) instead of falling through to `node.c`'s own `case
+CMARK_NODE_ITEM: return "item";`. `CMARK_NODE_TABLE_ROW` likewise covers
+both `"table_row"` and `"table_header"`, which `table.c`'s own
+`get_type_string` picks between by checking the row's `is_header` flag at
+query time, never by using a second node type. Counted *by constant*,
+`node-table` covers 24 - 2 = **22 of the 26**, and the true gap is
+**four** constants, not two, for two unrelated reasons.
+
+`CMARK_NODE_FOOTNOTE_DEFINITION`/`CMARK_NODE_FOOTNOTE_REFERENCE` are
+genuine **core** node types, not behind any syntax-extension gate. Grepped
 `vendor/cmark-gfm/src/blocks.c` directly: footnote-definition parsing is
-gated by `parser->options & CMARK_OPT_FOOTNOTES` (`#define CMARK_OPT_FOOTNOTES
-(1 << 13)`, `cmark-gfm.h:755`) — and `chez_cmark_option_bits`
-(`src/cmark-gfm-shim.c`) takes exactly 6 booleans (`validate_utf8, sourcepos,
-hardbreaks, nobreaks, smart, unsafe_html`) and never ORs in that bit. This
-library structurally cannot enable footnote parsing today, confirming the
-brief's claim precisely and for a documented reason it did not itself give.
+gated by `parser->options & CMARK_OPT_FOOTNOTES` (`#define
+CMARK_OPT_FOOTNOTES (1 << 13)`, `cmark-gfm.h:755`) — and
+`chez_cmark_option_bits` (`src/cmark-gfm-shim.c`) takes exactly 6 booleans
+(`validate_utf8, sourcepos, hardbreaks, nobreaks, smart, unsafe_html`) and
+never ORs in that bit. This library structurally cannot enable footnote
+parsing today. `CMARK_NODE_CUSTOM_BLOCK`/`CMARK_NODE_CUSTOM_INLINE` are
+uncovered for a *different* reason: not gated, but never constructed by
+the parser at all. Grepped `vendor/cmark-gfm/src/blocks.c` and
+`inlines.c` directly: zero matches for either constant in either file.
+Both appear only in renderer switches (`xml.c`, `html.c`, `commonmark.c`,
+`latex.c`, `man.c`, `plaintext.c`) and in `node.c`/`iterator.c`'s own
+utility switches, all of which handle whatever node type a caller hands
+them rather than ever building one — and neither `native.sls` nor the
+shim exposes any call that could construct one from Scheme either, so
+nothing this library's own parse path can produce either type. This
+confirms the brief's claim more thoroughly than it stated: the fallback
+is unreachable through two independent mechanisms and four constants —
+one gated core feature this library never turns on, and one pair of
+types that exist solely for programmatic tree construction its own
+parser never performs — not the single mechanism and two constants the
+original count implied.
 
 Went one step further: temporarily forced `CMARK_OPT_FOOTNOTES` on
 unconditionally (`native.sls`'s `option-bits`, `(bitwise-ior 8192
