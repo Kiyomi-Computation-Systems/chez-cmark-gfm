@@ -1,0 +1,139 @@
+name: CI
+
+# Linux is the gate for every memory claim (ADR-0003). LeakSanitizer does not
+# exist on macOS/ARM64, so a green macOS run is NOT evidence of no leaks --
+# only Valgrind on Linux can support that claim. macOS is still tested because
+# it is the primary development platform.
+#
+# Both acquisition paths are exercised. The vendored path had two build-breaking
+# defects survive to a final review precisely because nothing ever selected it,
+# so it is a first-class job here, not an afterthought.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Cancel superseded runs on the same ref.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: linux (vendored + valgrind)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            chezscheme valgrind cmake pkg-config build-essential
+
+      # Recorded rather than asserted: the project's documented Chez floor came
+      # from one developer's machine, not from testing. Whatever this prints is
+      # what the suite is actually verified against.
+      - name: Report versions
+        run: |
+          echo "chez:     $(chezscheme --version 2>&1 || scheme --version 2>&1)"
+          echo "valgrind: $(valgrind --version)"
+          echo "cmake:    $(cmake --version | head -1)"
+          echo "cc:       $(cc --version | head -1)"
+          echo "--- pkg-config visibility of cmark-gfm ---"
+          pkg-config --exists libcmark-gfm && echo "present: $(pkg-config --modversion libcmark-gfm)" \
+                                           || echo "absent (expected on Ubuntu; the vendored path covers this)"
+
+      # Ubuntu names the binary `chezscheme`; the Makefile defaults to `chez`.
+      - name: Resolve the Chez binary
+        run: |
+          if command -v chez >/dev/null; then echo "CHEZ=chez" >> "$GITHUB_ENV"
+          elif command -v chezscheme >/dev/null; then echo "CHEZ=chezscheme" >> "$GITHUB_ENV"
+          elif command -v scheme >/dev/null; then echo "CHEZ=scheme" >> "$GITHUB_ENV"
+          else echo "no Chez Scheme binary found" >&2; exit 1; fi
+
+      - name: Scheme dependencies
+        run: make deps
+
+      - name: Build vendored cmark-gfm
+        run: make HAVE_PKG=no vendor
+
+      - name: Build (vendored path)
+        run: make HAVE_PKG=no build
+
+      - name: Test (vendored path)
+        run: make HAVE_PKG=no test
+
+      # The reason this job exists. Valgrind needs no instrumentation of Chez or
+      # cmark and is the only tool in this project that can substantiate a leak
+      # claim. Failure here blocks merge.
+      - name: Memory (valgrind)
+        run: make HAVE_PKG=no test-memory
+
+      # `make test` reporting success on a failing suite would silently void
+      # every other check in this workflow, so verify the contract itself.
+      - name: Verify the test target fails on a failing suite
+        run: |
+          cat > tests/test-aaci-sabotage.sps <<'EOF'
+          #!r6rs
+          (import (rnrs) (srfi :64))
+          (define runner (test-runner-simple))
+          (test-runner-current runner)
+          (test-begin "ci-sabotage")
+          (test-equal "deliberate failure" 1 2)
+          (test-end "ci-sabotage")
+          (exit (if (zero? (test-runner-fail-count runner)) 0 1))
+          EOF
+          if make HAVE_PKG=no test > sabotage.log 2>&1; then
+            echo "::error::make test exited 0 with a failing suite present"
+            rm -f tests/test-aaci-sabotage.sps
+            exit 1
+          fi
+          # A first-position failure must not mask later suites.
+          for s in conditions lifecycle native; do
+            grep -q "tests/test-$s.sps" sabotage.log \
+              || { echo "::error::suite $s did not run after an earlier failure"; exit 1; }
+          done
+          rm -f tests/test-aaci-sabotage.sps
+          echo "test target correctly failed, and no suite was masked"
+
+  macos:
+    name: macos (pkg-config + vendored, no leak claim)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install toolchain
+        run: brew install chezscheme cmark-gfm cmake pkg-config
+
+      - name: Report versions
+        run: |
+          echo "chez:  $(chez --version 2>&1)"
+          echo "cmark: $(cmark-gfm --version | head -1)"
+          echo "pkg-config libcmark-gfm: $(pkg-config --modversion libcmark-gfm)"
+
+      - name: Scheme dependencies
+        run: make deps
+
+      - name: Build and test (pkg-config path)
+        run: |
+          make build
+          make test
+
+      - name: Build and test (vendored path)
+        run: |
+          make HAVE_PKG=no vendor
+          make HAVE_PKG=no build
+          make HAVE_PKG=no test
+
+      # ASan only. LeakSanitizer is unsupported on macOS/ARM64, so this catches
+      # use-after-free and overflows but CANNOT support a leak claim. Do not
+      # read a green result here as "no leaks" -- that is the Linux job's job.
+      - name: Memory (ASan, no leak detection)
+        run: make test-memory

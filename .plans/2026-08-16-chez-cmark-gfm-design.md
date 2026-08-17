@@ -29,6 +29,22 @@ the plan during design review.
 | Component | Finding |
 |---|---|
 | Chez Scheme | 10.4.1, full (binary `chez`), machine type `tarm64osx` (threaded ARM64 macOS) |
+
+### 1.2 Tested Chez versions
+
+The version above is the development machine's, not a floor. CI verifies:
+
+| Platform | Chez | Result |
+|---|---|---|
+| macOS/ARM64 (Homebrew) | 10.4.1, binary `chez` | full suite green |
+| Ubuntu 24.04 (apt) | **9.5.8**, binary `chezscheme` | full suite green, Valgrind clean (0 definitely lost, 0 errors, 0 suppressions) |
+
+So the supported floor is **9.5.8**, established by test rather than assumption —
+earlier documents saying "10.4.1 or later" recorded one machine's version and
+were never verified. Two things follow and are worth stating: Ubuntu's build is
+threaded (the library imports `make-mutex`/`with-mutex`, which exist only in
+threaded builds, and it loads), and the binary is named `chezscheme` there, so
+anything invoking `chez` unconditionally is wrong.
 | cmark-gfm | Not installed; Homebrew provides `0.29.0.gfm.13` |
 | pkg-config | 2.5.1 |
 | Akku | Not installed |

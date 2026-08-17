@@ -71,6 +71,21 @@
   (define shim-file
     (resolve-shim-path shim-path (getenv "CHEZ_CMARK_GFM_SHIM")))
 
+  ;; cmark's own shared objects are loaded EXPLICITLY, and before the shim.
+  ;; On Linux the symbols of a dlopen'd library's dependencies are not placed
+  ;; in the global namespace, so resolving cmark_* entry points through the
+  ;; shim alone fails there -- `no entry for
+  ;; "cmark_gfm_core_extensions_ensure_registered"` -- while succeeding on
+  ;; macOS, whose loader searches dependencies. CI caught exactly this: green
+  ;; on macOS, red on Linux. The Stage 0 spikes loaded both libraries
+  ;; explicitly and were right to; this restores that.
+  (define cmark-loaded
+    (for-each (lambda (path)
+                (unless (regular-file? path)
+                  (raise (make-cmark-shim-unavailable path)))
+                (load-shim path))
+              cmark-library-paths))
+
   ;; A definition, not a bare expression, so it is legal at this position in
   ;; an R6RS library body while still running before every binding below.
   (define shim-loaded (load-shim shim-file))
