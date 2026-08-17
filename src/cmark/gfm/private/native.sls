@@ -147,8 +147,14 @@
   ;; is kept alongside equality, not replaced by it: a compiled/runtime
   ;; pair that agrees with itself but both predate what this binding
   ;; supports must still be rejected.
+  ;; Compatible when BOTH the compile-time and runtime versions fall inside the
+  ;; supported range. Deliberately not `(= compiled runtime)`: the range spans
+  ;; 0.29.0.gfm.x, so exact equality would reject a runtime the project declares
+  ;; supported and force a shim rebuild on every upstream patch release. Checking
+  ;; `compiled` too catches a shim built against an unsupported header, which the
+  ;; runtime check alone would miss.
   (define (version-compatible? compiled runtime)
-    (and (= compiled runtime)
+    (and (version-supported? compiled)
          (version-supported? runtime)))
 
   ;; Idempotent. Fails closed on a compiled/runtime mismatch or an

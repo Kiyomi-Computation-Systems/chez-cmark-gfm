@@ -152,8 +152,17 @@
 (test-assert "version-compatible? accepts equal compiled/runtime versions inside the range"
   (version-compatible? #x001d000d #x001d000d))
 
-(test-assert "version-compatible? rejects a compiled/runtime mismatch even though both are in range"
-  (not (version-compatible? #x001d0000 #x001d0001)))
+;; A gfm patch bump under a shim compiled against an earlier patch must be
+;; ACCEPTED -- the supported range is 0.29.0.gfm.x, so rejecting it would
+;; contradict the range the project publishes.
+(test-assert "version-compatible? accepts a gfm patch bump inside the range"
+  (version-compatible? #x001d000d #x001d000e))
+
+;; ...but a shim built against an unsupported header is rejected even when the
+;; runtime is fine. This is what checking `compiled` buys over checking runtime
+;; alone; without it this assertion passes vacuously.
+(test-assert "version-compatible? rejects a compiled version outside the range"
+  (not (version-compatible? #x001c0000 #x001d000d)))
 
 (test-assert "version-compatible? rejects an equal compiled/runtime pair outside the range"
   (not (version-compatible? #x001c0000 #x001c0000)))
