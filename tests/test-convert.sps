@@ -280,6 +280,133 @@
       (ast-of/limits (nested 400) 10 1000))
     (live-counts)))
 
+;; --- GFM extension node types -------------------------------------------
+(define all-exts '("autolink" "strikethrough" "table" "tagfilter" "tasklist"))
+(define (ext-ast markdown) (ast-of markdown #f all-exts))
+
+(define table-md "| a | b | c |\n|:--|--:|---|\n| 1 | 2 | 3 |\n")
+
+(test-equal "strikethrough converts and keeps its child"
+  '(strikethrough () ((text ((literal . "s")) ())))
+  (shape (first-of-type (ext-ast "~~s~~\n") 'strikethrough)))
+
+;; An autolink becomes an ordinary link node (project plan 7.3), so there is
+;; no autolink node type to map.
+(test-equal "an autolink becomes an ordinary link node"
+  "http://e.example/"
+  (markdown-node-property
+   (first-of-type (ext-ast "http://e.example/\n") 'link) 'url))
+
+;; columns is one of the three properties cmark's XML never emits, so the
+;; differential harness cannot see it (design spec 8.3). Asserted here.
+(test-equal "a table reports its column count and per-column alignments"
+  '((columns . 3) (alignments . (left right none)))
+  (markdown-node-properties (first-of-type (ext-ast table-md) 'table)))
+
+(test-equal "the header row and the body row are both table-row nodes"
+  '(table-row table-row)
+  (map markdown-node-type (nodes-of-type (ext-ast table-md) 'table-row)))
+(test-equal "header? distinguishes the two rows"
+  '(#t #f)
+  (map (lambda (n) (markdown-node-property n 'header?))
+       (nodes-of-type (ext-ast table-md) 'table-row)))
+
+;; Body-cell alignment is the third XML blind spot: table.c:661 emits align=
+;; only for cells whose parent row is a header. Both rows are asserted here so
+;; the body row is not silently uncovered.
+(test-equal "header cells carry their column's alignment"
+  '(left right none)
+  (map (lambda (n) (markdown-node-property n 'alignment))
+       (markdown-node-children
+        (car (nodes-of-type (ext-ast table-md) 'table-row)))))
+(test-equal "body cells carry the same alignments as the header"
+  '(left right none)
+  (map (lambda (n) (markdown-node-property n 'alignment))
+       (markdown-node-children
+        (cadr (nodes-of-type (ext-ast table-md) 'table-row)))))
+
+;; Task detection comes from the type string, because
+;; get_tasklist_item_checked cannot distinguish an unchecked task from a
+;; non-task (tasklist.c:30-40). All three cases are asserted together, since
+;; that is the discrimination a single-case test would miss.
+;; Sentinel defaults for the same reason as the loose-list assertion in Task 6:
+;; the plain item's expected pair is (#f . #f), which a two-argument lookup would
+;; also produce if plain-item-props stopped emitting either key at all.
+(test-equal "checked, unchecked, and plain items are all distinguished"
+  '((#t . #t) (#t . #f) (#f . #f))
+  (map (lambda (n) (cons (markdown-node-property n 'task? 'absent)
+                         (markdown-node-property n 'checked? 'absent)))
+       (nodes-of-type (ext-ast "- [x] done\n- [ ] todo\n\n* plain\n") 'item)))
+
+(test-equal "a task item still carries its index"
+  0 (markdown-node-property
+     (first-of-type (ext-ast "- [x] done\n") 'item) 'index))
+
+;; Two independent channels for the same fact: the type string
+;; (table.c:523-535) and the extension accessor. Redundancy turned into a
+;; cross-check for one assertion's worth of effort.
+(test-equal "header? agrees with cmark's own row accessor on every row"
+  (quote ())
+  (call-with-native-document
+   table-md (option-bits #f #f #f #f #f #f) all-exts
+   (lambda (h)
+     (let* ((tree (convert-document h (make-convert-ctx 250000 1000 #f)))
+            (ours (map (lambda (n) (markdown-node-property n 'header?))
+                       (nodes-of-type tree 'table-row)))
+            ;; walk to the table's rows natively: document -> table -> rows
+            (table (node-first-child (doc-root h)))
+            (theirs (let loop ((r (node-first-child table)) (acc (quote ())))
+                      (if (zero? r)
+                          (reverse acc)
+                          (loop (node-next r)
+                                (cons (not (zero? (table-row-is-header r)))
+                                      acc))))))
+       (if (equal? ours theirs) (quote ()) (list ours theirs))))))
+
+;; --- key sets and coverage for the extension types ----------------------
+(test-equal "the table has an entry for every reachable extension type string"
+  (quote ())
+  (filter (lambda (ts) (not (type-string->entry ts)))
+          '("strikethrough" "tasklist" "table" "table_header" "table_row"
+            "table_cell")))
+
+(test-equal "the table covers exactly the 24 reachable type strings and no more"
+  24 (length (node-table-type-strings)))
+
+(test-equal "extension nodes' key sets are exactly what the table declares"
+  (quote ())
+  (let ((tree (ext-ast (string-append table-md "\n~~s~~\n\n- [x] a\n- [ ] b\n"))))
+    (reverse
+     (markdown-node-fold
+      (lambda (n acc)
+        (let* ((ts (case (markdown-node-type n)
+                     ((strikethrough) "strikethrough")
+                     ((table) "table")
+                     ((table-row) (if (markdown-node-property n 'header?)
+                                      "table_header" "table_row"))
+                     ((table-cell) "table_cell")
+                     ((item) (if (markdown-node-property n 'task?)
+                                 "tasklist" "item"))
+                     (else #f)))
+               (entry (and ts (type-string->entry ts))))
+          (if (not entry)
+              acc
+              (let ((declared (list-sort symbol<? (node-entry-keys entry)))
+                    (actual (list-sort symbol<?
+                                       (map car (markdown-node-properties n)))))
+                (if (equal? declared actual)
+                    acc
+                    (cons (list (markdown-node-type n) declared actual) acc))))))
+      (quote ()) tree))))
+
+(test-equal "extension trees also outlive the native document"
+  '("s" "a" "b")
+  (let ((escaped-ext (ext-ast "~~s~~\n\n- [x] a\n- [ ] b\n")))
+    (map (lambda (n) (markdown-node-property n 'literal))
+         (nodes-of-type escaped-ext 'text))))
+(test-equal "extension conversion released every native allocation"
+  '(0 0 0) (live-counts))
+
 (test-end "convert")
 
 (exit (if (zero? (test-runner-fail-count runner)) 0 1))
