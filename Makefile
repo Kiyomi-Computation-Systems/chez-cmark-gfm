@@ -81,7 +81,19 @@ ifeq ($(HAVE_PKG),no)
 $(SHIM): vendor
 endif
 
-$(SHIM): src/cmark-gfm-shim.c src/cmark-gfm-shim.h | $(LIB_DIR)
+# Which acquisition path last built the shim. The name encodes the mode, so
+# flipping HAVE_PKG makes the prerequisite change identity and forces a relink.
+# Without this, `make HAVE_PKG=no build && make build` leaves the vendored-linked
+# shim in place -- make sees the .c unchanged and skips it -- so the two exit-gate
+# runs would silently test the same artifact twice.
+ACQ_MODE  := $(if $(filter yes,$(HAVE_PKG)),pkgconfig,vendored)
+ACQ_STAMP := $(BUILD_DIR)/.acquisition-$(ACQ_MODE)
+
+$(ACQ_STAMP): | $(LIB_DIR)
+	rm -f $(BUILD_DIR)/.acquisition-*
+	touch $@
+
+$(SHIM): src/cmark-gfm-shim.c src/cmark-gfm-shim.h $(ACQ_STAMP) | $(LIB_DIR)
 	$(CC) $(CFLAGS_DEV) $(CMARK_CFLAGS) $(SHLIB_LDFLAGS) \
 	      -o $@ src/cmark-gfm-shim.c $(CMARK_LIBS)
 

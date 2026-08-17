@@ -771,14 +771,30 @@ ifeq ($(HAVE_PKG),yes)
 else
   CMARK_CFLAGS := -I$(VENDOR_BUILD)/src -I$(VENDOR_DIR)/src \
                   -I$(VENDOR_DIR)/extensions
-  # Extensions FIRST, then core. The extensions archive references core symbols,
-  # and cmark's own CMake records no dependency between the two static archives,
-  # so ordering is the consumer's responsibility. Single-pass linkers (GNU ld,
-  # lld) scan left to right without re-scanning, so core-before-extensions
-  # leaves the extensions' core references unresolved. Darwin's ld64 is lenient
-  # enough to hide this, which is why it survives local testing.
-  CMARK_LIBS   := $(VENDOR_BUILD)/extensions/libcmark-gfm-extensions_static.a \
-                  $(VENDOR_BUILD)/src/libcmark-gfm_static.a
+  # The vendored copy is built and linked as SHARED libraries (design spec
+  # 6.1), never static. cmark-gfm's static archives are built with
+  # CMAKE_C_VISIBILITY_PRESET hidden plus CMARK_GFM_STATIC_DEFINE, which
+  # hides every cmark symbol from whatever links them. native.sls resolves
+  # cmark's entry points directly via foreign-procedure at runtime, so those
+  # symbols have to stay visible in a real shared object -- static linking
+  # cannot satisfy that no matter what the archives are named.
+  #
+  # Each shared library gets its own -Wl,-rpath entry, absolute and recorded
+  # at build time, so the shim resolves them at load time with no system
+  # library search and no dependence on the working directory or
+  # LD_LIBRARY_PATH/DYLD_LIBRARY_PATH -- the same guarantee the pkg-config
+  # path gets from the installed library's own rpath/soname handling.
+  #
+  # Extensions FIRST, then core, on the link line: kept from the static case
+  # for consistency, though it no longer determines symbol resolution --
+  # shared objects carry their own recorded dependencies (libcmark-gfm-
+  # extensions already depends on libcmark-gfm via its own CMake target).
+  CMARK_VENDOR_LIBDIR_EXT := $(abspath $(VENDOR_BUILD)/extensions)
+  CMARK_VENDOR_LIBDIR_SRC := $(abspath $(VENDOR_BUILD)/src)
+  CMARK_LIBS   := -L$(CMARK_VENDOR_LIBDIR_EXT) -lcmark-gfm-extensions \
+                  -L$(CMARK_VENDOR_LIBDIR_SRC) -lcmark-gfm \
+                  -Wl,-rpath,$(CMARK_VENDOR_LIBDIR_EXT) \
+                  -Wl,-rpath,$(CMARK_VENDOR_LIBDIR_SRC)
 endif
 
 CHEZ_LIBDIRS := src:.akku/lib
@@ -801,7 +817,19 @@ ifeq ($(HAVE_PKG),no)
 $(SHIM): vendor
 endif
 
-$(SHIM): src/cmark-gfm-shim.c src/cmark-gfm-shim.h | $(LIB_DIR)
+# Which acquisition path last built the shim. The name encodes the mode, so
+# flipping HAVE_PKG makes the prerequisite change identity and forces a relink.
+# Without this, `make HAVE_PKG=no build && make build` leaves the vendored-linked
+# shim in place -- make sees the .c unchanged and skips it -- so the two exit-gate
+# runs would silently test the same artifact twice.
+ACQ_MODE  := $(if $(filter yes,$(HAVE_PKG)),pkgconfig,vendored)
+ACQ_STAMP := $(BUILD_DIR)/.acquisition-$(ACQ_MODE)
+
+$(ACQ_STAMP): | $(LIB_DIR)
+	rm -f $(BUILD_DIR)/.acquisition-*
+	touch $@
+
+$(SHIM): src/cmark-gfm-shim.c src/cmark-gfm-shim.h $(ACQ_STAMP) | $(LIB_DIR)
 	$(CC) $(CFLAGS_DEV) $(CMARK_CFLAGS) $(SHLIB_LDFLAGS) \
 	      -o $@ src/cmark-gfm-shim.c $(CMARK_LIBS)
 
@@ -823,7 +851,7 @@ vendor:
 	cmake -S $(VENDOR_DIR) -B $(VENDOR_BUILD) \
 	  -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
 	  -DCMAKE_BUILD_TYPE=Release -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-	  -DCMARK_TESTS=OFF -DCMARK_SHARED=OFF -DCMARK_STATIC=ON
+	  -DCMARK_TESTS=OFF -DCMARK_SHARED=ON -DCMARK_STATIC=OFF
 	cmake --build $(VENDOR_BUILD) -j
 
 dev: build
