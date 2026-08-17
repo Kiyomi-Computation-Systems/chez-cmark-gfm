@@ -215,6 +215,77 @@
     (cmark-options-with (make-cmark-options 'nobreaks? #t) 'hardbreaks? #t)
     'no-condition))
 
+;; --- Stage 3: the two new ceilings (design spec 6.1) --------------------
+(test-equal "max-nodes defaults to 250000"
+  250000 (cmark-options-max-nodes (default-cmark-options)))
+(test-equal "max-depth defaults to 1000"
+  1000 (cmark-options-max-depth (default-cmark-options)))
+
+(test-equal "max-nodes is settable"
+  20000 (cmark-options-max-nodes (make-cmark-options 'max-nodes 20000)))
+(test-equal "max-depth is settable"
+  64 (cmark-options-max-depth (make-cmark-options 'max-depth 64)))
+
+(test-equal "max-nodes survives a functional update of another field"
+  20000
+  (cmark-options-max-nodes
+   (cmark-options-with (make-cmark-options 'max-nodes 20000) 'smart? #t)))
+
+;; Validated exactly as max-input-bytes is: exact positive integer.
+(test-equal "a non-integer max-nodes is rejected"
+  '(max-nodes invalid-value)
+  (guard (e ((cmark-invalid-option? e)
+             (list (cmark-invalid-option-key e) (cmark-invalid-option-reason e)))
+            (#t 'wrong-condition))
+    (make-cmark-options 'max-nodes 1.5)
+    'no-condition))
+(test-equal "a zero max-nodes is rejected"
+  '(max-nodes invalid-value)
+  (guard (e ((cmark-invalid-option? e)
+             (list (cmark-invalid-option-key e) (cmark-invalid-option-reason e)))
+            (#t 'wrong-condition))
+    (make-cmark-options 'max-nodes 0)
+    'no-condition))
+(test-equal "a negative max-depth is rejected"
+  '(max-depth invalid-value)
+  (guard (e ((cmark-invalid-option? e)
+             (list (cmark-invalid-option-key e) (cmark-invalid-option-reason e)))
+            (#t 'wrong-condition))
+    (make-cmark-options 'max-depth -1)
+    'no-condition))
+;; The same rule must hold on the update path, which builds through the same
+;; validator. Without this, cmark-options-with could smuggle past a check the
+;; base constructor enforces.
+(test-equal "cmark-options-with validates max-depth too"
+  '(max-depth invalid-value)
+  (guard (e ((cmark-invalid-option? e)
+             (list (cmark-invalid-option-key e) (cmark-invalid-option-reason e)))
+            (#t 'wrong-condition))
+    (cmark-options-with (default-cmark-options) 'max-depth 'huge)
+    'no-condition))
+
+;; --- default-ast-options (design spec 4.2, ADR-0009) --------------------
+;; The ONE field that differs, and the fact that nothing else does. Asserting
+;; only source-positions? would pass against a constructor that also flipped
+;; unsafe-html?, which is exactly the accident this pair of tests prevents.
+(test-equal "default-ast-options turns source positions on"
+  #t (cmark-options-source-positions? (default-ast-options)))
+(test-equal "the renderer default is unchanged -- positions stay off"
+  #f (cmark-options-source-positions? (default-cmark-options)))
+(test-equal "default-ast-options differs from the renderer defaults in nothing else"
+  (list '(autolink strikethrough table tagfilter tasklist) #t #f #f #f #f
+        5242880 250000 1000)
+  (let ((o (default-ast-options)))
+    (list (cmark-options-extensions o)
+          (cmark-options-validate-utf8? o)
+          (cmark-options-hardbreaks? o)
+          (cmark-options-nobreaks? o)
+          (cmark-options-smart? o)
+          (cmark-options-unsafe-html? o)
+          (cmark-options-max-input-bytes o)
+          (cmark-options-max-nodes o)
+          (cmark-options-max-depth o))))
+
 (test-end "options")
 
 (exit (if (zero? (test-runner-fail-count runner)) 0 1))

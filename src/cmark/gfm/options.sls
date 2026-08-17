@@ -20,6 +20,9 @@
           cmark-options-smart?
           cmark-options-unsafe-html?
           cmark-options-max-input-bytes
+          cmark-options-max-nodes
+          cmark-options-max-depth
+          default-ast-options
           supported-extensions
           extension->native-name)
   (import (rnrs)
@@ -55,11 +58,13 @@
             nobreaks?
             smart?
             unsafe-html?
-            max-input-bytes))
+            max-input-bytes
+            max-nodes
+            max-depth))
 
   (define option-keys
     '(extensions validate-utf8? source-positions? hardbreaks?
-      nobreaks? smart? unsafe-html? max-input-bytes))
+      nobreaks? smart? unsafe-html? max-input-bytes max-nodes max-depth))
 
   ;; Walks the plist, rejecting structural problems before any value is read.
   ;; A duplicate key is an error rather than last-wins: silently honouring one
@@ -97,9 +102,14 @@
     (check-boolean 'nobreaks?         (cmark-options-nobreaks? o))
     (check-boolean 'smart?            (cmark-options-smart? o))
     (check-boolean 'unsafe-html?      (cmark-options-unsafe-html? o))
-    (let ((n (cmark-options-max-input-bytes o)))
-      (unless (and (integer? n) (exact? n) (positive? n))
-        (raise (make-cmark-invalid-option 'max-input-bytes 'invalid-value))))
+    (for-each
+     (lambda (pair)
+       (let ((key (car pair)) (n ((cdr pair) o)))
+         (unless (and (integer? n) (exact? n) (positive? n))
+           (raise (make-cmark-invalid-option key 'invalid-value)))))
+     (list (cons 'max-input-bytes cmark-options-max-input-bytes)
+           (cons 'max-nodes       cmark-options-max-nodes)
+           (cons 'max-depth       cmark-options-max-depth)))
     (let ((xs (cmark-options-extensions o)))
       (unless (list? xs)
         (raise (make-cmark-invalid-option 'extensions 'invalid-value)))
@@ -121,7 +131,7 @@
   (define (build a
                  d-extensions d-validate-utf8? d-source-positions?
                  d-hardbreaks? d-nobreaks? d-smart? d-unsafe-html?
-                 d-max-input-bytes)
+                 d-max-input-bytes d-max-nodes d-max-depth)
     (validate
      (%make-cmark-options
       (lookup a 'extensions        d-extensions)
@@ -131,7 +141,9 @@
       (lookup a 'nobreaks?         d-nobreaks?)
       (lookup a 'smart?            d-smart?)
       (lookup a 'unsafe-html?      d-unsafe-html?)
-      (lookup a 'max-input-bytes   d-max-input-bytes))))
+      (lookup a 'max-input-bytes   d-max-input-bytes)
+      (lookup a 'max-nodes         d-max-nodes)
+      (lookup a 'max-depth         d-max-depth))))
 
   ;; ADR-0008: source-positions? is #f, diverging from project plan 6.2.
   ;; 0.1 has no AST, so the flag's only observable effect is data-sourcepos
@@ -146,9 +158,22 @@
   (define (default-cmark-options)
     (make-cmark-options))
 
+  ;; ADR-0009 and design spec 4.2: markdown->ast's per-entry-point default.
+  ;; Positions are worth having in an AST and are not worth having in
+  ;; rendered markup, and one shared default cannot serve both -- so the
+  ;; entry point picks, by arity, rather than the record carrying a third
+  ;; "unset" state that every validation path would have to handle.
+  ;;
+  ;; Built by functional update from make-cmark-options rather than by
+  ;; restating the default tuple, so a future change to any other default
+  ;; cannot desync the two constructors.
+  (define (default-ast-options)
+    (cmark-options-with (make-cmark-options) 'source-positions? #t))
+
   (define (make-cmark-options . plist)
     (build (plist->alist plist)
-           default-extensions #t #f #f #f #f #f default-max-input-bytes))
+           default-extensions #t #f #f #f #f #f
+           default-max-input-bytes default-max-nodes default-max-depth))
 
   ;; Functional update. Rebuilds from o's current field values plus plist's
   ;; overrides through the same build/validate path as construction, so
@@ -166,4 +191,6 @@
            (cmark-options-nobreaks? o)
            (cmark-options-smart? o)
            (cmark-options-unsafe-html? o)
-           (cmark-options-max-input-bytes o))))
+           (cmark-options-max-input-bytes o)
+           (cmark-options-max-nodes o)
+           (cmark-options-max-depth o))))
