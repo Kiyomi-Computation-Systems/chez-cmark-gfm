@@ -18,7 +18,12 @@
 ;;; body cells (design spec 8.3).
 (import (rnrs)
         (srfi :64)
-        (cmark gfm))
+        (cmark gfm)
+        ;; file-exists? is deliberately absent: (rnrs) already exports it and
+        ;; requesting it here too fails the library body with "multiple
+        ;; definitions for file-exists?".
+        (only (chezscheme) getenv mkdir)
+        (cmark-testing))
 
 (define runner (test-runner-simple))
 (test-runner-current runner)
@@ -281,6 +286,125 @@
   #f (divergence (nested-quotes 25) no-positions))
 (test-equal "in-process XML agrees at 25 levels with positions"
   #f (divergence (nested-quotes 25) positions))
+
+;; --- leg two: the pinned CLI --------------------------------------------
+;; The in-process leg compares our serializer against cmark's renderer inside
+;; one process. If both were wrong in the same way -- say, our AST and our
+;; reading of xml.c drifted together -- that leg would still pass. The CLI is
+;; an independent witness.
+(define cli (or (getenv "CMARK_CLI") "cmark-gfm"))
+(define tmp-dir "tests/tmp")
+(define out-path "tests/tmp/ast-diff-out.bin")
+(define fixture-path "tests/tmp/ast-diff-in.md")
+
+(unless (file-exists? tmp-dir) (mkdir tmp-dir))
+
+;; A missing or mismatched CLI FAILS this suite. It does not skip it: "skip
+;; when unavailable" is how an exit criterion silently stops being enforced.
+;; Both supported acquisition paths ship the binary.
+(test-equal "the CLI is the same build as the loaded library"
+  #t
+  (string-contains?
+   (utf8->string (capture-command (string-append cli " --version 2>&1") out-path))
+   (string-append " " (cmark-gfm-version) " ")))
+
+;; The flags come from the options record, so the two sides cannot describe
+;; different configurations by accident. --to xml is fixed: this suite has one
+;; format. Not shared with test-differential.sps's version, which is
+;; per-format -- see this task's preamble.
+(define (options->flags o)
+  (string-append
+   "--to xml"
+   (if (cmark-options-validate-utf8? o)    " --validate-utf8" "")
+   (if (cmark-options-source-positions? o) " --sourcepos" "")
+   (if (cmark-options-hardbreaks? o)       " --hardbreaks" "")
+   (if (cmark-options-nobreaks? o)         " --nobreaks" "")
+   (if (cmark-options-smart? o)            " --smart" "")
+   (if (cmark-options-unsafe-html? o)      " --unsafe" "")
+   (fold-left (lambda (acc e) (string-append acc " -e " (symbol->string e)))
+              "" (cmark-options-extensions o))))
+
+(define (write-fixture markdown)
+  (let ((p (open-file-output-port fixture-path (file-options no-fail))))
+    (put-bytevector p (string->utf8 markdown))
+    (close-port p)))
+
+(define (cli-xml markdown o)
+  (write-fixture markdown)
+  (utf8->string
+   (capture-command (string-append cli " " (options->flags o) " " fixture-path)
+                    out-path)))
+
+;; Two options records for the same reason the in-process leg takes them: a
+;; detector given one record can never report a difference when the code is
+;; correct, so its guard has to seed it with a deliberate mismatch -- and the
+;; guard must call the detector itself. Reimplementing the comparison inline
+;; leaves a hardcoded detector undetected; that shipped once and was caught
+;; only by hardcoding it.
+(define cli-divergence
+  (case-lambda
+    ((markdown o) (cli-divergence markdown o o))
+    ((markdown our-o their-o)
+     (let ((mine (ast->xml (markdown->ast markdown our-o)))
+           (theirs (cli-xml markdown their-o)))
+       (if (string=? mine theirs) #f (list mine theirs))))))
+
+;; Same guard as the in-process leg, and it calls the detector.
+(test-equal "the CLI comparison detects a real difference when one exists"
+  #t
+  (if (cli-divergence "# hi\n" positions no-positions) #t #f))
+
+(define (check-cli name markdown o)
+  (test-equal (string-append "CLI XML agrees: " name)
+    #f (cli-divergence markdown o)))
+
+;; The committed fixtures, which is what makes this leg a corpus test rather
+;; than a restatement of the cases above. hostile.md is included because an
+;; AST must preserve exactly what it parsed -- raw HTML and dangerous URLs
+;; included -- and this is where that is proved rather than asserted.
+(define (fixture->string path) (utf8->string (file->bytevector path)))
+
+(for-each
+ (lambda (path)
+   (for-each
+    (lambda (o)
+      (check-cli (string-append path " " (if (cmark-options-source-positions? o)
+                                             "with positions" "without positions"))
+                 (fixture->string path) o))
+    (list with-exts with-exts+pos)))
+ '("tests/fixtures/core.md"
+   "tests/fixtures/gfm.md"
+   "tests/fixtures/smart.md"
+   "tests/fixtures/hostile.md"))
+
+;; Every construct from the in-process leg, re-verified against the CLI.
+(check-cli "a table with every alignment"
+           "| a | b | c | d |\n|:--|--:|:-:|---|\n| 1 | 2 | 3 | 4 |\n"
+           with-exts+pos)
+(check-cli "a task list, checked and unchecked" "- [x] a\n- [ ] b\n" with-exts+pos)
+(check-cli "a multi-line inline code span" "`a\nb` end\n" with-exts+pos)
+(check-cli "25 levels of nesting, past MAX_INDENT"
+           (nested-quotes 25) with-exts+pos)
+(check-cli "the XML escaper's four characters"
+           "a & b < c > d \" e ' f / g\n" with-exts+pos)
+
+;; smart? changes the text literals cmark produces, so the AST must carry the
+;; smart-punctuation forms. Verified against the CLI's own --smart output.
+(check-cli "smart punctuation reaches the AST's literals"
+           "\"quoted\" -- dashed --- and 'single'\n"
+           (cmark-options-with with-exts+pos 'smart? #t))
+
+;; unsafe-html? is a RENDERER policy and must not change the AST at all
+;; (design spec 3.5). The XML renderer ignores it, so both settings must
+;; produce identical output -- which is what proves the AST preserved the raw
+;; HTML rather than suppressing it.
+(test-equal "unsafe-html? does not change the AST"
+  #t
+  (string=? (ast->xml (markdown->ast (fixture->string "tests/fixtures/hostile.md")
+                                     with-exts+pos))
+            (ast->xml (markdown->ast (fixture->string "tests/fixtures/hostile.md")
+                                     (cmark-options-with with-exts+pos
+                                                         'unsafe-html? #t)))))
 
 (test-end "ast-differential")
 

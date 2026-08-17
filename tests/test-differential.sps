@@ -17,7 +17,8 @@
         ;; requesting it here too fails the library body with "multiple
         ;; definitions for file-exists?".
         (only (chezscheme) system getenv mkdir)
-        (cmark gfm))
+        (cmark gfm)
+        (cmark-testing))
 
 (define runner (test-runner-simple))
 (test-runner-current runner)
@@ -30,30 +31,13 @@
 
 (unless (file-exists? tmp-dir) (mkdir tmp-dir))
 
-(define (file->bytevector path)
-  (let* ((p (open-file-input-port path))
-         (bv (get-bytevector-all p)))
-    (close-port p)
-    (if (eof-object? bv) (make-bytevector 0) bv)))
-
-(define (string-contains? hay needle)
-  (let ((h (string-length hay)) (n (string-length needle)))
-    (let loop ((i 0))
-      (cond ((> (+ i n) h) #f)
-            ((string=? needle (substring hay i (+ i n))) #t)
-            (else (loop (+ i 1)))))))
-
 ;; --- the CLI must be the same build as the loaded library ---------------
 ;; A missing or mismatched CLI FAILS this suite. It does not skip it:
 ;; "skip when unavailable" is how an exit criterion silently stops being
 ;; enforced. Both supported acquisition paths ship the binary.
 (define (cli-version-line)
-  (let ((rc (system (string-append cli " --version > " out-path " 2>&1"))))
-    (unless (zero? rc)
-      (error 'cli-version-line
-             "cmark-gfm CLI is not runnable -- set CMARK_CLI or run via make test"
-             cli rc))
-    (utf8->string (file->bytevector out-path))))
+  (utf8->string (capture-command (string-append cli " --version 2>&1")
+                                 out-path)))
 
 (test-assert "the CLI is runnable and is the same build as the loaded library"
   (string-contains? (cli-version-line)
@@ -61,10 +45,7 @@
 
 ;; --- running one side of a comparison -----------------------------------
 (define (run-cli flags fixture)
-  (let* ((cmd (string-append cli " " flags " " fixture " > " out-path " 2>/dev/null"))
-         (rc  (system cmd)))
-    (unless (zero? rc) (error 'run-cli "CLI invocation failed" cmd rc))
-    (file->bytevector out-path)))
+  (capture-command (string-append cli " " flags " " fixture) out-path))
 
 (define (config->options cfg) (apply make-cmark-options cfg))
 

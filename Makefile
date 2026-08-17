@@ -69,7 +69,7 @@ endif
 
 SRFI_SRC     := vendor/chez-srfi
 SRFI_LIBS    := $(BUILD_DIR)/scheme-libs
-CHEZ_LIBDIRS := src:$(SRFI_LIBS)
+CHEZ_LIBDIRS := src:tests:$(SRFI_LIBS)
 TESTS        := $(wildcard tests/test-*.sps)
 
 # The differential suite spawns ~400 cmark-gfm subprocesses. Those are separate
