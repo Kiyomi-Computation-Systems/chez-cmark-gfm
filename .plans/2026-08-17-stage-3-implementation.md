@@ -2852,11 +2852,19 @@ Create `tests/test-ast-differential.sps`:
   (if (divergence "# hi\n" positions no-positions) #t #f))
 
 ;; --- agreement, one construct at a time ---------------------------------
+;; 'agree, not #f, and this is load-bearing. SRFI-64 evaluates a test's actual
+;; expression inside (guard (ex (else #F)) ...), so with #f as the expected
+;; value ANY exception raised while computing it -- notably capture-command's
+;; raise on a non-zero CLI exit in the leg Task 11 adds -- would be
+;; indistinguishable from a clean agreement. Verified: a CLI that answered
+;; --version and then failed on every fixture left this suite fully green. The
+;; `or` keeps the divergence list as the actual value when the two really
+;; differ, so a failure still prints which bytes moved.
 (define (check name markdown)
   (test-equal (string-append "in-process XML agrees: " name)
-    #f (divergence markdown no-positions))
+    'agree (or (divergence markdown no-positions) 'agree))
   (test-equal (string-append "in-process XML agrees with positions: " name)
-    #f (divergence markdown positions)))
+    'agree (or (divergence markdown positions) 'agree)))
 
 (check "an empty document" "")
 (check "headings of every level"
@@ -2898,9 +2906,9 @@ Create `tests/test-ast-differential.sps`:
 
 (define (check-ext name markdown)
   (test-equal (string-append "in-process XML agrees: " name)
-    #f (divergence markdown with-exts))
+    'agree (or (divergence markdown with-exts) 'agree))
   (test-equal (string-append "in-process XML agrees with positions: " name)
-    #f (divergence markdown with-exts+pos)))
+    'agree (or (divergence markdown with-exts+pos) 'agree)))
 
 (check-ext "strikethrough" "~~a~~\n")
 (check-ext "an autolink" "http://e.example/ and www.example.org\n")
@@ -2920,9 +2928,9 @@ Create `tests/test-ast-differential.sps`:
 (define (nested-quotes n) (string-append (make-string n #\>) " deep\n"))
 
 (test-equal "in-process XML agrees at 25 levels of nesting, past MAX_INDENT"
-  #f (divergence (nested-quotes 25) no-positions))
+  'agree (or (divergence (nested-quotes 25) no-positions) 'agree))
 (test-equal "in-process XML agrees at 25 levels with positions"
-  #f (divergence (nested-quotes 25) positions))
+  'agree (or (divergence (nested-quotes 25) positions) 'agree))
 
 (test-end "ast-differential")
 
@@ -3033,15 +3041,24 @@ Create `tests/cmark-testing.sls`:
               ((string=? needle (substring hay i (+ i n))) #t)
               (else (loop (+ i 1)))))))
 
-  ;; Runs cmd with stdout redirected to out-path and stderr discarded, then
-  ;; returns the captured bytes. A non-zero exit is an ERROR, not an empty
-  ;; result: a silently empty capture would make a byte comparison pass
-  ;; against a CLI that never ran.
-  (define (capture-command cmd out-path)
-    (let ((rc (system (string-append cmd " > " out-path " 2>/dev/null"))))
-      (unless (zero? rc)
-        (error 'capture-command "command failed" cmd rc))
-      (file->bytevector out-path))))
+  ;; Runs cmd with stdout redirected to out-path, then returns the captured
+  ;; bytes. A non-zero exit is an ERROR, not an empty result: a silently empty
+  ;; capture would make a byte comparison pass against a CLI that never ran.
+  ;;
+  ;; merge-stderr? exists because redirection order matters and callers cannot
+  ;; fix it from inside the command string: "cmd 2>&1 > out 2>/dev/null" sends
+  ;; stderr to the terminal, not the file, because 2>&1 duplicates whatever
+  ;; stdout is at that moment. The version probe wants both streams, because a
+  ;; loader or link failure reports on stderr and is the whole diagnostic.
+  (define capture-command
+    (case-lambda
+      ((cmd out-path) (capture-command cmd out-path #f))
+      ((cmd out-path merge-stderr?)
+       (let ((rc (system (string-append cmd " > " out-path
+                                        (if merge-stderr? " 2>&1" " 2>/dev/null")))))
+         (unless (zero? rc)
+           (error 'capture-command "command failed" cmd rc))
+         (file->bytevector out-path))))))
 ```
 
 - [ ] **Step 2: Put `tests` on the library path and migrate the Stage 2 suite**
@@ -3052,23 +3069,35 @@ In `Makefile`, extend line 72:
 CHEZ_LIBDIRS := src:tests:$(SRFI_LIBS)
 ```
 
+**And add `CMARK_CLI=$(CMARK_CLI)` to both branches of `test-memory`.** The
+`test:` target already passes it; `test-memory:` never did, which was harmless
+only because no suite in `MEMORY_TESTS` needed the CLI. This task adds one, and
+it stays in `MEMORY_TESTS` by design. On the vendored path — `make HAVE_PKG=no`,
+exactly what Linux CI runs for its memory job — `CMARK_CLI` is an absolute path
+into the build tree and `cmark-gfm` is on no `PATH`, so without this the suite
+falls back to a bare `"cmark-gfm"` that resolves nowhere. The macOS branch runs
+its loop inside `sh -c` with preload variables, so the placement differs between
+the two; read the target before editing. Recipes need **tab** indentation.
+
 In `tests/test-differential.sps`, add `(cmark-testing)` to the import list,
 delete the now-duplicated `file->bytevector` and `string-contains?`
-definitions, and rewrite the two places that ran the CLI in terms of
+definitions, drop the now-unused `system` from its `(only (chezscheme) …)`
+import, and rewrite the two places that ran the CLI in terms of
 `capture-command`:
 
 ```scheme
 (define (cli-version-line)
-  (utf8->string (capture-command (string-append cli " --version 2>&1")
-                                 out-path)))
+  (utf8->string (capture-command (string-append cli " --version") out-path #t)))
 
 (define (run-cli flags fixture)
   (capture-command (string-append cli " " flags " " fixture) out-path))
 ```
 
-Note the `2>&1` stays inside the command string for the version probe, because
-`capture-command` discards stderr and `--version` output is worth capturing in
-full when the probe fails.
+The version probe passes `merge-stderr? #t` rather than smuggling a `2>&1`
+into the command string: redirections apply left to right, so
+`cmd 2>&1 > out 2>/dev/null` duplicates stderr to the *terminal* and then
+discards it — losing exactly the loader or link failure the probe exists to
+report.
 
 - [ ] **Step 3: Prove the migration changed no behaviour**
 
@@ -3116,7 +3145,7 @@ Then:
 (test-equal "the CLI is the same build as the loaded library"
   #t
   (string-contains?
-   (utf8->string (capture-command (string-append cli " --version 2>&1") out-path))
+   (utf8->string (capture-command (string-append cli " --version") out-path #t))
    (string-append " " (cmark-gfm-version) " ")))
 
 ;; The flags come from the options record, so the two sides cannot describe
@@ -3167,7 +3196,7 @@ Then:
 
 (define (check-cli name markdown o)
   (test-equal (string-append "CLI XML agrees: " name)
-    #f (cli-divergence markdown o)))
+    'agree (or (cli-divergence markdown o) 'agree)))
 
 ;; The committed fixtures, which is what makes this leg a corpus test rather
 ;; than a restatement of the cases above. hostile.md is included because an
@@ -3201,8 +3230,17 @@ Then:
 
 ;; smart? changes the text literals cmark produces, so the AST must carry the
 ;; smart-punctuation forms. Verified against the CLI's own --smart output.
+;; Discrimination guard first, which test-differential.sps's preamble calls
+;; "the load-bearing part": a parity assertion means nothing unless the option
+;; actually moves the CLI's own output for this fixture.
+(define smart-fixture "\"quoted\" -- dashed --- and 'single'\n")
+(test-equal "--smart changes the CLI's own output for this fixture"
+  #t
+  (not (string=? (cli-xml smart-fixture with-exts+pos)
+                 (cli-xml smart-fixture
+                          (cmark-options-with with-exts+pos 'smart? #t)))))
 (check-cli "smart punctuation reaches the AST's literals"
-           "\"quoted\" -- dashed --- and 'single'\n"
+           smart-fixture
            (cmark-options-with with-exts+pos 'smart? #t))
 
 ;; unsafe-html? is a RENDERER policy and must not change the AST at all
