@@ -4,7 +4,8 @@
         (only (chezscheme) collect)   ; NOT exit: (rnrs) exports it
         (cmark gfm)
         (cmark gfm private native)    ; option-bits, live-counts, render-html,
-                                      ; runtime-version-string
+                                      ; runtime-version-string,
+                                      ; count-buffer-new!, count-buffer-free!
         (cmark gfm private scope))    ; call-with-native-document, doc-*,
                                       ; call-with-render-buffer
 
@@ -308,7 +309,8 @@
 
 (test-assert "the façade exposes the condition predicates"
   (guard (e ((cmark-invalid-option? e) #t) (#t #f))
-    (make-cmark-options 'nope #t)))
+    (make-cmark-options 'nope #t)
+    #f))
 
 (test-end "render")
 
