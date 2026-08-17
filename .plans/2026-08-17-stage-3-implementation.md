@@ -1827,9 +1827,12 @@ Insert into `tests/test-convert.sps`, immediately **before** the final
 (test-equal "the header row and the body row are both table-row nodes"
   '(table-row table-row)
   (map markdown-node-type (nodes-of-type (ext-ast table-md) 'table-row)))
+;; Sentinel default: header? is one of the properties ast.sls names as having
+;; #f as a legitimate value, so a two-argument lookup could not tell a body row
+;; correctly reporting #f from an extractor that stopped emitting the key.
 (test-equal "header? distinguishes the two rows"
   '(#t #f)
-  (map (lambda (n) (markdown-node-property n 'header?))
+  (map (lambda (n) (markdown-node-property n 'header? 'absent))
        (nodes-of-type (ext-ast table-md) 'table-row)))
 
 ;; Body-cell alignment is the third XML blind spot: table.c:661 emits align=
@@ -1872,7 +1875,7 @@ Insert into `tests/test-convert.sps`, immediately **before** the final
    table-md (option-bits #f #f #f #f #f #f) all-exts
    (lambda (h)
      (let* ((tree (convert-document h (make-convert-ctx 250000 1000 #f)))
-            (ours (map (lambda (n) (markdown-node-property n 'header?))
+            (ours (map (lambda (n) (markdown-node-property n 'header? 'absent))
                        (nodes-of-type tree 'table-row)))
             ;; walk to the table's rows natively: document -> table -> rows
             (table (node-first-child (doc-root h)))
@@ -1953,9 +1956,12 @@ extension extractors after `plain-item-props`:
           ((= b 114) 'right)     ; #\r
           (else 'none)))
 
-  ;; Called only from the "table" branch: table-columns and table-alignments
-  ;; dereference node->type with no NULL guard (extensions/table.c:878-890),
-  ;; so reaching them with a non-table node would fault rather than raise.
+  ;; table-columns and table-alignments (extensions/table.c:878-890) test
+  ;; node->type and safely return 0/NULL for a non-table node -- not a fault.
+  ;; What they lack, unlike get_cell_alignment (table.c:133-139), is a guard
+  ;; against a NULL node. Moot here: get_type_string (table.c:526) returns
+  ;; "table" only when node->type == CMARK_NODE_TABLE, checked on the same
+  ;; node whose type string dispatched us to this branch.
   (define (table-props p)
     (let ((n (table-columns p)))
       (list (cons 'columns n)
@@ -2049,6 +2055,13 @@ share it, and make the `table` case record its alignments before descending:
         (convert-ctx-column-alignments-set! ctx saved)
         (make-markdown-node (node-entry-type entry) props children source))))
 
+  ;; properties-override #f, so a "table_cell" reaching HERE rather than
+  ;; convert-node/index would come out with an empty property list -- the
+  ;; table_cell table entry has no extractor of its own, because alignment is
+  ;; positional. convert-children routes every child through
+  ;; convert-node/index, so nothing in this library can, but convert-node is
+  ;; exported and drivable directly by tests. No runtime guard: the routing is
+  ;; structural and a check here would be dead code.
   (define (convert-node p type-string depth ctx)
     (with-node p type-string depth ctx #f))
 ```
