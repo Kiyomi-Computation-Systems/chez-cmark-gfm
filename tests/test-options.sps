@@ -231,6 +231,11 @@
   (cmark-options-max-nodes
    (cmark-options-with (make-cmark-options 'max-nodes 20000) 'smart? #t)))
 
+(test-equal "max-depth survives a functional update of another field"
+  64
+  (cmark-options-max-depth
+   (cmark-options-with (make-cmark-options 'max-depth 64) 'smart? #t)))
+
 ;; Validated exactly as max-input-bytes is: exact positive integer.
 (test-equal "a non-integer max-nodes is rejected"
   '(max-nodes invalid-value)
