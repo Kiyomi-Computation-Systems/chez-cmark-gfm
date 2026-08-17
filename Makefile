@@ -140,17 +140,21 @@ check-pins:
 # elsewhere. That is not a gap in practice: a real accidental dependency is
 # something options.sls actually CALLS, and that is exactly what trips this.
 check-purity: build deps
-	@echo "=== check-purity: tests/test-options.sps, CHEZ_CMARK_GFM_SHIM poisoned ==="
-	@if CHEZ_CMARK_GFM_SHIM=/nonexistent CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) \
-	    $(CHEZ) --program tests/test-options.sps; then \
-	  echo "purity holds: options.sls pulled in no native code"; \
-	else \
-	  echo "PURITY VIOLATED: tests/test-options.sps failed with CHEZ_CMARK_GFM_SHIM" >&2; \
-	  echo "poisoned to a nonexistent path. Its import chain now reaches" >&2; \
-	  echo "(cmark gfm private native), which loads a shared object -- check what" >&2; \
-	  echo "options.sls (or something it imports) just started pulling in." >&2; \
-	  exit 1; \
-	fi
+	@fail=0; \
+	for t in tests/test-options.sps tests/test-ast.sps; do \
+	  echo "=== check-purity: $$t, CHEZ_CMARK_GFM_SHIM poisoned ==="; \
+	  if CHEZ_CMARK_GFM_SHIM=/nonexistent CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) \
+	      $(CHEZ) --program $$t; then \
+	    echo "purity holds: $$t pulled in no native code"; \
+	  else \
+	    echo "PURITY VIOLATED: $$t failed with CHEZ_CMARK_GFM_SHIM poisoned" >&2; \
+	    echo "to a nonexistent path. Its import chain now reaches" >&2; \
+	    echo "(cmark gfm private native), which loads a shared object -- check" >&2; \
+	    echo "what it (or something it imports) just started pulling in." >&2; \
+	    fail=1; \
+	  fi; \
+	done; \
+	exit $$fail
 
 # Always relinks rather than using a stamp file: a stamp keyed on nothing the
 # submodule pin touches would leave stale symlinks after a re-pin. `ln -sfn` is
