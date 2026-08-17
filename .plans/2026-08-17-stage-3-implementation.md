@@ -503,21 +503,36 @@ Insert into `tests/test-ast.sps`, immediately **before** the final `(test-end "a
 (test-equal "fold threads the accumulator and counts every node"
   5 (markdown-node-fold (lambda (n acc) (+ acc 1)) 0 doc))
 
-;; Children-first: proc must already see mapped children. Recording the
-;; children's types as they are seen proves the direction -- with a
-;; parent-first implementation, 'document would be seen while its children
-;; were still the originals, so the marker below would be absent.
+;; Children-first: proc must already see mapped children. proc records, on
+;; each parent, the literal it observes on that parent's own first child AT
+;; THE MOMENT proc runs on the parent -- checking only the final assembled
+;; tree would NOT prove this: markdown-node-with-children always rewraps a
+;; node with the fully-recursed children regardless of order, so a proc that
+;; never inspects its children cannot tell parent-first from children-first
+;; apart. With a parent-first implementation, proc sees the child still in its
+;; ORIGINAL state, so the recorded literal would be "hi"/"word" rather than
+;; "marked".
+;;
+;; This exact shape is why the assertion is written the awkward way: an
+;; earlier draft marked text nodes and inspected the final tree, which passed
+;; identically under both orderings -- an empty test by this project's own
+;; standard, caught only by running the mutation.
 (test-equal "map rebuilds children-first, so proc sees mapped children"
-  '(marked marked)
+  '("marked" "marked")
   (let ((out (markdown-node-map
               (lambda (n)
-                (if (eq? (markdown-node-type n) 'text)
-                    (markdown-node-with-properties n '((literal . "marked")))
-                    n))
+                (cond
+                  ((eq? (markdown-node-type n) 'text)
+                   (markdown-node-with-properties n '((literal . "marked"))))
+                  ((pair? (markdown-node-children n))
+                   (markdown-node-with-properties
+                    n `((observed-child-literal
+                         . ,(markdown-node-property
+                             (car (markdown-node-children n)) 'literal)))))
+                  (else n)))
               doc)))
     ;; document -> (heading paragraph), each with one text child
-    (map (lambda (block)
-           (markdown-node-property (car (markdown-node-children block)) 'literal))
+    (map (lambda (block) (markdown-node-property block 'observed-child-literal))
          (markdown-node-children out))))
 
 (test-equal "map can rewrite a node type and keeps the tree shape"
@@ -610,7 +625,7 @@ Copy `ast.sls` to a scratch location outside the repo, then in the working copy 
               (markdown-node-children n)))))
 ```
 
-Run the suite. Expected: `map rebuilds children-first, so proc sees mapped children` FAILS by name (it reports `(marked marked)` expected, `("hi" "word")` actual — proc saw the original children).
+Run the suite. Expected: `map rebuilds children-first, so proc sees mapped children` FAILS by name, reporting expected `("marked" "marked")` and actual `("hi" "word")` — proc saw the original children. If it does **not** fail, the assertion is empty and must be rewritten before proceeding; that is not a hypothetical, it is what happened to the first draft of this test.
 
 Then restore, and make `markdown-node-fold` post-order:
 
