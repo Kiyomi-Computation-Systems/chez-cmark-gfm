@@ -2,6 +2,7 @@
 
 #include <cmark-gfm.h>
 #include <cmark-gfm_version.h>
+#include <cmark-gfm-core-extensions.h>
 
 int chez_cmark_shim_compiled_version(void) {
   return CMARK_GFM_VERSION;
@@ -31,6 +32,10 @@ void chez_cmark_free_buffer(char *buffer) {
   if (buffer != NULL) {
     cmark_get_default_mem_allocator()->free(buffer);
   }
+}
+
+int chez_cmark_tasklist_checked(struct cmark_node *node) {
+  return cmark_gfm_extensions_get_tasklist_item_checked((cmark_node *)node) ? 1 : 0;
 }
 
 #ifdef CHEZ_CMARK_DEBUG_COUNTERS

@@ -23,7 +23,14 @@
           node-free find-extension attach-extension
           parser-get-syntax-extensions render-html free-buffer
           runtime-version-string shim-compiled-version shim-runtime-version
-          render-xml render-commonmark render-plaintext)
+          render-xml render-commonmark render-plaintext
+          node-first-child node-next node-type-string node-literal
+          node-heading-level node-list-type node-list-delim node-list-start
+          node-list-tight node-item-index node-fence-info
+          node-url node-title
+          node-start-line node-start-column node-end-line node-end-column
+          table-columns table-alignments table-row-is-header tasklist-checked
+          alignment-bytes)
   ;; file-exists? is deliberately absent from this import: (rnrs) already
   ;; exports it (via (rnrs files)), so also importing it from (chezscheme)
   ;; raises "multiple definitions for file-exists? in body" -- the same
@@ -149,6 +156,78 @@
   ;; accessor here, so it is declared uptr and copied immediately.
   (define raw-version-string
     (foreign-procedure "cmark_version_string" () uptr))
+
+  ;; --- Stage 3: node accessors ------------------------------------------
+  ;; Every `const char *` return is declared uptr and copied by
+  ;; c-string->string at the call site, per the Stage 1 rule: the
+  ;; conservative form does not depend on marshalling behaviour, and it keeps
+  ;; NULL distinguishable from "". Several of these accessors return NULL for
+  ;; a node of an incompatible type, so that distinction carries meaning.
+  (define node-first-child
+    (foreign-procedure "cmark_node_first_child" (uptr) uptr))
+  (define node-next     (foreign-procedure "cmark_node_next" (uptr) uptr))
+  (define node-type-string
+    (foreign-procedure "cmark_node_get_type_string" (uptr) uptr))
+  (define node-literal  (foreign-procedure "cmark_node_get_literal" (uptr) uptr))
+  (define node-fence-info
+    (foreign-procedure "cmark_node_get_fence_info" (uptr) uptr))
+  (define node-url      (foreign-procedure "cmark_node_get_url" (uptr) uptr))
+  (define node-title    (foreign-procedure "cmark_node_get_title" (uptr) uptr))
+
+  (define node-heading-level
+    (foreign-procedure "cmark_node_get_heading_level" (uptr) int))
+  (define node-list-type
+    (foreign-procedure "cmark_node_get_list_type" (uptr) int))
+  (define node-list-delim
+    (foreign-procedure "cmark_node_get_list_delim" (uptr) int))
+  (define node-list-start
+    (foreign-procedure "cmark_node_get_list_start" (uptr) int))
+  (define node-list-tight
+    (foreign-procedure "cmark_node_get_list_tight" (uptr) int))
+  (define node-item-index
+    (foreign-procedure "cmark_node_get_item_index" (uptr) int))
+  (define node-start-line
+    (foreign-procedure "cmark_node_get_start_line" (uptr) int))
+  (define node-start-column
+    (foreign-procedure "cmark_node_get_start_column" (uptr) int))
+  (define node-end-line
+    (foreign-procedure "cmark_node_get_end_line" (uptr) int))
+  (define node-end-column
+    (foreign-procedure "cmark_node_get_end_column" (uptr) int))
+
+  ;; --- extension accessors ----------------------------------------------
+  ;; These live in libcmark-gfm-extensions. They resolve only because
+  ;; cmark-loaded above loads both cmark shared objects explicitly, before the
+  ;; shim: on Linux a dlopened library's dependencies are not placed in the
+  ;; global symbol namespace, so a missing explicit load fails HERE, at import
+  ;; time, and only on Linux.
+  ;;
+  ;; table-columns and table-alignments dereference node->type with no NULL
+  ;; guard (vendor/cmark-gfm/extensions/table.c:878-890), so a caller must
+  ;; have confirmed the node is a table first. convert.sls calls them only
+  ;; from inside the "table" branch of its dispatch table, which makes that
+  ;; structural rather than a documented promise.
+  (define table-columns
+    (foreign-procedure "cmark_gfm_extensions_get_table_columns" (uptr) unsigned-16))
+  (define table-alignments
+    (foreign-procedure "cmark_gfm_extensions_get_table_alignments" (uptr) uptr))
+  (define table-row-is-header
+    (foreign-procedure "cmark_gfm_extensions_get_table_row_is_header" (uptr) int))
+  ;; Via the shim, NOT the cmark entry point directly: the underlying function
+  ;; returns C _Bool and binding it as int would read unspecified upper bits.
+  (define tasklist-checked
+    (foreign-procedure "chez_cmark_tasklist_checked" (uptr) int))
+
+  ;; Copies `count` bytes out of a borrowed uint8_t array. Kept here rather
+  ;; than in convert.sls so foreign-ref appears in exactly one library. A NULL
+  ;; array yields all zeros -- "no alignment set" -- instead of faulting.
+  (define (alignment-bytes addr count)
+    (let loop ((i (- count 1)) (acc (quote ())))
+      (cond
+        ((negative? i) acc)
+        ((zero? addr) (loop (- i 1) (cons 0 acc)))
+        (else (loop (- i 1)
+                    (cons (foreign-ref (quote unsigned-8) addr i) acc))))))
 
   ;; --- one-time version check and extension registration ----------------
   ;; Chez here is threaded (tarm64osx) and
