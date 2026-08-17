@@ -34,6 +34,7 @@ Every task's requirements implicitly include this section.
 - **`foreign-procedure` resolves its entry point when the expression is evaluated**, not at first call. New bindings in `native.sls` must go **after** the `load-shim` definitions.
 - **A test is not finished when it passes. It is finished when you have watched it fail.** Every new assertion gets a mutation that breaks it *through the asserted property*, recorded in `.plans/stage-3-mutation-log.md` (Task 12).
 - **Prefer comparing against an expected value over `test-assert`.** `0` is truthy in Scheme and `guard` returns its body's value when nothing raises. Use a distinct sentinel (`'no-condition`, `'wrong-condition`) for the no-raise case.
+- **The absent-key variant of the truthiness trap:** `markdown-node-property`'s two-argument form returns `#f` for a key that is not there, so any assertion whose expected value is `#f` must pass a sentinel default — `(markdown-node-property n 'key 'absent)` — or it cannot tell a correctly computed `#f` from a property the converter never emitted. This shipped once in Task 6 and was caught only by mutation.
 - **Prefer a check to a comment.** If you are about to write a comment stating an invariant, ask whether it can be a make target, a test, or an assertion first.
 - **Where a step predicts a test count, the plan's own test code is authoritative, not the prose.** Several of these counts were wrong on the first pass and were caught by implementers who transcribed the code and reported the real number. Do the same: use the code, report what you actually saw, and flag the mismatch.
 - **Commits:** Conventional Commits. Run `make test` before every commit.
@@ -1385,8 +1386,15 @@ Create `tests/test-convert.sps`:
 (test-equal "a bullet list maps kind bullet and no delimiter"
   '((kind . bullet) (start . 0) (tight? . #t) (delimiter . none))
   (markdown-node-properties (first-of-type (ast-of "- a\n") 'list)))
+;; The three-argument form with a sentinel is load-bearing here, not verbosity:
+;; markdown-node-property's two-argument form returns #f for an ABSENT key, and
+;; #f is also the correct value for a loose list -- so without the sentinel this
+;; assertion passes identically whether tight? was computed correctly or was
+;; never produced at all. Verified: deleting the tight? pair from list-props
+;; leaves the two-argument form green while three other assertions fail.
 (test-equal "a loose list reports tight? #f"
-  #f (markdown-node-property (first-of-type (ast-of "- a\n\n- b\n") 'list) 'tight?))
+  #f (markdown-node-property (first-of-type (ast-of "- a\n\n- b\n") 'list)
+                             'tight? 'absent))
 
 ;; index is one of the three properties cmark's XML never emits, so the
 ;; differential harness of Tasks 10-11 cannot see it. It is asserted directly
@@ -1842,10 +1850,13 @@ Insert into `tests/test-convert.sps`, immediately **before** the final
 ;; get_tasklist_item_checked cannot distinguish an unchecked task from a
 ;; non-task (tasklist.c:30-40). All three cases are asserted together, since
 ;; that is the discrimination a single-case test would miss.
+;; Sentinel defaults for the same reason as the loose-list assertion in Task 6:
+;; the plain item's expected pair is (#f . #f), which a two-argument lookup would
+;; also produce if plain-item-props stopped emitting either key at all.
 (test-equal "checked, unchecked, and plain items are all distinguished"
   '((#t . #t) (#t . #f) (#f . #f))
-  (map (lambda (n) (cons (markdown-node-property n 'task?)
-                         (markdown-node-property n 'checked?)))
+  (map (lambda (n) (cons (markdown-node-property n 'task? 'absent)
+                         (markdown-node-property n 'checked? 'absent)))
        (nodes-of-type (ext-ast "- [x] done\n- [ ] todo\n\n* plain\n") 'item)))
 
 (test-equal "a task item still carries its index"
