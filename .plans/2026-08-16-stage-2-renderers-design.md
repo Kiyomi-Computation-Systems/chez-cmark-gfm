@@ -346,7 +346,7 @@ Each must break its named test, or be recorded as uncovered with a reason:
 | # | Mutation | Expected to break |
 |---|---|---|
 | A | Transpose two `chez_cmark_option_bits` arguments | The OFAT cells for both swapped options |
-| B | Drop the extension list from the `cmark_render_html` call | Table and strikethrough parity cells |
+| B | Drop the extension list from the `cmark_render_html` call | The `tagfilter` escaping assertion and the tagfilter differential cell — **not** tables or strikethrough; see §13 |
 | C | Free the buffer before copying it | The render suite, and ASan/Valgrind |
 | D | Delete `count-buffer-free!` | Buffer balance assertions |
 | E | Remove the `hardbreaks?`/`nobreaks?` rejection | A named options test |
@@ -416,3 +416,45 @@ reserved for decisions and corrections of that weight.
 - `vendor/cmark-gfm/src/cmark-gfm.h` — renderer signatures
 - `vendor/cmark-gfm/src/html.c` — softbreak precedence, sourcepos emission
 - `vendor/cmark-gfm/src/main.c` — CLI defaults and flag handling
+
+---
+
+## 13. Correction: what the HTML renderer's extension list actually controls
+
+Recorded during Stage 2 implementation, verified against `vendor/cmark-gfm/` and the
+pinned CLI rather than inferred.
+
+§5 states that only `cmark_render_html` receives the extension list. True — but this
+spec, and the plan derived from it, implied the list is what makes **extension nodes**
+render. It is not.
+
+- `src/html.c:480-485` filters the `extensions` argument down to only those extensions
+  having an `html_filter_func`, storing them as `renderer.filter_extensions`.
+- `extensions/tagfilter.c` is the **only** core extension that sets one.
+- Extension *node* rendering — tables, strikethrough, tasklists — dispatches through
+  each node's own `->extension` pointer, set at **parse** time (`src/html.c:142-144`),
+  and is entirely unaffected by the render-time argument.
+
+Observed, `cmark-gfm` on `<script>alert(1)</script>`:
+
+| Flags | Output |
+|---|---|
+| `--unsafe -e tagfilter` | `&lt;script>alert(1)&lt;/script>` |
+| `--unsafe` | `<script>alert(1)</script>` |
+| `-e tagfilter` (safe) | `<!-- raw HTML omitted -->` |
+
+Note tagfilter escapes only the opening `<`.
+
+**Consequences.**
+
+1. The list's only observable effect is tagfilter's escaping, and only under
+   `unsafe-html?`. Safe mode suppresses raw HTML wholesale first, so tagfilter is
+   invisible there — which independently confirms §7.3's prediction that the tagfilter
+   OFAT cell needs `unsafe-html?` in its baseline.
+2. Mutation B must break the tagfilter assertion, not a table one. A plan that expected
+   tables to break would have recorded a passing mutation as evidence of coverage it
+   did not have. `tests/test-render.sps` now carries the assertion that does fail.
+3. **ADR-0005 is unaffected.** `cmark_parser_free` frees `parser->syntax_extensions`,
+   and `cmark_render_html` walks that same list at `html.c:480` — so the
+   use-after-free the Stage 0 spike caught under AddressSanitizer is real regardless of
+   what the list is subsequently used for.
