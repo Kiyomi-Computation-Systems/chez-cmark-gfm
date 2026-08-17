@@ -291,6 +291,53 @@
           (cmark-options-max-nodes o)
           (cmark-options-max-depth o))))
 
+;; --- sxml options -------------------------------------------------------
+(test-equal "default raw-html policy is omit"
+  'omit (sxml-options-raw-html (default-sxml-options)))
+
+(test-equal "raw-html can be set to escape"
+  'escape (sxml-options-raw-html (make-sxml-options 'raw-html 'escape)))
+
+(test-equal "sxml-options-with returns a new record"
+  '(omit escape)
+  (let ((base (default-sxml-options)))
+    (list (sxml-options-raw-html base)
+          (sxml-options-raw-html (sxml-options-with base 'raw-html 'escape)))))
+
+(test-equal "an unknown sxml key is rejected"
+  '(raw-htlm unknown-key)
+  (guard (e ((cmark-invalid-option? e)
+             (list (cmark-invalid-option-key e) (cmark-invalid-option-reason e)))
+            (#t 'wrong-condition))
+    (make-sxml-options 'raw-htlm 'escape)
+    'no-raise))
+
+(test-equal "a duplicate sxml key is rejected"
+  '(raw-html duplicate-key)
+  (guard (e ((cmark-invalid-option? e)
+             (list (cmark-invalid-option-key e) (cmark-invalid-option-reason e)))
+            (#t 'wrong-condition))
+    (make-sxml-options 'raw-html 'omit 'raw-html 'escape)
+    'no-raise))
+
+(test-equal "an unknown raw-html value is rejected"
+  '(raw-html invalid-value)
+  (guard (e ((cmark-invalid-option? e)
+             (list (cmark-invalid-option-key e) (cmark-invalid-option-reason e)))
+            (#t 'wrong-condition))
+    (make-sxml-options 'raw-html 'trusted)
+    'no-raise))
+
+;; sxml-options-with runs the same validation as the constructor, so an
+;; invalid value cannot enter through the back door.
+(test-equal "sxml-options-with validates too"
+  '(raw-html invalid-value)
+  (guard (e ((cmark-invalid-option? e)
+             (list (cmark-invalid-option-key e) (cmark-invalid-option-reason e)))
+            (#t 'wrong-condition))
+    (sxml-options-with (default-sxml-options) 'raw-html 'reject)
+    'no-raise))
+
 (test-end "options")
 
 (exit (if (zero? (test-runner-fail-count runner)) 0 1))

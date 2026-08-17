@@ -19,6 +19,10 @@
           cmark-options-max-input-bytes
           supported-extensions
 
+          ;; SXML options
+          make-sxml-options default-sxml-options sxml-options-with
+          sxml-options? sxml-options-raw-html
+
           ;; renderers
           markdown->html markdown->commonmark markdown->plaintext markdown->xml
 

@@ -24,7 +24,9 @@
           cmark-options-max-depth
           default-ast-options
           supported-extensions
-          extension->native-name)
+          extension->native-name
+          make-sxml-options default-sxml-options sxml-options-with
+          sxml-options? sxml-options-raw-html)
   (import (rnrs)
           (cmark gfm private limits)
           (cmark gfm private conditions))
@@ -193,4 +195,50 @@
            (cmark-options-unsafe-html? o)
            (cmark-options-max-input-bytes o)
            (cmark-options-max-nodes o)
-           (cmark-options-max-depth o))))
+           (cmark-options-max-depth o)))
+
+  ;; --- SXML adapter options ----------------------------------------------
+  ;; Separate from cmark-options because they govern OUR renderer, not
+  ;; cmark's parse. A record rather than a bare symbol argument: it inherits
+  ;; the plist validation above, which a symbol cannot have, and a second
+  ;; field later costs no arity change at any call site.
+  (define-record-type (sxml-options %make-sxml-options sxml-options?)
+    (fields raw-html))
+
+  (define sxml-option-keys '(raw-html))
+
+  ;; Deliberately a separate walker from plist->alist rather than a
+  ;; parameterised one: sharing would mean threading the key list through,
+  ;; and the two key sets must not be able to accept each other's keys.
+  (define (sxml-plist->alist plist)
+    (let loop ((p plist) (seen '()) (acc '()))
+      (cond
+        ((null? p) (reverse acc))
+        ((null? (cdr p))
+         (raise (make-cmark-invalid-option #f 'malformed-plist)))
+        (else
+         (let ((k (car p)) (v (cadr p)))
+           (unless (memq k sxml-option-keys)
+             (raise (make-cmark-invalid-option k 'unknown-key)))
+           (when (memq k seen)
+             (raise (make-cmark-invalid-option k 'duplicate-key)))
+           (loop (cddr p) (cons k seen) (cons (cons k v) acc)))))))
+
+  ;; Runs on the RESULTING record so both constructors share one policy,
+  ;; exactly as `validate` does for cmark-options.
+  (define (validate-sxml o)
+    (unless (memq (sxml-options-raw-html o) '(omit escape))
+      (raise (make-cmark-invalid-option 'raw-html 'invalid-value)))
+    o)
+
+  (define (make-sxml-options . plist)
+    (let ((a (sxml-plist->alist plist)))
+      (validate-sxml (%make-sxml-options (lookup a 'raw-html 'omit)))))
+
+  (define (default-sxml-options) (make-sxml-options))
+
+  (define (sxml-options-with o . plist)
+    (let ((a (sxml-plist->alist plist)))
+      (validate-sxml
+       (%make-sxml-options
+        (lookup a 'raw-html (sxml-options-raw-html o)))))))

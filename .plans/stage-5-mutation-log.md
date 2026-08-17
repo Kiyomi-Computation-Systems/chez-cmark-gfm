@@ -112,3 +112,72 @@ tests/test-conditions.sps` → `# of expected passes 26`, exit 0. Also
 reconfirmed `make test` (10 suites, `ALL SUITES PASSED`) and `make
 check-purity` (holds) both before and after this exercise, to rule out any
 collateral effect from this task's actual (non-mutated) change.
+
+---
+
+## Task 2 — `make-sxml-options`
+
+**Baseline**, `CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez --program
+tests/test-options.sps`: 56/56 passes, exit 0. `make test`: 10 suites, all
+`ALL SUITES PASSED`. `make check-purity`: holds.
+
+**Mutation** (brief Step 6): in the scratch copy only, delete the
+`validate-sxml` call from `sxml-options-with`, leaving `make-sxml-options`
+untouched:
+
+```diff
+   (define (sxml-options-with o . plist)
+     (let ((a (sxml-plist->alist plist)))
+-      (validate-sxml
+-       (%make-sxml-options
+-        (lookup a 'raw-html (sxml-options-raw-html o)))))))
++      (%make-sxml-options
++       (lookup a 'raw-html (sxml-options-raw-html o))))))
+```
+
+`src/cmark/gfm/options.sls` in the repo was never touched — only
+`<scratch>/cmark/gfm/options.sls` was edited. Confirmed by `md5`, taken
+before the scratch copy was made and again after the exercise
+(`22357d64719d35ff38ac94d9997830f5`, unchanged), and by `git diff --stat`
+(the same 50 insertions / 2 deletions as this task's legitimate feature
+change, identical before and after).
+
+**Run:** `CHEZSCHEMELIBDIRS=<scratch>:src:tests:build/scheme-libs chez
+--program tests/test-options.sps`
+
+**Result: FAIL, 55/56 — exactly the assertion the brief names, nothing
+wider.**
+
+```
+%%%% Starting test options
+FAIL sxml-options-with validates too
+# of expected passes      55
+# of unexpected failures  1
+```
+
+Unlike Task 1's mutation, whose one-line diff had an unavoidable arity side
+effect that took three assertions down with it, this one isolates cleanly:
+only **"sxml-options-with validates too"** fails, exactly as Step 6
+predicts, and the result needed no reconciliation. Every constructor-side
+assertion stays green — including "an unknown raw-html value is rejected",
+which exercises the very same `validate-sxml` check through
+`make-sxml-options` rather than `sxml-options-with`, and stays green
+precisely because `make-sxml-options`'s own call to `validate-sxml` was left
+untouched by this mutation. That is the property Step 6 exists to establish:
+`sxml-options-with` builds through `%make-sxml-options` directly, so without
+its own `validate-sxml` call it could smuggle an invalid `raw-html` value
+past validation by starting from an existing record instead of a fresh
+plist -- the same back door `cmark-options-with` is closed against for the
+contradictory hardbreaks?/nobreaks? pair. No second probe was needed: the
+observed failure matches the brief's prediction exactly, both in which
+assertion fails and in which stay green.
+
+**Revert.** Nothing in the repo was ever edited during the mutation — only
+the external scratch copy was. Confirmed via `git diff --stat
+src/cmark/gfm/options.sls` (unchanged before and after) and via `md5`
+(`22357d64719d35ff38ac94d9997830f5`, identical before the scratch copy was
+mutated and after). Re-ran the suite through the ordinary, non-scratch
+command: `CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez --program
+tests/test-options.sps` → `# of expected passes 56`, exit 0. Also
+reconfirmed `make test` (10 suites, `ALL SUITES PASSED`) and `make
+check-purity` (holds) both before and after this exercise.
