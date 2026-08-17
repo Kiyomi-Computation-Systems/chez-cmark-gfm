@@ -128,6 +128,22 @@
           (cons 'task? #t)
           (cons 'checked? (not (zero? (tasklist-checked p))))))
 
+  ;; Plan 7.4's default: preserve rather than discard, and never lose children
+  ;; or literals. Preservation over a raise means a future cmark that adds a
+  ;; node type degrades to a usable AST instead of failing every document
+  ;; containing one.
+  ;;
+  ;; This is the one node type whose key set is not fixed (design spec 3.4):
+  ;; the keys of an unknown type cannot be known in advance, so `literal` is
+  ;; present only when cmark actually has one. c-string->string is used
+  ;; directly rather than copy-required, because here #f is the legitimate
+  ;; answer -- an unknown node type may well have no string content.
+  (define (extension-props p type-string)
+    (let ((literal (c-string->string (node-literal p))))
+      (if literal
+          (list (cons 'native-type type-string) (cons 'literal literal))
+          (list (cons 'native-type type-string)))))
+
   ;; --- the table --------------------------------------------------------
   ;; type string -> node type, declared property keys, extractor (#f for
   ;; propertyless types). The declared keys are DATA so the suite can assert
@@ -239,22 +255,20 @@
     (check-depth! depth ctx)
     (count-node! ctx)
     (let* ((entry (type-string->entry type-string))
-           ;; A table publishes its alignments into the context before its
-           ;; rows and cells are walked, and restores the previous value
-           ;; afterwards so nested tables cannot leak alignments outward.
-           ;; cmark cannot nest tables today; the save/restore costs one
-           ;; binding and removes the question.
            (saved (convert-ctx-column-alignments ctx))
            (props (or properties-override
-                      (let ((extract (node-entry-extractor entry)))
-                        (if extract (extract p) '())))))
+                      (if entry
+                          (let ((extract (node-entry-extractor entry)))
+                            (if extract (extract p) '()))
+                          (extension-props p type-string)))))
       (when (string=? type-string "table")
         (convert-ctx-column-alignments-set!
          ctx (cdr (assq 'alignments props))))
       (let ((children (convert-children p (+ depth 1) ctx))
             (source (node-source p ctx)))
         (convert-ctx-column-alignments-set! ctx saved)
-        (make-markdown-node (node-entry-type entry) props children source))))
+        (make-markdown-node (if entry (node-entry-type entry) 'extension)
+                            props children source))))
 
   ;; Exported so tests can drive it directly (see the type-string note at
   ;; the top of this file), but never call this with type-string

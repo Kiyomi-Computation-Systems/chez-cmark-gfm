@@ -407,6 +407,76 @@
 (test-equal "extension conversion released every native allocation"
   '(0 0 0) (live-counts))
 
+;; --- the unknown-type fallback (design spec 7) --------------------------
+;; No document can reach this branch through the public options, so it is
+;; driven directly: a real node pointer with a type string cmark never
+;; produced here. That is what convert-node's type-string parameter is for.
+(define (convert-as markdown type-string)
+  (call-with-native-document
+   markdown (option-bits #f #f #f #f #f #f) (quote ())
+   (lambda (h)
+     ;; document -> first block, converted as though it were an unknown type
+     (let ((block (node-first-child (doc-root h))))
+       (convert-node block type-string 2 (make-convert-ctx 250000 1000 #f))))))
+
+(test-equal "an unrecognised type string becomes an extension node"
+  'extension
+  (markdown-node-type (convert-as "para\n" "footnote_definition")))
+
+(test-equal "the extension node records the native type string verbatim"
+  "footnote_definition"
+  (markdown-node-property (convert-as "para\n" "footnote_definition")
+                          'native-type))
+
+;; Children must survive: plan 7.4's requirement is preserve, never discard.
+(test-equal "an extension node keeps its converted children"
+  '((text ((literal . "para")) ()))
+  (map shape (markdown-node-children
+              (convert-as "para\n" "footnote_definition"))))
+
+;; cmark's "<unknown>" error return takes the same path.
+(test-equal "the <unknown> error string also falls back rather than raising"
+  '(extension "<unknown>")
+  (let ((n (convert-as "para\n" "<unknown>")))
+    (list (markdown-node-type n)
+          (markdown-node-property n 'native-type))))
+
+;; A paragraph has no literal, so no literal key is invented. Compared as a
+;; whole property list: asserting only that native-type is present would pass
+;; against an implementation that also added (literal . #f).
+(test-equal "no literal key is invented for a node that has none"
+  '((native-type . "footnote_definition"))
+  (markdown-node-properties (convert-as "para\n" "footnote_definition")))
+
+;; A node that DOES have a literal keeps it, so an unknown extension type
+;; carrying text is not silently emptied. The fixture's first block is a
+;; paragraph; its first child is the text node, which has a literal.
+(test-equal "a literal-bearing node keeps its literal under the fallback"
+  '((native-type . "unknown_inline") (literal . "para"))
+  (call-with-native-document
+   "para\n" (option-bits #f #f #f #f #f #f) (quote ())
+   (lambda (h)
+     (let ((text (node-first-child (node-first-child (doc-root h)))))
+       (markdown-node-properties
+        (convert-node text "unknown_inline" 3
+                      (make-convert-ctx 250000 1000 #f)))))))
+
+;; The fallback is still subject to both ceilings.
+(test-equal "the fallback still counts toward the node ceiling"
+  '(too-many-nodes 1)
+  (guard (e ((cmark-resource-limit? e)
+             (list (cmark-invalid-input-reason e) (cmark-resource-limit-value e)))
+            (#t 'wrong-condition))
+    (call-with-native-document
+     "para\n" (option-bits #f #f #f #f #f #f) (quote ())
+     (lambda (h)
+       (convert-node (node-first-child (doc-root h)) "footnote_definition" 2
+                     (make-convert-ctx 1 1000 #f))))
+    'no-condition))
+
+(test-equal "the fallback path released every native allocation"
+  '(0 0 0) (live-counts))
+
 (test-end "convert")
 
 (exit (if (zero? (test-runner-fail-count runner)) 0 1))
