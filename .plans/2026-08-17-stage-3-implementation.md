@@ -418,7 +418,7 @@ Create `src/cmark/gfm/ast.sls`:
 CHEZSCHEMELIBDIRS=src:build/scheme-libs chez --program tests/test-ast.sps
 ```
 
-Expected: `# of expected passes 26`, `# of unexpected failures 0`.
+Expected: `# of expected passes 24`, `# of unexpected failures 0`.
 
 - [ ] **Step 5: Extend the purity gate to cover this suite**
 
@@ -595,7 +595,7 @@ and append the definitions to the library body:
 CHEZSCHEMELIBDIRS=src:build/scheme-libs chez --program tests/test-ast.sps
 ```
 
-Expected: `# of expected passes 32`, `# of unexpected failures 0`.
+Expected: `# of expected passes 30`, `# of unexpected failures 0`.
 
 - [ ] **Step 5: Watch the order assertions fail**
 
@@ -620,7 +620,7 @@ Then restore, and make `markdown-node-fold` post-order:
                           (markdown-node-children node))))
 ```
 
-Run the suite. Expected: `fold visits pre-order, parent before children` FAILS by name. Restore the correct implementations and confirm all 32 pass. Record both mutations for Task 12.
+Run the suite. Expected: `fold visits pre-order, parent before children` FAILS by name. Restore the correct implementations and confirm all 30 pass. Record both mutations for Task 12.
 
 - [ ] **Step 6: Run the full suite and commit**
 
