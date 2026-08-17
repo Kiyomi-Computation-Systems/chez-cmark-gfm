@@ -56,6 +56,12 @@ jobs:
           elif command -v scheme >/dev/null; then echo "CHEZ=scheme" >> "$GITHUB_ENV"
           else echo "no Chez Scheme binary found" >&2; exit 1; fi
 
+      # The chez-srfi submodule and Akku.lock must name the same commit:
+      # consumers install what Akku.lock says, CI tests the submodule. They
+      # drifted once already, silently.
+      - name: Check dependency pins agree
+        run: make check-pins
+
       - name: Scheme dependencies
         run: make deps
 
