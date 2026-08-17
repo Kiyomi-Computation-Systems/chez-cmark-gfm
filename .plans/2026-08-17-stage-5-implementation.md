@@ -213,6 +213,14 @@ Append to `tests/test-options.sps`, before its final `(exit …)`:
 
 ;; sxml-options-with runs the same validation as the constructor, so an
 ;; invalid value cannot enter through the back door.
+(test-equal "sxml-options-with rejects a non-options first argument"
+  '(#f invalid-value)
+  (guard (e ((cmark-invalid-option? e)
+             (list (cmark-invalid-option-key e) (cmark-invalid-option-reason e)))
+            (#t 'wrong-condition))
+    (sxml-options-with (default-cmark-options) 'raw-html 'escape)
+    'no-raise))
+
 (test-equal "sxml-options-with validates too"
   '(raw-html invalid-value)
   (guard (e ((cmark-invalid-option? e)
@@ -252,22 +260,11 @@ and add to the body, after the `cmark-options` definitions:
 
   (define sxml-option-keys '(raw-html))
 
-  ;; Deliberately a separate walker from plist->alist rather than a
-  ;; parameterised one: sharing would mean threading the key list through,
-  ;; and the two key sets must not be able to accept each other's keys.
-  (define (sxml-plist->alist plist)
-    (let loop ((p plist) (seen '()) (acc '()))
-      (cond
-        ((null? p) (reverse acc))
-        ((null? (cdr p))
-         (raise (make-cmark-invalid-option #f 'malformed-plist)))
-        (else
-         (let ((k (car p)) (v (cadr p)))
-           (unless (memq k sxml-option-keys)
-             (raise (make-cmark-invalid-option k 'unknown-key)))
-           (when (memq k seen)
-             (raise (make-cmark-invalid-option k 'duplicate-key)))
-           (loop (cddr p) (cons k seen) (cons (cons k v) acc)))))))
+  ;; Reuses plist->alist, which gains a valid-keys parameter for this (its
+  ;; two existing call sites pass option-keys). Each caller supplies only
+  ;; its own key list, so the two option families still cannot accept each
+  ;; other's keys -- and there is one copy of the walk to fix rather than
+  ;; two to keep in sync.
 
   ;; Runs on the RESULTING record so both constructors share one policy,
   ;; exactly as `validate` does for cmark-options.
@@ -277,17 +274,34 @@ and add to the body, after the `cmark-options` definitions:
     o)
 
   (define (make-sxml-options . plist)
-    (let ((a (sxml-plist->alist plist)))
+    (let ((a (plist->alist plist sxml-option-keys)))
       (validate-sxml (%make-sxml-options (lookup a 'raw-html 'omit)))))
 
   (define (default-sxml-options) (make-sxml-options))
 
   (define (sxml-options-with o . plist)
-    (let ((a (sxml-plist->alist plist)))
+    ;; Guards its first argument exactly as cmark-options-with does. Two
+    ;; record types with matching APIs now coexist, so passing the wrong one
+    ;; is a realistic caller error, and it must surface as this library's own
+    ;; condition rather than as a bare R6RS assertion from the accessor.
+    (unless (sxml-options? o)
+      (raise (make-cmark-invalid-option #f 'invalid-value)))
+    (let ((a (plist->alist plist sxml-option-keys)))
       (validate-sxml
        (%make-sxml-options
         (lookup a 'raw-html (sxml-options-raw-html o))))))
 ```
+
+Give `plist->alist` its new parameter and update its two existing call sites:
+
+```scheme
+  (define (plist->alist plist valid-keys)
+    ...
+           (unless (memq k valid-keys)
+    ...
+```
+
+`options.sls:176` and `:188` become `(plist->alist plist option-keys)`.
 
 - [ ] **Step 4: Re-export from the public facade**
 
@@ -1731,7 +1745,7 @@ CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez --program tests/test-options.
 make check-purity
 ```
 
-Expected: PASS, `# of expected passes 58`; purity still holds for all three
+Expected: PASS, `# of expected passes 59`; purity still holds for all three
 pure suites.
 
 - [ ] **Step 5: Assert positions have no effect**
