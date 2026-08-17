@@ -550,12 +550,6 @@ Create `tests/sxml-html-serializer.sls`:
   (define block-comment-parents '(*TOP* blockquote li))
 
   ;; --- output ------------------------------------------------------------
-  (define (render-cr port get-so-far)
-    (let ((s (get-so-far)))
-      (when (and (positive? (string-length s))
-                 (not (char=? #\newline (string-ref s (- (string-length s) 1)))))
-        (put-char port #\newline))))
-
   (define (attributes? x)
     (and (pair? x) (eq? '@ (car x))))
 
@@ -572,16 +566,20 @@ Create `tests/sxml-html-serializer.sls`:
      (cdr attrs)))
 
   (define (sxml->html tree)
-    ;; The buffer is read back to implement render_cr's "only if not already
-    ;; newline-terminated" rule, which is why this uses an accumulating
-    ;; string rather than a straight output port.
-    (let ((buf (make-string 0)))
-      (define (emit s) (set! buf (string-append buf s)))
+    ;; Chunks accumulate in reverse and are joined once. render_cr's "only if
+    ;; the buffer does not already end in a newline" rule needs one bit of
+    ;; history, not the buffer itself, so last-newline? carries it -- which
+    ;; keeps this linear instead of re-copying a growing string per emit.
+    (let ((chunks '()) (last-newline? #f))
+      (define (emit s)
+        (when (positive? (string-length s))
+          (set! chunks (cons s chunks))
+          (set! last-newline?
+                (char=? #\newline (string-ref s (- (string-length s) 1))))))
+      ;; The (pair? chunks) guard is html.c's `html->size &&`: no newline is
+      ;; emitted before anything has been written.
       (define (emit-cr)
-        (when (and (positive? (string-length buf))
-                   (not (char=? #\newline
-                                (string-ref buf (- (string-length buf) 1)))))
-          (emit "\n")))
+        (when (and (pair? chunks) (not last-newline?)) (emit "\n")))
       (define (with-port proc)
         (let-values (((port get) (open-string-output-port)))
           (proc port)
@@ -621,7 +619,7 @@ Create `tests/sxml-html-serializer.sls`:
           (else (assertion-violation 'sxml->html "not an SXML node" node))))
 
       (walk tree #f)
-      buf)))
+      (apply string-append (reverse chunks)))))
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -1115,8 +1113,14 @@ In `src/cmark/gfm/sxml.sls`, add before `node->sxml`:
   ;; writes them as HTML entities, which is serialization, not a property of
   ;; the value. Doing both halves in one place double-encodes whichever ran
   ;; second (design spec 5.3).
+  ;; Transcribed from the TABLE BYTES, not from the comment above them -- the
+  ;; comment lists a slightly different set. Safe: alphanumeric plus
+  ;;   ! # $ % ( ) * + , - . / : ; = ? @ _ ~
+  ;; & and ' are absent from the table because houdini handles them
+  ;; specially; they are included HERE so they pass through untouched for
+  ;; the serializer to entity-escape.
   (define href-safe-extra
-    (string->list "-_.+!*'(),%#@?=;:/&$~"))
+    (string->list "!#$%()*+,-./:;=?@_~&'"))
 
   (define (href-safe-byte? b)
     (let ((c (integer->char b)))
@@ -1137,7 +1141,15 @@ In `src/cmark/gfm/sxml.sls`, add before `node->sxml`:
                        (put-char port (string-ref hex (mod b 16))))))))
       (get)))
 
-  (define (ascii-downcase s) (string-downcase s))
+  ;; ASCII-only on purpose. string-downcase is Unicode-aware and can change
+  ;; a string's LENGTH, which would misalign the prefix tests below; scheme
+  ;; names are ASCII, so this is both correct and total.
+  (define (ascii-downcase s)
+    (string-map (lambda (c)
+                  (if (char<=? #\A c #\Z)
+                      (integer->char (+ 32 (char->integer c)))
+                      c))
+                s))
 
   (define (prefix? p s)
     (and (>= (string-length s) (string-length p))
@@ -2034,7 +2046,7 @@ Add to `tests/test-sxml-differential.sps`, before `(test-end …)`:
 
 (define (cli-flags o)
   (apply string-append
-         "--to html --unsafe- "
+         "--to html "
          (map (lambda (x) (string-append "-e " (symbol->string x) " "))
               (cmark-options-extensions o))))
 
@@ -2070,10 +2082,6 @@ Add to `tests/test-sxml-differential.sps`, before `(test-end …)`:
 Add `(cmark-testing)` to the suite's imports for `capture-command`, and
 `mkdir` from `(chezscheme)` with a `tests/tmp/` guard mirroring
 `tests/test-ast-differential.sps`.
-
-Note: `--unsafe-` is not a cmark flag. Use no unsafe flag at all — cmark's
-default is safe mode, which is what `default-cmark-options` selects. Drop
-`"--unsafe- "` from `cli-flags` and start the string with `"--to html "`.
 
 - [ ] **Step 2: Run and expect real divergences**
 
