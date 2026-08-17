@@ -8,6 +8,8 @@
 (import (rnrs)
         (srfi :64)
         (cmark gfm ast)
+        (cmark gfm options)
+        (cmark gfm parse)
         (cmark gfm private native)
         (cmark gfm private scope)
         (cmark gfm private convert)
@@ -493,6 +495,106 @@
     'no-condition))
 
 (test-equal "the fallback path released every native allocation"
+  '(0 0 0) (live-counts))
+
+;; --- markdown->ast, the public entry point ------------------------------
+(test-equal "markdown->ast converts through the public API"
+  '(document ()
+    ((paragraph () ((text ((literal . "hi")) ())))))
+  (let ((tree (markdown->ast "hi\n" (make-cmark-options 'source-positions? #f))))
+    (shape tree)))
+
+;; ADR-0009: the one-argument form uses default-ast-options, so positions are
+;; ON. This is the assertion that makes the arity meaningful -- swap the
+;; default and it fails.
+(test-equal "the one-argument form attaches source positions"
+  #t
+  (source-position?
+   (markdown-node-source
+    (first-of-type (markdown->ast "hi\n") 'paragraph))))
+
+(test-equal "the two-argument form honours an explicit source-positions? #f"
+  #f
+  (markdown-node-source
+   (first-of-type (markdown->ast "hi\n" (make-cmark-options 'source-positions? #f))
+                  'paragraph)))
+
+(test-equal "the two-argument form honours an explicit source-positions? #t"
+  #t
+  (source-position?
+   (markdown-node-source
+    (first-of-type (markdown->ast "hi\n" (make-cmark-options 'source-positions? #t))
+                   'paragraph))))
+
+;; Positions are read from cmark, not synthesised. "# hi" then a blank line
+;; then "para" puts the paragraph on line 3, columns 1-4.
+(test-equal "positions carry cmark's real line and column spans"
+  '(3 1 3 4)
+  (let ((p (markdown-node-source
+            (first-of-type (markdown->ast "# hi\n\npara\n") 'paragraph))))
+    (list (source-position-start-line p) (source-position-start-column p)
+          (source-position-end-line p)   (source-position-end-column p))))
+
+;; design spec 4.3 mirrors xml.c:48's `start_line != 0` guard. Verified against
+;; the pinned CLI, that branch is UNREACHABLE in ordinary parsing: even an
+;; empty document is created with start_line 1 (make_document in
+;; vendor/cmark-gfm/src/blocks.c) and cmark emits sourcepos="1:1-0:0" for it.
+;; The guard stays, because it keeps the serializer of Task 10 a straight
+;; mapping from our record to cmark's output -- but what is asserted here is
+;; cmark's real answer, not a synthesised absence. The unreachability is a
+;; deliberate gap (Task 13 records it).
+(test-equal "the empty document carries cmark's real 1:1-0:0 span"
+  '(1 1 0 0)
+  (let ((p (markdown-node-source (markdown->ast ""))))
+    (list (source-position-start-line p) (source-position-start-column p)
+          (source-position-end-line p)   (source-position-end-column p))))
+
+;; The options record's ceilings reach the converter -- this is what proves
+;; parse.sls unpacks the record rather than using the defaults.
+(test-equal "max-depth from the options record is enforced"
+  '(too-deep 10)
+  (guard (e ((cmark-resource-limit? e)
+             (list (cmark-invalid-input-reason e) (cmark-resource-limit-value e)))
+            (#t 'wrong-condition))
+    (markdown->ast (nested 8) (make-cmark-options 'max-depth 10))
+    'no-condition))
+(test-equal "max-nodes from the options record is enforced"
+  '(too-many-nodes 10)
+  (guard (e ((cmark-resource-limit? e)
+             (list (cmark-invalid-input-reason e) (cmark-resource-limit-value e)))
+            (#t 'wrong-condition))
+    (markdown->ast (nested 8) (make-cmark-options 'max-nodes 10))
+    'no-condition))
+;; max-input-bytes reaches it too, and still raises the reason 0.1 shipped.
+(test-equal "max-input-bytes still raises too-large, now as a resource limit"
+  '(too-large 8)
+  (guard (e ((cmark-resource-limit? e)
+             (list (cmark-invalid-input-reason e) (cmark-resource-limit-value e)))
+            (#t 'wrong-condition))
+    (markdown->ast "much longer than eight bytes\n"
+                   (make-cmark-options 'max-input-bytes 8))
+    'no-condition))
+
+;; The extensions the options record names are the ones attached.
+(test-equal "extensions from the options record are attached"
+  'strikethrough
+  (markdown-node-type
+   (first-of-type (markdown->ast "~~s~~\n" (make-cmark-options
+                                            'extensions '(strikethrough)))
+                  'strikethrough)))
+(test-equal "an extension the record omits is not attached"
+  (quote ())
+  (nodes-of-type (markdown->ast "~~s~~\n" (make-cmark-options 'extensions '()))
+                 'strikethrough))
+
+(test-equal "a non-options argument is rejected before anything is allocated"
+  'invalid-value
+  (guard (e ((cmark-invalid-option? e) (cmark-invalid-option-reason e))
+            (#t 'wrong-condition))
+    (markdown->ast "hi\n" 'not-options)
+    'no-condition))
+
+(test-equal "markdown->ast released every native allocation"
   '(0 0 0) (live-counts))
 
 (test-end "convert")

@@ -22,6 +22,22 @@
           ;; renderers
           markdown->html markdown->commonmark markdown->plaintext markdown->xml
 
+          ;; AST
+          markdown->ast
+          make-markdown-node markdown-node?
+          markdown-node-type markdown-node-properties
+          markdown-node-children markdown-node-source
+          markdown-node-property
+          markdown-node-with-properties markdown-node-with-children
+          markdown-node-map markdown-node-fold
+          make-source-position source-position?
+          source-position-start-line source-position-start-column
+          source-position-end-line   source-position-end-column
+
+          ;; new options
+          cmark-options-max-nodes cmark-options-max-depth
+          default-ast-options
+
           ;; version and capability
           cmark-gfm-version cmark-gfm-version-compatible?
           cmark-gfm-available-extensions
@@ -37,10 +53,16 @@
           &cmark-shim-unavailable cmark-shim-unavailable? cmark-shim-unavailable-path
           &cmark-invalid-option cmark-invalid-option?
           cmark-invalid-option-key cmark-invalid-option-reason
-          &cmark-render-failed cmark-render-failed? cmark-render-failed-format)
+          &cmark-render-failed cmark-render-failed? cmark-render-failed-format
+
+          ;; new condition
+          &cmark-resource-limit cmark-resource-limit?
+          cmark-resource-limit-value)
   (import (rnrs)
           (cmark gfm options)
           (cmark gfm render)
+          (cmark gfm ast)
+          (cmark gfm parse)
           (cmark gfm private conditions)
           (cmark gfm private native))
 
