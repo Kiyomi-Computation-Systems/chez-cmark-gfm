@@ -536,13 +536,15 @@
           (source-position-end-line p)   (source-position-end-column p))))
 
 ;; design spec 4.3 mirrors xml.c:48's `start_line != 0` guard. Verified against
-;; the pinned CLI, that branch is UNREACHABLE in ordinary parsing: even an
-;; empty document is created with start_line 1 (make_document in
-;; vendor/cmark-gfm/src/blocks.c) and cmark emits sourcepos="1:1-0:0" for it.
-;; The guard stays, because it keeps the serializer of Task 10 a straight
-;; mapping from our record to cmark's output -- but what is asserted here is
-;; cmark's real answer, not a synthesised absence. The unreachability is a
-;; deliberate gap (Task 13 records it).
+;; the pinned CLI: even an empty document is created with start_line 1
+;; (make_document in vendor/cmark-gfm/src/blocks.c) and cmark emits
+;; sourcepos="1:1-0:0" for it -- what is asserted here is cmark's real
+;; answer, not a synthesised absence. The guard itself is ordinary code, not
+;; an untested defence: every softbreak and linebreak is built by
+;; make_simple (src/inlines.c), which never patches start_line away from its
+;; calloc-zeroed 0, so any document containing a line break reaches this
+;; branch. Task 12's mutation run confirmed it directly -- removing the
+;; guard fails three existing assertions.
 (test-equal "the empty document carries cmark's real 1:1-0:0 span"
   '(1 1 0 0)
   (let ((p (markdown-node-source (markdown->ast ""))))
