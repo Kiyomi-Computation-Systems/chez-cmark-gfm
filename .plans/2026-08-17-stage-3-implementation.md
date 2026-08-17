@@ -675,10 +675,21 @@ Insert into `tests/test-options.sps`, immediately **before** the final `(test-en
 (test-equal "max-depth is settable"
   64 (cmark-options-max-depth (make-cmark-options 'max-depth 64)))
 
+;; Both of these seed a NON-DEFAULT value before updating an unrelated field,
+;; and that is the entire mechanism. cmark-options-with rebuilds from ten
+;; near-identical field reads; a copy/paste slip on one of them would silently
+;; substitute the global default, which a test starting from the default value
+;; cannot see. Verified: replacing (cmark-options-max-depth o) with the bare
+;; constant default-max-depth leaves every other assertion in this suite green.
 (test-equal "max-nodes survives a functional update of another field"
   20000
   (cmark-options-max-nodes
    (cmark-options-with (make-cmark-options 'max-nodes 20000) 'smart? #t)))
+
+(test-equal "max-depth survives a functional update of another field"
+  64
+  (cmark-options-max-depth
+   (cmark-options-with (make-cmark-options 'max-depth 64) 'smart? #t)))
 
 ;; Validated exactly as max-input-bytes is: exact positive integer.
 (test-equal "a non-integer max-nodes is rejected"
@@ -846,7 +857,7 @@ Append to `src/cmark/gfm/options.sls`, after `default-cmark-options`:
 CHEZSCHEMELIBDIRS=src:build/scheme-libs chez --program tests/test-options.sps
 ```
 
-Expected: 12 new passes, `# of unexpected failures 0`.
+Expected: 13 new passes, `# of unexpected failures 0`.
 
 - [ ] **Step 6: Watch the validator assertion fail**
 
