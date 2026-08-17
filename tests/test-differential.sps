@@ -16,7 +16,7 @@
         ;; file-exists? is deliberately absent: (rnrs) already exports it and
         ;; requesting it here too fails the library body with "multiple
         ;; definitions for file-exists?".
-        (only (chezscheme) system getenv mkdir)
+        (only (chezscheme) getenv mkdir)
         (cmark gfm)
         (cmark-testing))
 
@@ -35,9 +35,14 @@
 ;; A missing or mismatched CLI FAILS this suite. It does not skip it:
 ;; "skip when unavailable" is how an exit criterion silently stops being
 ;; enforced. Both supported acquisition paths ship the binary.
+;;
+;; --version needs merge-stderr? = #t: a link or dyld failure reports on
+;; stderr, and that is the whole diagnostic when this probe fails. Appending
+;; "2>&1" to the command string itself cannot get that -- capture-command's
+;; own "> out 2>/dev/null" comes after it in the resulting shell command, so
+;; 2>&1 would duplicate stderr to the terminal, not the file.
 (define (cli-version-line)
-  (utf8->string (capture-command (string-append cli " --version 2>&1")
-                                 out-path)))
+  (utf8->string (capture-command (string-append cli " --version") out-path #t)))
 
 (test-assert "the CLI is runnable and is the same build as the loaded library"
   (string-contains? (cli-version-line)

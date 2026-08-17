@@ -215,11 +215,19 @@
   (if (divergence "# hi\n" positions no-positions) #t #f))
 
 ;; --- agreement, one construct at a time ---------------------------------
+;; 'agree, not #f, because SRFI-64 evaluates this expression inside
+;; (guard (ex (else #F)) ...) -- so with #f as the expected value, an
+;; exception raised anywhere in here (notably capture-command's raise on a
+;; non-zero CLI exit) would be indistinguishable from a clean agreement.
+;; Verified: a CLI that answered --version and then failed on every fixture
+;; left this suite reporting 79/79. The `or` keeps the divergence list itself
+;; as the actual value when the two really differ, so a failure still prints
+;; which bytes moved.
 (define (check name markdown)
   (test-equal (string-append "in-process XML agrees: " name)
-    #f (divergence markdown no-positions))
+    'agree (or (divergence markdown no-positions) 'agree))
   (test-equal (string-append "in-process XML agrees with positions: " name)
-    #f (divergence markdown positions)))
+    'agree (or (divergence markdown positions) 'agree)))
 
 (check "an empty document" "")
 (check "headings of every level"
@@ -261,9 +269,9 @@
 
 (define (check-ext name markdown)
   (test-equal (string-append "in-process XML agrees: " name)
-    #f (divergence markdown with-exts))
+    'agree (or (divergence markdown with-exts) 'agree))
   (test-equal (string-append "in-process XML agrees with positions: " name)
-    #f (divergence markdown with-exts+pos)))
+    'agree (or (divergence markdown with-exts+pos) 'agree)))
 
 (check-ext "strikethrough" "~~a~~\n")
 (check-ext "an autolink" "http://e.example/ and www.example.org\n")
@@ -302,10 +310,13 @@
 ;; A missing or mismatched CLI FAILS this suite. It does not skip it: "skip
 ;; when unavailable" is how an exit criterion silently stops being enforced.
 ;; Both supported acquisition paths ship the binary.
+;;
+;; merge-stderr? = #t: a link or dyld failure reports on stderr, and that is
+;; the whole diagnostic when this probe fails.
 (test-equal "the CLI is the same build as the loaded library"
   #t
   (string-contains?
-   (utf8->string (capture-command (string-append cli " --version 2>&1") out-path))
+   (utf8->string (capture-command (string-append cli " --version") out-path #t))
    (string-append " " (cmark-gfm-version) " ")))
 
 ;; The flags come from the options record, so the two sides cannot describe
@@ -356,7 +367,7 @@
 
 (define (check-cli name markdown o)
   (test-equal (string-append "CLI XML agrees: " name)
-    #f (cli-divergence markdown o)))
+    'agree (or (cli-divergence markdown o) 'agree)))
 
 ;; The committed fixtures, which is what makes this leg a corpus test rather
 ;; than a restatement of the cases above. hostile.md is included because an
@@ -387,6 +398,15 @@
            (nested-quotes 25) with-exts+pos)
 (check-cli "the XML escaper's four characters"
            "a & b < c > d \" e ' f / g\n" with-exts+pos)
+
+;; Discrimination guard, same requirement test-differential.sps's layer 1
+;; imposes on every option: a parity assertion means nothing unless the flag
+;; actually moves the CLI's OWN output for this fixture.
+(test-equal "smart punctuation -- the CLI's own output changes"
+  #t
+  (not (string=? (cli-xml "\"quoted\" -- dashed --- and 'single'\n" with-exts+pos)
+                 (cli-xml "\"quoted\" -- dashed --- and 'single'\n"
+                          (cmark-options-with with-exts+pos 'smart? #t)))))
 
 ;; smart? changes the text literals cmark produces, so the AST must carry the
 ;; smart-punctuation forms. Verified against the CLI's own --smart output.

@@ -27,12 +27,23 @@
               ((string=? needle (substring hay i (+ i n))) #t)
               (else (loop (+ i 1)))))))
 
-  ;; Runs cmd with stdout redirected to out-path and stderr discarded, then
-  ;; returns the captured bytes. A non-zero exit is an ERROR, not an empty
-  ;; result: a silently empty capture would make a byte comparison pass
-  ;; against a CLI that never ran.
-  (define (capture-command cmd out-path)
-    (let ((rc (system (string-append cmd " > " out-path " 2>/dev/null"))))
-      (unless (zero? rc)
-        (error 'capture-command "command failed" cmd rc))
-      (file->bytevector out-path))))
+  ;; Runs cmd with stdout redirected to out-path, then returns the captured
+  ;; bytes. A non-zero exit is an ERROR, not an empty result: a silently
+  ;; empty capture would make a byte comparison pass against a CLI that
+  ;; never ran.
+  ;;
+  ;; merge-stderr? exists because redirection order matters and callers
+  ;; cannot fix it from inside the command string: "cmd 2>&1 > out
+  ;; 2>/dev/null" sends stderr to the terminal, not the file, because 2>&1
+  ;; duplicates whatever stdout is at that moment. The version probe wants
+  ;; both streams, because a loader or link failure reports on stderr and is
+  ;; the whole diagnostic.
+  (define capture-command
+    (case-lambda
+      ((cmd out-path) (capture-command cmd out-path #f))
+      ((cmd out-path merge-stderr?)
+       (let ((rc (system (string-append cmd " > " out-path
+                                        (if merge-stderr? " 2>&1" " 2>/dev/null")))))
+         (unless (zero? rc)
+           (error 'capture-command "command failed" cmd rc))
+         (file->bytevector out-path))))))
