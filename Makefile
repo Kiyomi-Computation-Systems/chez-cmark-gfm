@@ -76,6 +76,14 @@ TESTS        := $(wildcard tests/test-*.sps)
 # processes and are NOT instrumented by the memory tools, so they add no
 # coverage here -- test-render.sps already exercises every native allocation
 # this stage introduces. Excluded by name so the omission is visible.
+#
+# test-ast-differential.sps also spawns subprocesses -- its own pinned-CLI leg
+# -- but stays IN, unlike test-differential.sps above: it has a FIRST leg that
+# runs in-process, comparing our AST's XML serialization against cmark's own
+# render-xml on the same live root, which allocates and frees native objects
+# inside this very Chez process before the CLI leg ever runs. That is exactly
+# what Valgrind/ASan need to see, so excluding this suite would drop coverage
+# no other suite provides (design spec 2026-08-17-stage-3-ast-design.md 9.1).
 MEMORY_TESTS := $(filter-out tests/test-differential.sps,$(TESTS))
 
 .PHONY: all build deps check-pins check-purity dev test test-memory vendor clean prod deps-info

@@ -20,10 +20,12 @@ adapter follows in 0.3 (ADR-0007).
   optional default, `markdown-node-with-properties`,
   `markdown-node-with-children`, `markdown-node-map` (children-first),
   `markdown-node-fold` (pre-order), and the `source-position` record.
-- 24 node types covering CommonMark and all five GFM extensions. A task item
-  and a table header row are distinguished by cmark's own type strings
-  (`"tasklist"`, `"table_header"`), which is the only reliable channel for
-  either: `cmark_gfm_extensions_get_tasklist_item_checked` returns false both
+- 24 cmark type strings covering CommonMark and all five GFM extensions,
+  mapping to 22 distinct `markdown-node-type` values — `"item"`/`"tasklist"`
+  both yield `item`, and `"table_row"`/`"table_header"` both yield
+  `table-row`. A task item and a table header row are distinguished by
+  cmark's own type strings, which is the only reliable channel for either:
+  `cmark_gfm_extensions_get_tasklist_item_checked` returns false both
   for an unchecked task and for a non-task.
 - `max-nodes` (default 250000) and `max-depth` (default 1000) options.
   `max-input-bytes` does not bound the AST — 5 MiB of adversarial input parses

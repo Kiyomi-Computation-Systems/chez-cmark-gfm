@@ -457,8 +457,13 @@ Nodes: a counter increments as each record is built; exceeding the limit raises.
 
 Both raise from inside `call-with-native-document`'s body, so its after-thunk frees
 the parser and root on the way out and the partially built Scheme tree is simply
-dropped. Every limit test asserts `live-counts` is back to baseline afterwards,
-which makes these the failure-path memory tests plan §13.5 requires.
+dropped. `tests/test-convert.sps` exercises both limits with six tests — at the
+boundary and one past it, for each of depth and nodes, both directly and through
+the unknown-type fallback. The no-leak property is not asserted by each of those
+six individually: `live-counts` is checked at four shared checkpoints placed
+after groups of tests, one of them run immediately after a fresh violation for
+exactly this purpose. This is what makes these the failure-path memory tests
+plan §13.5 requires.
 
 ## 7. Unknown node types
 
@@ -567,8 +572,8 @@ assertions instead:
 | Suite | Native? | Covers |
 |---|---|---|
 | `tests/test-ast.sps` | **no** — runs under `check-purity` | record construction and immutability, property lookup with and without a default, functional update, `markdown-node-map` children-first order, `markdown-node-fold` pre-order, source-position accessors |
-| `tests/test-convert.sps` | yes | every §3.3 type from the fixtures; key-set exactness; value domains; positions on and off; `source` `#f` at start line 0; validity after native cleanup; both limits and their conditions; counter balance on every failure path; the unknown-type fallback via direct dispatcher call; the `header?` cross-check |
-| `tests/test-ast-differential.sps` | yes | §8's two legs across the fixtures and the option matrix |
+| `tests/test-convert.sps` | yes | every §3.3 type from the fixtures; key-set exactness; value domains; positions on and off; validity after native cleanup; both limits and their conditions; counter balance on every failure path; the unknown-type fallback via direct dispatcher call; the `header?` cross-check |
+| `tests/test-ast-differential.sps` | yes | §8's two legs across the fixtures and the option matrix, including `source` `#f` at start line 0 (§4.3) — covered as a consequence of the byte comparison, via the softbreak/linebreak nodes every "paragraphs and soft breaks" and "a hard break" fixture contains, rather than by a direct assertion |
 
 Fixtures: `core.md`, `gfm.md`, `smart.md`, `hostile.md` are reused. Deep input is
 **generated in-test**, not committed — a line of *n* `>` characters produces *n*

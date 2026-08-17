@@ -950,3 +950,129 @@ table) and all 4 uncovered-property experiments were individually reverted
 and confirmed byte-identical to their pristine backup (`diff`, silent) before
 the next began. No mutation was ever left in the tree while another was
 applied. The tree is clean; this file is the only change.
+
+---
+
+## Addendum (release 0.2 whole-branch review, Finding 9) — the `live-counts` / no-leak-on-failure property
+
+None of the 24 mutations above touches `scope.sls`'s `dynamic-wind` in
+`call-with-native-document`. Mutation 18 is the only one of the 24 that
+touches `scope.sls` at all, and it changes `validate-markdown-input`'s
+ceiling value, not the release mechanism — so nothing in this log had
+actually shown that the `live-counts` assertions (`a limit failure leaves no
+native allocation behind`, `extension conversion released every native
+allocation`, `the fallback path released every native allocation`,
+`markdown->ast released every native allocation`, and their siblings in
+`tests/test-lifecycle.sps` and `tests/test-render.sps`) can fail at all.
+AGENTS.md requires *a* mutation through the asserted property, not one
+confined to `convert.sls`; this addendum supplies it and closes the gap.
+
+### Mutation 25 — `dynamic-wind` replaced with a normal-return-only release (Finding 9, newly covered)
+
+`src/cmark/gfm/private/scope.sls`, `call-with-native-document`'s 5-argument
+clause:
+```diff
+       ((markdown option-bits extension-names proc max-bytes)
+        (let* ((bytes (validate-markdown-input markdown max-bytes))
+               (names (validate-extension-names extension-names))
+               (h (acquire! bytes option-bits names)))
+-        (dynamic-wind
+-          (lambda ()
+-            ;; Re-entry via a captured continuation lands here. The document
+-            ;; is gone and cannot be rebuilt, so refuse rather than proceed.
+-            (unless (native-doc-alive? h)
+-              (raise (make-cmark-dead-document))))
+-          (lambda () (proc h))
+-          (lambda () (release! h)))))))
++        (let ((result (proc h)))
++          (release! h)
++          result)))))
+```
+This removes both of `dynamic-wind`'s protections at once: the after-thunk no
+longer runs on a non-local exit (an exception, or a continuation invoked from
+outside `proc`'s normal extent), and the re-entry guard is gone too.
+`release!` now runs only when `proc` returns normally — a normal-return-only
+release, exactly what AGENTS.md's rule calls for probing.
+
+`make test`: **SUITE FAILED**, 390/397, seven failures across three suites,
+all other suites at their exact baseline count.
+
+**`tests/test-convert.sps`, 62/66 — exactly the four named in the brief:**
+```
+FAIL a limit failure leaves no native allocation behind
+FAIL extension conversion released every native allocation
+FAIL the fallback path released every native allocation
+FAIL markdown->ast released every native allocation
+```
+Mechanism: the first leak happens two tests before the first *failing*
+assertion. `one level past the depth limit raises too-deep` and `one node
+past the node limit raises too-many-nodes` (the pair immediately before `a
+limit failure leaves no native allocation behind`) each raise
+`&cmark-resource-limit` from inside `proc`; the mutated code no longer
+catches that on the way out, so each leaks one parser and one root before
+either test's own assertion (which only checks the condition's reason and
+value, not `live-counts`) even runs. `live-counts` is a process-wide counter
+that nothing resets between tests, so every `'(0 0 0)` checkpoint from that
+point on in the same process inherits the earlier leaks — which is why the
+four failures are spread out rather than adjacent: one right after the
+first two leaks, one after the extension-type group (having inherited them),
+one after the fallback group (which leaks twice more, via its own two
+resource-limit tests), and one after the public `markdown->ast` group
+(three more, via its own limit tests). None is a false negative — each
+observes a genuinely non-`(0 0 0)` value; spot-checked by re-running
+`test-convert.sps` alone, first failure actual value `(3 3 0)`.
+
+**`tests/test-lifecycle.sps`, 20/22 — direct hits, not cascade collateral**
+(each test takes its own `before` snapshot immediately before its own
+exception, so it cannot inherit an earlier test's leak):
+```
+FAIL counters balance after the body raises
+FAIL counters balance after a non-local escape
+```
+The second is the exact case the suite's own comment names: "A continuation
+escape must still free. `dynamic-wind`'s after-thunk is what makes this
+work; without it this test leaks" — written for this mutation. The other
+five exception-raising assertions in this suite stay green: three raise
+before `acquire!` is ever reached (`validate-markdown-input`,
+`validate-extension-names`, twice each), and "counters balance after
+extension attachment fails" raises from inside `acquire!` itself, which
+already calls `release!` by hand before raising — none of those paths
+reaches the mutated `dynamic-wind` at all. "100 scopes leave the counters
+balanced" also stays green: no exception occurs in that loop, so the
+sequential `(let ((result (proc h))) (release! h) result)` releases exactly
+as the after-thunk would have.
+
+**`tests/test-render.sps`, 34/35 — one failure:**
+```
+FAIL counters balance after the render scope's body raises
+```
+That test's body finishes rendering (freeing its own buffer correctly,
+through `call-with-render-buffer`'s own, untouched `dynamic-wind`) and only
+then calls `(error 'test ...)`, so the leak is exactly one parser and one
+root from the *outer* `call-with-native-document`, not a buffer. The other
+two render-suite balance-after-guard assertions stay green for the same
+structural reasons as lifecycle's: "counters balance after a NULL buffer is
+rejected" never calls `call-with-native-document`, and "counters balance
+after a bad width is rejected" raises before any native resource is
+acquired.
+
+The other seven suites sit at their exact baseline count, unaffected:
+`test-ast-differential.sps` 80, `test-ast.sps` 30, `test-conditions.sps` 23,
+`test-differential.sps` 28, `test-native.sps` 54, `test-options.sps` 49,
+`test-shim-loading.sps` 10 — confirming the mutation's blast radius is
+exactly the tests that route an exception or a continuation escape through
+`call-with-native-document`'s body, and nothing wider.
+
+Reverted (`cp` from a fresh scratchpad backup, independent of every earlier
+backup in this file); `diff` silent; `git status --short` and `git diff
+--stat` both empty; `make test` re-run: `ALL SUITES PASSED`, 397/397.
+
+**Uncovered-properties update.** This closes the one property that would
+otherwise have needed a fifth entry alongside Step 2's four: whether the
+`live-counts` / no-leak-on-failure assertions have any mutation that breaks
+them. They do, and the covering mutation runs through `scope.sls`'s
+`dynamic-wind` — the actual release mechanism the property is about, not
+anything local to `convert.sls` — satisfying AGENTS.md's requirement that
+the mutation go through the asserted property itself. It is recorded here
+rather than filed as a fifth item under "the four properties no mutation can
+break," because, unlike those four, this one is not uncovered.
