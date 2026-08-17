@@ -34,6 +34,7 @@ ifeq ($(HAVE_PKG),yes)
                   -L$(CMARK_LIBDIR) -lcmark-gfm-extensions
   CMARK_DLLS   := $(CMARK_LIBDIR)/libcmark-gfm.$(SHLIB_EXT) \
                   $(CMARK_LIBDIR)/libcmark-gfm-extensions.$(SHLIB_EXT)
+  CMARK_CLI    := cmark-gfm
 else
   CMARK_CFLAGS := -I$(VENDOR_BUILD)/src -I$(VENDOR_DIR)/src \
                   -I$(VENDOR_DIR)/extensions
@@ -63,6 +64,7 @@ else
                   -Wl,-rpath,$(CMARK_VENDOR_LIBDIR_SRC)
   CMARK_DLLS   := $(CMARK_VENDOR_LIBDIR_SRC)/libcmark-gfm.$(SHLIB_EXT) \
                   $(CMARK_VENDOR_LIBDIR_EXT)/libcmark-gfm-extensions.$(SHLIB_EXT)
+  CMARK_CLI    := $(abspath $(VENDOR_BUILD)/src/cmark-gfm)
 endif
 
 SRFI_SRC     := vendor/chez-srfi
@@ -77,6 +79,7 @@ all: build
 deps-info:
 	@echo "cmark-gfm source : $(if $(filter yes,$(HAVE_PKG)),pkg-config,vendored)"
 	@echo "shim             : $(SHIM)"
+	@echo "cmark-gfm CLI    : $(CMARK_CLI)"
 
 build: $(SHIM) $(CONFIG_SLS)
 
@@ -185,7 +188,7 @@ test: build deps check-pins
 	@fail=0; \
 	for t in $(TESTS); do \
 	  echo "=== $$t ==="; \
-	  CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) $(CHEZ) --program $$t || fail=1; \
+	  CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) CMARK_CLI=$(CMARK_CLI) $(CHEZ) --program $$t || fail=1; \
 	done; \
 	if [ $$fail -eq 0 ]; then echo "ALL SUITES PASSED"; \
 	else echo "SUITE FAILED"; fi; \
