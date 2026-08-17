@@ -8,6 +8,22 @@
 * A test that passes whether the code is right or wrong is worse than no test.
   Every decision in a module gets a mutation that breaks it, and the owning
   specification must notice. Seed an output variable before asserting it is empty.
+
+  **A test is not finished when it passes. It is finished when you have watched
+  it fail.** Before calling any new assertion done: copy the code under test to a
+  scratch location outside the repo, break the specific decision that assertion
+  claims to guard, run the suite, and confirm that assertion fails *by name*.
+  Then revert and confirm it passes again. State the evidence when you report.
+  - The mutation must break the test *through the asserted property*. If it fails
+    for some other reason — a side effect of the edit, a syntax or import error —
+    it has proved nothing. Narrow the mutation until the failure is the one you
+    predicted.
+  - If no mutation can break the assertion, the assertion is empty. Rewrite it, or
+    write down in the mutation log that the property is uncovered and why. Leaving
+    it silently is the exact failure this rule exists to prevent.
+  - Prefer comparing against an expected value over asserting truthiness. In Scheme
+    almost everything is true, so `test-assert` is where empty tests hide — see the
+    truthiness trap below.
 * Project is specific to Chez Scheme and will be a Chez library.
 * Project requires C ffi and handling C libraries *safely*
 * Project should be portable across macos (darwin), linux, and windows
