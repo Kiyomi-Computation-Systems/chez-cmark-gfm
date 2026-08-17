@@ -296,17 +296,29 @@ make build
   │
   ├─ pkg-config --exists libcmark-gfm ?
   │    ├─ yes → link shim dynamically against system cmark-gfm
-  │    └─ no  → build vendor/cmark-gfm (pinned submodule) with CMake,
-  │              link cmark STATICALLY into the shim
+  │    └─ no  → build vendor/cmark-gfm (pinned submodule) with CMake as
+  │              SHARED libraries, link the shim against them with an
+  │              explicit -Wl,-rpath to each
   │
   └─ emit build/lib/libchezcmarkgfm.{dylib,so}
      emit src/cmark/gfm/private/config.sls   (generated, gitignored)
 ```
 
-Static linking on the vendored path yields one self-contained artifact with no
-runtime resolution of `libcmark-gfm` at all — the cleanest available answer to plan
-§10.7. The system path remains dynamic, as consumers expect. Both behaviors are
-documented per plan §14.
+Both paths link dynamically. **This revises an earlier decision to link the vendored
+copy statically**, which was found to be unimplementable during Stage 1.
+
+Static linking cannot work here, for a structural reason worth recording. cmark-gfm
+builds its static archives with `CMAKE_C_VISIBILITY_PRESET hidden` and
+`CMARK_GFM_STATIC_DEFINE`, so every cmark symbol is hidden in whatever links it. But
+§4.1 puts traversal in Scheme, which means Scheme resolves cmark's entry points
+directly at runtime through `foreign-procedure`. A statically-linked shim exports
+none of them, and the bindings fail to resolve. The two decisions — static vendoring
+and Scheme-side traversal — were incompatible as specified; Scheme-side traversal is
+the load-bearing one, so linking gave way.
+
+The dynamic-loader concern in plan §10.7 is still met: the rpath is an explicit
+absolute path recorded at build time, not a system-path search, and the working
+directory is never consulted. Both behaviours are documented per plan §14.
 
 ### 6.2 Runtime loading
 
