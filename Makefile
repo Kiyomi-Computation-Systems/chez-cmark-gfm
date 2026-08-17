@@ -61,10 +61,12 @@ else
                   -Wl,-rpath,$(CMARK_VENDOR_LIBDIR_SRC)
 endif
 
-CHEZ_LIBDIRS := src:.akku/lib
+SRFI_SRC     := vendor/chez-srfi
+SRFI_LIBS    := $(BUILD_DIR)/scheme-libs
+CHEZ_LIBDIRS := src:$(SRFI_LIBS)
 TESTS        := $(wildcard tests/test-*.sps)
 
-.PHONY: all build dev test test-memory vendor clean prod deps-info
+.PHONY: all build deps dev test test-memory vendor clean prod deps-info
 
 all: build
 
@@ -73,6 +75,31 @@ deps-info:
 	@echo "shim             : $(SHIM)"
 
 build: $(SHIM) $(CONFIG_SLS)
+
+# Scheme dependencies. chez-srfi is vendored as a submodule pinned to the SAME
+# commit Akku.lock names (7879b52). Keep them equal: bumping the Akku dependency
+# without re-pinning the submodule means consumers and CI test different code,
+# and nothing here would notice. Akku itself is
+# deliberately NOT on this path: it has no prebuilt binary, and its downloader
+# fails on some hosts with CURLE_URL_MALFORMED. Akku.manifest/Akku.lock remain
+# the consumer-facing declaration.
+#
+# chez-srfi ships Akku's percent-encoded filenames (%3a64.sls). Chez resolves
+# (srfi :64) only from the decoded spelling, so link both into a build tree and
+# leave the submodule's own working tree untouched.
+deps: $(SRFI_LIBS)/.stamp
+
+$(SRFI_LIBS)/.stamp:
+	git submodule update --init $(SRFI_SRC)
+	mkdir -p $(SRFI_LIBS)/srfi
+	src=$(abspath $(SRFI_SRC)); dst=$(abspath $(SRFI_LIBS))/srfi; \
+	for f in $$src/*; do \
+	  b=$$(basename "$$f"); \
+	  ln -sfn "$$f" "$$dst/$$b"; \
+	  d=$$(printf '%s' "$$b" | sed 's/%3a/:/g'); \
+	  [ "$$d" = "$$b" ] || ln -sfn "$$f" "$$dst/$$d"; \
+	done
+	touch $@
 
 $(LIB_DIR):
 	mkdir -p $(LIB_DIR)
@@ -118,12 +145,12 @@ vendor:
 	  -DCMARK_TESTS=OFF -DCMARK_SHARED=ON -DCMARK_STATIC=OFF
 	cmake --build $(VENDOR_BUILD) -j
 
-dev: build
+dev: build deps
 	CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) $(CHEZ)
 
 # Each suite sets its own exit status. Keep going after a failure so one
 # broken suite cannot hide the others, then fail the target if any failed.
-test: build
+test: build deps
 	@fail=0; \
 	for t in $(TESTS); do \
 	  echo "=== $$t ==="; \
@@ -133,7 +160,7 @@ test: build
 	else echo "SUITE FAILED"; fi; \
 	exit $$fail
 
-test-memory: build
+test-memory: build deps
 ifeq ($(UNAME_S),Linux)
 	@for t in $(TESTS); do \
 	  CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) valgrind --error-exitcode=9 \
