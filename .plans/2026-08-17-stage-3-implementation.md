@@ -3481,9 +3481,10 @@ Rejected alternatives:
 - The AST at its own defaults carries positions, which is what makes it worth more
   than one without them.
 - `xml.c:48`'s `start_line != 0` guard is mirrored in the converter, so a node cmark
-  has no position for reports `#f` rather than `0:0-0:0`. That branch is unreachable
-  in practice — even an empty document is created with `start_line 1` — and is
-  recorded as an uncovered property in the Stage 3 mutation log.
+  has no position for reports `#f` rather than `0:0-0:0`. That branch is ordinary,
+  not defensive: `softbreak` and `linebreak` are built by `make_simple` in
+  `src/inlines.c`, which never patches their position fields, so cmark emits them
+  with no `sourcepos` at all and any document containing a line break exercises it.
 - Two assertions hold the arity in place: the one-argument form must attach
   positions, and the two-argument form must honour an explicit `#f`. Neither can
   drift silently.
@@ -3560,15 +3561,11 @@ and a sentence after that table:
 `render.sls`, which unpacks the same record into option bits.
 ```
 
-Then extend §12's gap list — §4.3's guard turned out to be unreachable:
-
-```markdown
-8. **The zero-start-line guard is unreachable.** §4.3 mirrors `xml.c:48`'s
-   `start_line != 0` test, but no node reaches it: even an empty document is
-   created with `start_line 1` (`make_document`, `src/blocks.c`) and cmark emits
-   `sourcepos="1:1-0:0"`. The guard is kept because it keeps the Task 10
-   serializer a straight mapping from our record to cmark's output.
-```
+§12's gap list needs **no** new entry for §4.3's guard. An earlier draft of this
+plan assumed that guard was unreachable; Task 12's mutation run disproved it —
+removing it fails three existing assertions, because `softbreak` and `linebreak`
+genuinely carry `start_line == 0`. §4.3 was corrected before this task ran;
+confirm it reads correctly rather than re-adding the claim.
 
 - [ ] **Step 3b: Resync the purity check's own description**
 
@@ -3589,6 +3586,15 @@ of native imports`. Change it to name both:
 ```yaml
       - name: Check options.sls and ast.sls stay free of native imports
 ```
+
+- [ ] **Step 3c: Correct the shipped comment that repeats the unreachability claim**
+
+`tests/test-convert.sps`'s comment above `the empty document carries cmark's real
+1:1-0:0 span` says the `start_line != 0` branch is "UNREACHABLE in ordinary
+parsing". Task 12's mutation run disproved that. Rewrite the comment: the empty
+document's `1:1-0:0` span is still exactly what that assertion pins and why, but
+the branch itself is reached by every `softbreak` and `linebreak`, so it is
+ordinary code with three assertions over it rather than an untested guard.
 
 - [ ] **Step 4: Bump the version**
 

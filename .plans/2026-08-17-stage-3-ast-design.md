@@ -287,6 +287,23 @@ when positions are requested. This keeps the §8 serializer a straight mapping f
 our record to cmark's output rather than a special case, and it is the honest
 representation — cmark is reporting that it has no position for that node.
 
+**This branch is ordinary, not defensive.** `softbreak` and `linebreak` nodes
+genuinely carry `start_line == 0`: both are built by `make_simple` in
+`src/inlines.c`, which never patches the position fields, unlike `emph` and
+`strong`, which are patched explicitly. cmark's own XML shows it — a paragraph
+carries a span and the break inside it carries none:
+
+    $ printf 'one\ntwo\n' | cmark-gfm --to xml --sourcepos
+      <paragraph sourcepos="1:1-2:3">
+        ...
+        <softbreak />
+        ...
+      </paragraph>
+
+So every document containing a soft or hard line break exercises this guard, and
+removing it fails three existing assertions. It is covered code, not an
+untestable defence.
+
 ## 5. Conversion — `(cmark gfm private convert)`
 
 ### 5.1 Shape
