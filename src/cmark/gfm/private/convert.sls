@@ -103,9 +103,12 @@
           ((= b 114) 'right)     ; #\r
           (else 'none)))
 
-  ;; Called only from the "table" branch: table-columns and table-alignments
-  ;; dereference node->type with no NULL guard (extensions/table.c:878-890),
-  ;; so reaching them with a non-table node would fault rather than raise.
+  ;; table-columns and table-alignments (extensions/table.c:878-890) test
+  ;; node->type and safely return 0/NULL for a non-table node -- not a
+  ;; fault. What they lack, unlike get_cell_alignment (table.c:133-139), is
+  ;; a guard against a NULL node. Moot here: get_type_string (table.c:526)
+  ;; returns "table" only when node->type == CMARK_NODE_TABLE, checked on
+  ;; the same node whose type string dispatched us to this branch.
   (define (table-props p)
     (let ((n (table-columns p)))
       (list (cons 'columns n)
@@ -253,6 +256,11 @@
         (convert-ctx-column-alignments-set! ctx saved)
         (make-markdown-node (node-entry-type entry) props children source))))
 
+  ;; Exported so tests can drive it directly (see the type-string note at
+  ;; the top of this file), but never call this with type-string
+  ;; "table_cell": alignment is supplied positionally by convert-node/index,
+  ;; the only path convert-children takes, so a direct table_cell call here
+  ;; would silently produce a table-cell node with no alignment property.
   (define (convert-node p type-string depth ctx)
     (with-node p type-string depth ctx #f))
 

@@ -308,7 +308,7 @@
   (map markdown-node-type (nodes-of-type (ext-ast table-md) 'table-row)))
 (test-equal "header? distinguishes the two rows"
   '(#t #f)
-  (map (lambda (n) (markdown-node-property n 'header?))
+  (map (lambda (n) (markdown-node-property n 'header? 'absent))
        (nodes-of-type (ext-ast table-md) 'table-row)))
 
 ;; Body-cell alignment is the third XML blind spot: table.c:661 emits align=
@@ -351,7 +351,7 @@
    table-md (option-bits #f #f #f #f #f #f) all-exts
    (lambda (h)
      (let* ((tree (convert-document h (make-convert-ctx 250000 1000 #f)))
-            (ours (map (lambda (n) (markdown-node-property n 'header?))
+            (ours (map (lambda (n) (markdown-node-property n 'header? 'absent))
                        (nodes-of-type tree 'table-row)))
             ;; walk to the table's rows natively: document -> table -> rows
             (table (node-first-child (doc-root h)))
