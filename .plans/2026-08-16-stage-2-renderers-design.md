@@ -458,3 +458,27 @@ Note tagfilter escapes only the opening `<`.
    and `cmark_render_html` walks that same list at `html.c:480` — so the
    use-after-free the Stage 0 spike caught under AddressSanitizer is real regardless of
    what the list is subsequently used for.
+
+---
+
+## 14. Limitation: the sweep cannot detect a wrong default
+
+Found by mutation G during Stage 2 and recorded here so no future reader over-trusts
+the harness.
+
+`config->flags` derives the CLI's flags from the same options record it renders with
+(`tests/test-differential.sps:69-88` — `config->flags` calls `config->options`, which
+is `(apply make-cmark-options cfg)`). That is deliberate: one value drives both sides,
+so the two can never describe different configurations by accident.
+
+The cost is that **a change to a default moves both sides together.** Flipping the
+`source-positions?` default made every `default options agree with the CLI` cell
+compare our sourcepos output against the CLI invoked *with* `--sourcepos` — and they
+matched, so all four cells passed. The sweep answers "given a config, do we produce
+what the CLI produces for that config", which is §7.5's actual question. It does not
+and cannot answer "is this the right default".
+
+Defaults are covered instead by the explicit per-field assertions in
+`tests/test-options.sps` and the `data-sourcepos` on/off pair in
+`tests/test-render.sps` — mutation G failed seven named tests across three suites, so
+the property is well guarded. Just not by the layer one might assume.
