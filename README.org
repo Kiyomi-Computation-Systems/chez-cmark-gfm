@@ -144,11 +144,80 @@ support a leak claim — LeakSanitizer does not exist on macOS/ARM64
 | ~smart?~            | ~#f~                                                |
 | ~unsafe-html?~      | ~#f~                                                |
 | ~max-input-bytes~   | ~5242880~ (5 MiB)                                   |
+| ~max-nodes~         | ~250000~                                            |
+| ~max-depth~         | ~1000~                                              |
 
 ~hardbreaks?~ and ~nobreaks?~ cannot both be set. cmark gives hardbreaks
 precedence rather than leaving the combination undefined, so this is a
 deliberate policy: honouring one of two explicit requests and silently
 dropping the other would hide a caller's mistake.
+
+** The AST
+
+#+begin_src scheme
+(import (cmark gfm))
+
+;; One argument: source positions ON (ADR-0009).
+(define tree (markdown->ast "# Hello\n\n~~struck~~\n"))
+
+(markdown-node-type tree)                   ;; => document
+(markdown-node-property
+  (car (markdown-node-children tree)) 'level)  ;; => 1
+
+;; Two arguments: your options record, verbatim.
+(markdown->ast "# Hello\n" (make-cmark-options 'source-positions? #f))
+
+;; Immutable. Both helpers return new trees.
+(markdown-node-map (lambda (n) n) tree)     ;; children-first
+(markdown-node-fold (lambda (n acc) (+ acc 1)) 0 tree)  ;; pre-order
+#+end_src
+
+Nodes are ~(type properties children source)~. Properties are read with
+~markdown-node-property~, which takes an optional default — several
+properties have ~#f~ as a legitimate value, so absence and false are
+distinguishable:
+
+| Node type | Properties |
+|-----------------+---------------------------------------|
+| ~heading~ | ~level~ |
+| ~text~ ~code~ ~html-inline~ ~html-block~ | ~literal~ |
+| ~code-block~ | ~literal~ ~fence-info~ |
+| ~link~ ~image~ | ~url~ ~title~ |
+| ~list~ | ~kind~ ~start~ ~tight?~ ~delimiter~ |
+| ~item~ | ~index~ ~task?~ ~checked?~ |
+| ~table~ | ~columns~ ~alignments~ |
+| ~table-row~ | ~header?~ |
+| ~table-cell~ | ~alignment~ |
+| ~extension~ | ~native-type~, and ~literal~ when the node has one |
+
+~document~, ~paragraph~, ~blockquote~, ~thematic-break~, ~softbreak~,
+~linebreak~, ~emph~, ~strong~, and ~strikethrough~ carry no properties.
+
+#+begin_quote
+⚠️ *The AST is untrusted structured input.* It preserves exactly what the
+document said, including raw HTML and ~javascript:~ URLs. ~unsafe-html?~ does
+not affect it — that option is a renderer policy. Sanitise when you render,
+not when you parse.
+#+end_quote
+
+Two ceilings bound the copy, because ~max-input-bytes~ does not: 5 MiB of
+adversarial Markdown parses to millions of nodes.
+
+| Key | Default |
+|-------------+---------|
+| ~max-nodes~ | 250000 |
+| ~max-depth~ | 1000 |
+
+Exceeding either raises ~&cmark-resource-limit~, which derives from
+~&cmark-invalid-input~ and carries the ceiling that was exceeded:
+
+#+begin_src scheme
+(guard (e ((cmark-resource-limit? e)
+           (list (cmark-invalid-input-reason e)
+                 (cmark-resource-limit-value e))))
+  (markdown->ast deeply-nested (make-cmark-options 'max-depth 64)))
+;; => (too-deep 64)
+#+end_src
 
 ** Errors
 

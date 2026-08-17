@@ -45,6 +45,7 @@ Follows plan §5. No structure the plan did not ask for.
 |---|---|---|---|
 | `src/cmark/gfm/ast.sls` | 3 (public) | **yes** | **No — imports nothing native** |
 | `src/cmark/gfm/private/convert.sls` | 2 | **yes** | Yes |
+| `src/cmark/gfm/parse.sls` | 3 (public) | **yes** | No |
 | `src/cmark/gfm/options.sls` | 3 (public) | no | No |
 | `src/cmark/gfm.sls` | 3 (façade) | no | No |
 | `src/cmark/gfm/private/native.sls` | 2 | no | Yes (extended) |
@@ -55,6 +56,11 @@ Follows plan §5. No structure the plan did not ask for.
 `convert.sls` is the only new file permitted to hold a native pointer, and it holds
 one only for the duration of a single traversal driven from inside
 `call-with-native-document`'s body.
+
+`parse.sls` is the layer-3 entry point for `markdown->ast`. It exists so that
+`convert.sls` stays layer 2: a public export inside layer 2 would force
+`convert.sls` to import the options record, inverting the layering. It mirrors
+`render.sls`, which unpacks the same record into option bits.
 
 ### 2.1 `ast.sls` extends the existing purity gate
 
