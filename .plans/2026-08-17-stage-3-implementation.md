@@ -2055,13 +2055,11 @@ share it, and make the `table` case record its alignments before descending:
         (convert-ctx-column-alignments-set! ctx saved)
         (make-markdown-node (node-entry-type entry) props children source))))
 
-  ;; properties-override #f, so a "table_cell" reaching HERE rather than
-  ;; convert-node/index would come out with an empty property list -- the
-  ;; table_cell table entry has no extractor of its own, because alignment is
-  ;; positional. convert-children routes every child through
-  ;; convert-node/index, so nothing in this library can, but convert-node is
-  ;; exported and drivable directly by tests. No runtime guard: the routing is
-  ;; structural and a check here would be dead code.
+  ;; Exported so tests can drive it directly (see the type-string note at
+  ;; the top of this file), but never call this with type-string
+  ;; "table_cell": alignment is supplied positionally by convert-node/index,
+  ;; the only path convert-children takes, so a direct table_cell call here
+  ;; would silently produce a table-cell node with no alignment property.
   (define (convert-node p type-string depth ctx)
     (with-node p type-string depth ctx #f))
 ```
