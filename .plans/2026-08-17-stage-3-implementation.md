@@ -2825,12 +2825,20 @@ Create `tests/test-ast-differential.sps`:
 ;; --- leg one: in-process, same options on both sides --------------------
 ;; markdown->xml is cmark's renderer over the same input and the same option
 ;; record, so the only thing that can differ is our copy of the tree.
-(define (divergence markdown o)
-  (let ((mine (ast->xml (markdown->ast markdown o)))
-        (theirs (markdown->xml markdown o)))
-    (if (string=? mine theirs) #f (list mine theirs))))
-
-(define (agrees? markdown o) (not (divergence markdown o)))
+;; Taking our-o and their-o separately is what lets the guard below seed this
+;; detector with a deliberate mismatch and prove it can report anything at all
+;; -- the same reason tests/test-differential.sps's `mismatch` is shaped this
+;; way. With a single options record the detector can never report a
+;; difference when the code is correct, so a guard that reimplemented the
+;; comparison inline would not exercise it: verified, hardcoding this
+;; procedure to #f left all 62 assertions green.
+(define divergence
+  (case-lambda
+    ((markdown o) (divergence markdown o o))
+    ((markdown our-o their-o)
+     (let ((mine (ast->xml (markdown->ast markdown our-o)))
+           (theirs (markdown->xml markdown their-o)))
+       (if (string=? mine theirs) #f (list mine theirs))))))
 
 (define positions (make-cmark-options 'source-positions? #t))
 (define no-positions (make-cmark-options 'source-positions? #f))
@@ -2841,9 +2849,7 @@ Create `tests/test-ast-differential.sps`:
 ;; under two option settings.
 (test-equal "the comparison detects a real difference when one exists"
   #t
-  (let ((a (ast->xml (markdown->ast "# hi\n" positions)))
-        (b (markdown->xml "# hi\n" no-positions)))
-    (not (string=? a b))))
+  (if (divergence "# hi\n" positions no-positions) #t #f))
 
 ;; --- agreement, one construct at a time ---------------------------------
 (define (check name markdown)
@@ -3140,17 +3146,24 @@ Then:
    (capture-command (string-append cli " " (options->flags o) " " fixture-path)
                     out-path)))
 
-(define (cli-divergence markdown o)
-  (let ((mine (ast->xml (markdown->ast markdown o)))
-        (theirs (cli-xml markdown o)))
-    (if (string=? mine theirs) #f (list mine theirs))))
+;; Two options records for the same reason the in-process leg takes them: a
+;; detector given one record can never report a difference when the code is
+;; correct, so its guard has to seed it with a deliberate mismatch -- and the
+;; guard must call the detector itself. Reimplementing the comparison inline
+;; leaves a hardcoded detector undetected; that shipped once and was caught
+;; only by hardcoding it.
+(define cli-divergence
+  (case-lambda
+    ((markdown o) (cli-divergence markdown o o))
+    ((markdown our-o their-o)
+     (let ((mine (ast->xml (markdown->ast markdown our-o)))
+           (theirs (cli-xml markdown their-o)))
+       (if (string=? mine theirs) #f (list mine theirs))))))
 
-;; Same guard as the in-process leg: prove the detector can report a
-;; difference before trusting it to report none.
+;; Same guard as the in-process leg, and it calls the detector.
 (test-equal "the CLI comparison detects a real difference when one exists"
   #t
-  (not (string=? (ast->xml (markdown->ast "# hi\n" positions))
-                 (cli-xml "# hi\n" no-positions))))
+  (if (cli-divergence "# hi\n" positions no-positions) #t #f))
 
 (define (check-cli name markdown o)
   (test-equal (string-append "CLI XML agrees: " name)
