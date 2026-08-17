@@ -163,23 +163,33 @@ Create `spike/00-load.ss`:
 ```scheme
 ;; Stage 0 spike: prove load-shared-object and version reporting.
 ;; Usage: chez --script spike/00-load.ss /abs/path/to/libcmark-gfm.dylib
+;;
+;; NOTE: every definition below sits at TOP LEVEL, not inside a `let`. Chez
+;; rejects a `define` that follows an expression within a body ("invalid
+;; context for definition"); at top level the interleaving is legal, and the
+;; shared object still loads before any foreign-procedure is evaluated.
 
-(let ((lib (cadr (command-line))))
-  (load-shared-object lib)
+(define lib (cadr (command-line)))
+(load-shared-object lib)
 
-  (define cmark-version
-    (foreign-procedure "cmark_version" () int))
-  (define cmark-version-string
-    (foreign-procedure "cmark_version_string" () string))
+(define cmark-version
+  (foreign-procedure "cmark_version" () int))
+(define cmark-version-string
+  (foreign-procedure "cmark_version_string" () string))
 
-  (let ((v (cmark-version)))
-    (printf "cmark_version()        = ~d (0x~x)\n" v v)
-    (printf "cmark_version_string() = ~a\n" (cmark-version-string))
-    ;; Version is encoded (major << 16) | (minor << 8) | patch.
-    (printf "decoded                = ~d.~d.~d\n"
-            (bitwise-arithmetic-shift-right v 16)
-            (bitwise-and (bitwise-arithmetic-shift-right v 8) #xff)
-            (bitwise-and v #xff))))
+(define v (cmark-version))
+
+(printf "cmark_version()        = ~d (0x~x)\n" v v)
+(printf "cmark_version_string() = ~a\n" (cmark-version-string))
+;; CMARK_GFM_VERSION packs FOUR bytes, not three:
+;;   (major << 24) | (minor << 16) | (patch << 8) | gfm
+;; For 0.29.0.gfm.13 that is 0x001D000D. Decoding it as a three-field
+;; version yields a misleading "29.0.13".
+(printf "decoded                = ~d.~d.~d.gfm.~d\n"
+        (bitwise-arithmetic-shift-right v 24)
+        (bitwise-and (bitwise-arithmetic-shift-right v 16) #xff)
+        (bitwise-and (bitwise-arithmetic-shift-right v 8) #xff)
+        (bitwise-and v #xff))
 ```
 
 - [ ] **Step 3: Run it**
@@ -188,7 +198,7 @@ Create `spike/00-load.ss`:
 chez --script spike/00-load.ss "$(pkg-config --variable=libdir libcmark-gfm)/libcmark-gfm.dylib"
 ```
 
-Expected: three lines printed, with `decoded` reading `0.29.0`. A failure here means the library path is wrong, not that the design is wrong.
+Expected: three lines printed, with `decoded` reading `0.29.0.gfm.13`. A failure here means the library path is wrong, not that the design is wrong.
 
 - [ ] **Step 4: Record and commit**
 
@@ -222,79 +232,84 @@ Create `spike/01-strings.ss`:
 ;;   (b) does it decode UTF-8 correctly?
 ;;   (c) what happens when the C function returns NULL?
 ;; Usage: chez --script spike/01-strings.ss /abs/path/to/libcmark-gfm.dylib
+;;
+;; NOTE: every definition below sits at TOP LEVEL, not inside a `let`. Chez
+;; rejects a `define` that follows an expression within a body ("invalid
+;; context for definition"); at top level the interleaving is legal, and the
+;; shared object still loads before any foreign-procedure is evaluated.
 
-(let ((lib (cadr (command-line))))
-  (load-shared-object lib)
+(define lib (cadr (command-line)))
+(load-shared-object lib)
 
-  ;; --- helpers -------------------------------------------------------
-  ;; Manual, unambiguous copy from a raw address. This is the fallback
-  ;; the design specifies (spec 5.4) if `string` proves unsafe.
-  (define (c-string->string addr)
-    (if (zero? addr)
-        #f
-        (let scan ((len 0))
-          (if (zero? (foreign-ref 'unsigned-8 addr len))
-              (let ((bv (make-bytevector len)))
-                (let copy ((i 0))
-                  (if (= i len)
-                      (utf8->string bv)
-                      (begin
-                        (bytevector-u8-set! bv i (foreign-ref 'unsigned-8 addr i))
-                        (copy (+ i 1))))))
-              (scan (+ len 1))))))
+;; --- helpers -------------------------------------------------------
+;; Manual, unambiguous copy from a raw address. This is the fallback
+;; the design specifies (spec 5.4) if `string` proves unsafe.
+(define (c-string->string addr)
+  (if (zero? addr)
+      #f
+      (let scan ((len 0))
+        (if (zero? (foreign-ref 'unsigned-8 addr len))
+            (let ((bv (make-bytevector len)))
+              (let copy ((i 0))
+                (if (= i len)
+                    (utf8->string bv)
+                    (begin
+                      (bytevector-u8-set! bv i (foreign-ref 'unsigned-8 addr i))
+                      (copy (+ i 1))))))
+            (scan (+ len 1))))))
 
-  ;; --- bindings ------------------------------------------------------
-  (define parser-new    (foreign-procedure "cmark_parser_new" (int) uptr))
-  (define parser-feed   (foreign-procedure "cmark_parser_feed" (uptr u8* size_t) void))
-  (define parser-finish (foreign-procedure "cmark_parser_finish" (uptr) uptr))
-  (define parser-free   (foreign-procedure "cmark_parser_free" (uptr) void))
-  (define node-free     (foreign-procedure "cmark_node_free" (uptr) void))
-  (define first-child   (foreign-procedure "cmark_node_first_child" (uptr) uptr))
+;; --- bindings ------------------------------------------------------
+(define parser-new    (foreign-procedure "cmark_parser_new" (int) uptr))
+(define parser-feed   (foreign-procedure "cmark_parser_feed" (uptr u8* size_t) void))
+(define parser-finish (foreign-procedure "cmark_parser_finish" (uptr) uptr))
+(define parser-free   (foreign-procedure "cmark_parser_free" (uptr) void))
+(define node-free     (foreign-procedure "cmark_node_free" (uptr) void))
+(define first-child   (foreign-procedure "cmark_node_first_child" (uptr) uptr))
 
-  ;; The SAME accessor bound two ways, so the results can be compared.
-  (define literal-as-string (foreign-procedure "cmark_node_get_literal" (uptr) string))
-  (define literal-as-uptr   (foreign-procedure "cmark_node_get_literal" (uptr) uptr))
-  ;; get_literal returns NULL for a paragraph node -- that is question (c).
-  (define type-as-uptr      (foreign-procedure "cmark_node_get_type_string" (uptr) uptr))
+;; The SAME accessor bound two ways, so the results can be compared.
+(define literal-as-string (foreign-procedure "cmark_node_get_literal" (uptr) string))
+(define literal-as-uptr   (foreign-procedure "cmark_node_get_literal" (uptr) uptr))
+;; get_literal returns NULL for a paragraph node -- that is question (c).
+(define type-as-uptr      (foreign-procedure "cmark_node_get_type_string" (uptr) uptr))
 
-  ;; --- probe ---------------------------------------------------------
-  ;; Non-ASCII on purpose: em-dash and a CJK character exercise UTF-8.
-  (let* ((md   (string->utf8 "Hello \x2014;world \x4e16;\x754c;\n"))
-         (p    (parser-new 0))
-         (_    (parser-feed p md (bytevector-length md)))
-         (root (parser-finish p))
-         (para (first-child root))
-         (text (first-child para)))
+;; --- probe ---------------------------------------------------------
+;; Non-ASCII on purpose: em-dash and a CJK character exercise UTF-8.
+(define md   (string->utf8 "Hello \x2014;world \x4e16;\x754c;\n"))
+(define p    (parser-new 0))
+(parser-feed p md (bytevector-length md))
+(define root (parser-finish p))
+(define para (first-child root))
+(define text (first-child para))
 
-    (printf "--- (b) UTF-8 decoding ---\n")
-    (let ((via-string (literal-as-string text))
-          (via-uptr   (c-string->string (literal-as-uptr text))))
-      (printf "via `string` type : ~s\n" via-string)
-      (printf "via manual copy   : ~s\n" via-uptr)
-      (printf "identical?        : ~a\n" (equal? via-string via-uptr)))
+(printf "--- (b) UTF-8 decoding ---\n")
+(let ((via-string (literal-as-string text))
+      (via-uptr   (c-string->string (literal-as-uptr text))))
+  (printf "via `string` type : ~s\n" via-string)
+  (printf "via manual copy   : ~s\n" via-uptr)
+  (printf "identical?        : ~a\n" (equal? via-string via-uptr)))
 
-    (printf "\n--- (c) NULL handling ---\n")
-    ;; A paragraph node has no literal; the accessor returns NULL.
-    (printf "manual copy of NULL : ~s\n" (c-string->string (literal-as-uptr para)))
-    (printf "`string` type on NULL: ")
-    (flush-output-port)
-    (printf "~s\n"
-            (guard (e (#t (list 'raised (condition/report-string e))))
-              (literal-as-string para)))
+(printf "\n--- (c) NULL handling ---\n")
+;; A paragraph node has no literal; the accessor returns NULL.
+(printf "manual copy of NULL : ~s\n" (c-string->string (literal-as-uptr para)))
+(printf "`string` type on NULL: ")
+(flush-output-port)
+(printf "~s\n"
+        (guard (e (#t (list 'raised (condition/report-string e))))
+          (literal-as-string para)))
 
-    (printf "\n--- (a) copy vs alias ---\n")
-    ;; Capture BEFORE the tree is freed, then read AFTER. If `string`
-    ;; copied, the value survives intact. If it aliased, this is a
-    ;; use-after-free and the value is garbage or the process crashes.
-    (let ((captured (literal-as-string text))
-          (node-type (c-string->string (type-as-uptr text))))
-      (printf "node type          : ~s\n" node-type)
-      (parser-free p)
-      (node-free root)
-      (collect)
-      (printf "after free         : ~s\n" captured)
-      (printf "still correct?     : ~a\n"
-              (equal? captured "Hello \x2014;world \x4e16;\x754c;")))))
+(printf "\n--- (a) copy vs alias ---\n")
+;; Capture BEFORE the tree is freed, then read AFTER. If `string`
+;; copied, the value survives intact. If it aliased, this is a
+;; use-after-free and the value is garbage or the process crashes.
+(define captured (literal-as-string text))
+(define node-type (c-string->string (type-as-uptr text)))
+(printf "node type          : ~s\n" node-type)
+(parser-free p)
+(node-free root)
+(collect)
+(printf "after free         : ~s\n" captured)
+(printf "still correct?     : ~a\n"
+        (equal? captured "Hello \x2014;world \x4e16;\x754c;"))
 ```
 
 - [ ] **Step 2: Run it**
@@ -359,82 +374,89 @@ Create `spike/02-parse.ss`:
 ```scheme
 ;; Stage 0 spike: attach all five GFM extensions, parse, traverse, free.
 ;; Usage: chez --script spike/02-parse.ss /abs/core.dylib /abs/extensions.dylib
+;;
+;; NOTE: every definition below sits at TOP LEVEL, not inside a `let`. Chez
+;; rejects a `define` that follows an expression within a body ("invalid
+;; context for definition"); at top level the interleaving is legal, and the
+;; shared objects still load before any foreign-procedure is evaluated.
 
-(let ((core (cadr (command-line)))
-      (exts (caddr (command-line))))
-  (load-shared-object core)
-  (load-shared-object exts)
+(define core (cadr (command-line)))
+(define exts (caddr (command-line)))
+(load-shared-object core)
+(load-shared-object exts)
 
-  (define ensure-registered
-    (foreign-procedure "cmark_gfm_core_extensions_ensure_registered" () void))
-  (define find-extension
-    (foreign-procedure "cmark_find_syntax_extension" (string) uptr))
-  (define attach-extension
-    (foreign-procedure "cmark_parser_attach_syntax_extension" (uptr uptr) int))
-  (define parser-new    (foreign-procedure "cmark_parser_new" (int) uptr))
-  (define parser-feed   (foreign-procedure "cmark_parser_feed" (uptr u8* size_t) void))
-  (define parser-finish (foreign-procedure "cmark_parser_finish" (uptr) uptr))
-  (define parser-free   (foreign-procedure "cmark_parser_free" (uptr) void))
-  (define node-free     (foreign-procedure "cmark_node_free" (uptr) void))
-  (define first-child   (foreign-procedure "cmark_node_first_child" (uptr) uptr))
-  (define node-next     (foreign-procedure "cmark_node_next" (uptr) uptr))
-  (define type-string   (foreign-procedure "cmark_node_get_type_string" (uptr) uptr))
+(define ensure-registered
+  (foreign-procedure "cmark_gfm_core_extensions_ensure_registered" () void))
+(define find-extension
+  (foreign-procedure "cmark_find_syntax_extension" (string) uptr))
+(define attach-extension
+  (foreign-procedure "cmark_parser_attach_syntax_extension" (uptr uptr) int))
+(define parser-new    (foreign-procedure "cmark_parser_new" (int) uptr))
+(define parser-feed   (foreign-procedure "cmark_parser_feed" (uptr u8* size_t) void))
+(define parser-finish (foreign-procedure "cmark_parser_finish" (uptr) uptr))
+(define parser-free   (foreign-procedure "cmark_parser_free" (uptr) void))
+(define node-free     (foreign-procedure "cmark_node_free" (uptr) void))
+(define first-child   (foreign-procedure "cmark_node_first_child" (uptr) uptr))
+(define node-next     (foreign-procedure "cmark_node_next" (uptr) uptr))
+(define type-string   (foreign-procedure "cmark_node_get_type_string" (uptr) uptr))
 
-  (define (c-string->string addr)
-    (if (zero? addr)
-        #f
-        (let scan ((len 0))
-          (if (zero? (foreign-ref 'unsigned-8 addr len))
-              (let ((bv (make-bytevector len)))
-                (let copy ((i 0))
-                  (if (= i len)
-                      (utf8->string bv)
-                      (begin
-                        (bytevector-u8-set! bv i (foreign-ref 'unsigned-8 addr i))
-                        (copy (+ i 1))))))
-              (scan (+ len 1))))))
+(define (c-string->string addr)
+  (if (zero? addr)
+      #f
+      (let scan ((len 0))
+        (if (zero? (foreign-ref 'unsigned-8 addr len))
+            (let ((bv (make-bytevector len)))
+              (let copy ((i 0))
+                (if (= i len)
+                    (utf8->string bv)
+                    (begin
+                      (bytevector-u8-set! bv i (foreign-ref 'unsigned-8 addr i))
+                      (copy (+ i 1))))))
+            (scan (+ len 1))))))
 
-  (define extension-names '("autolink" "strikethrough" "table" "tagfilter" "tasklist"))
+(define extension-names '("autolink" "strikethrough" "table" "tagfilter" "tasklist"))
 
-  ;; A document exercising every extension at once.
-  (define markdown
-    (string-append
-     "# Heading\n\n"
-     "Visit https://example.com for ~~old~~ new info.\n\n"
-     "| Fruit | Qty |\n|---|---:|\n| apple | 3 |\n\n"
-     "- [x] done\n- [ ] pending\n\n"
-     "<script>alert(1)</script>\n"))
+;; A document exercising every extension at once.
+(define markdown
+  (string-append
+   "# Heading\n\n"
+   "Visit https://example.com for ~~old~~ new info.\n\n"
+   "| Fruit | Qty |\n|---|---:|\n| apple | 3 |\n\n"
+   "- [x] done\n- [ ] pending\n\n"
+   "<script>alert(1)</script>\n"))
 
-  (ensure-registered)
+(ensure-registered)
 
-  (let ((p (parser-new 0)))
-    ;; Attach every extension, failing loudly if any is missing.
-    (for-each
-     (lambda (name)
-       (let ((ext (find-extension name)))
-         (when (zero? ext)
-           (error 'spike "extension not found" name))
-         (let ((rc (attach-extension p ext)))
-           (printf "attach ~a -> rc=~d\n" name rc))))
-     extension-names)
+(define p (parser-new 0))
 
-    (let ((bytes (string->utf8 markdown)))
-      (parser-feed p bytes (bytevector-length bytes)))
+;; Attach every extension, failing loudly if any is missing.
+(for-each
+ (lambda (name)
+   (let ((ext (find-extension name)))
+     (when (zero? ext)
+       (error 'spike "extension not found" name))
+     (let ((rc (attach-extension p ext)))
+       (printf "attach ~a -> rc=~d\n" name rc))))
+ extension-names)
 
-    (let ((root (parser-finish p)))
-      ;; Depth-first walk printing the type of every node.
-      (let walk ((node (first-child root)) (depth 0))
-        (unless (zero? node)
-          (printf "~a~a\n"
-                  (make-string (* 2 depth) #\space)
-                  (c-string->string (type-string node)))
-          (walk (first-child node) (+ depth 1))
-          (walk (node-next node) depth)))
+(define bytes (string->utf8 markdown))
+(parser-feed p bytes (bytevector-length bytes))
 
-      ;; Teardown per ADR-0005: root first, parser LAST.
-      (node-free root)
-      (parser-free p)
-      (printf "\nOK: parsed, traversed, freed\n"))))
+(define root (parser-finish p))
+
+;; Depth-first walk printing the type of every node.
+(let walk ((node (first-child root)) (depth 0))
+  (unless (zero? node)
+    (printf "~a~a\n"
+            (make-string (* 2 depth) #\space)
+            (c-string->string (type-string node)))
+    (walk (first-child node) (+ depth 1))
+    (walk (node-next node) depth)))
+
+;; Teardown per ADR-0005: root first, parser LAST.
+(node-free root)
+(parser-free p)
+(printf "\nOK: parsed, traversed, freed\n")
 ```
 
 - [ ] **Step 2: Run it**
@@ -445,7 +467,21 @@ chez --script spike/02-parse.ss \
   "$LIBDIR/libcmark-gfm.dylib" "$LIBDIR/libcmark-gfm-extensions.dylib"
 ```
 
-Expected: five `attach … rc=0` lines, an indented node-type tree containing `heading`, `table`, `table_row`, `table_cell`, `strikethrough`, `link` (from the autolink), `item`, and `html_block`, then `OK: parsed, traversed, freed`.
+Expected: five `attach … rc=1` lines, an indented node-type tree, then
+`OK: parsed, traversed, freed`.
+
+Note `rc=1`, not `0`. `cmark_parser_attach_syntax_extension` contains a single
+`return 1` and cannot fail or signal failure (`src/blocks.c`), so its result is
+not an error channel — the only real failure mode is
+`cmark_find_syntax_extension` returning NULL, which the script already checks.
+
+The tree should contain `heading`, `table`, `table_header`, `table_row`,
+`table_cell`, `strikethrough`, `link` (from the autolink), and `html_block`.
+Two names are easy to get wrong: header rows print as `table_header` (distinct
+from `table_row`), and task-list items print as **`tasklist`**, not `item` —
+`cmark_node_get_type_string` dispatches to the extension's own type-string
+function, and `tasklist.c` hardcodes that name. Stage 3's dispatch table needs
+a `tasklist` case separate from `item`.
 
 - [ ] **Step 3: Record the observed node-type names**
 
@@ -476,7 +512,11 @@ This task validates two things at once: that the defect found during design revi
 Stock cmark is not instrumented, so preloading ASan cannot catch a read inside `cmark_render_html`. The library under test must itself be built with ASan.
 
 ```bash
+# CMake 4.x hard-rejects the vendored tree's `cmake_minimum_required(VERSION 3.0)`.
+# CMAKE_POLICY_VERSION_MINIMUM is CMake's own documented remedy and changes no
+# compile flags.
 cmake -S vendor/cmark-gfm -B build/asan \
+  -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
   -DCMAKE_BUILD_TYPE=Debug \
   -DCMAKE_C_FLAGS="-fsanitize=address -fno-omit-frame-pointer -g" \
   -DCMAKE_SHARED_LINKER_FLAGS="-fsanitize=address" \
@@ -497,83 +537,97 @@ Create `spike/03-uaf.ss`:
 ;; before rendering therefore hands the renderer a dangling list.
 ;;
 ;; Usage: chez --script spike/03-uaf.ss <core.dylib> <ext.dylib> [buggy|correct]
+;;
+;; NOTE: every definition below sits at TOP LEVEL, not inside a `let`. Chez
+;; rejects a `define` that follows an expression within a body ("invalid
+;; context for definition"); at top level the interleaving is legal, and the
+;; shared objects still load before any foreign-procedure is evaluated.
 
-(let ((core (cadr (command-line)))
-      (exts (caddr (command-line)))
-      (mode (string->symbol (cadddr (command-line)))))
-  (load-shared-object core)
-  (load-shared-object exts)
+(define core (cadr (command-line)))
+(define exts (caddr (command-line)))
+(define mode (string->symbol (cadddr (command-line))))
+(load-shared-object core)
+(load-shared-object exts)
 
-  (define ensure-registered
-    (foreign-procedure "cmark_gfm_core_extensions_ensure_registered" () void))
-  (define find-extension
-    (foreign-procedure "cmark_find_syntax_extension" (string) uptr))
-  (define attach-extension
-    (foreign-procedure "cmark_parser_attach_syntax_extension" (uptr uptr) int))
-  (define parser-new    (foreign-procedure "cmark_parser_new" (int) uptr))
-  (define parser-feed   (foreign-procedure "cmark_parser_feed" (uptr u8* size_t) void))
-  (define parser-finish (foreign-procedure "cmark_parser_finish" (uptr) uptr))
-  (define parser-free   (foreign-procedure "cmark_parser_free" (uptr) void))
-  (define node-free     (foreign-procedure "cmark_node_free" (uptr) void))
-  (define get-extensions
-    (foreign-procedure "cmark_parser_get_syntax_extensions" (uptr) uptr))
-  (define render-html
-    (foreign-procedure "cmark_render_html" (uptr int uptr) uptr))
-  (define c-free (foreign-procedure "free" (uptr) void))
+(define ensure-registered
+  (foreign-procedure "cmark_gfm_core_extensions_ensure_registered" () void))
+(define find-extension
+  (foreign-procedure "cmark_find_syntax_extension" (string) uptr))
+(define attach-extension
+  (foreign-procedure "cmark_parser_attach_syntax_extension" (uptr uptr) int))
+(define parser-new    (foreign-procedure "cmark_parser_new" (int) uptr))
+(define parser-feed   (foreign-procedure "cmark_parser_feed" (uptr u8* size_t) void))
+(define parser-finish (foreign-procedure "cmark_parser_finish" (uptr) uptr))
+(define parser-free   (foreign-procedure "cmark_parser_free" (uptr) void))
+(define node-free     (foreign-procedure "cmark_node_free" (uptr) void))
+(define get-extensions
+  (foreign-procedure "cmark_parser_get_syntax_extensions" (uptr) uptr))
+(define render-html
+  (foreign-procedure "cmark_render_html" (uptr int uptr) uptr))
+(define c-free (foreign-procedure "free" (uptr) void))
 
-  (define (c-string->string addr)
-    (if (zero? addr)
-        #f
-        (let scan ((len 0))
-          (if (zero? (foreign-ref 'unsigned-8 addr len))
-              (let ((bv (make-bytevector len)))
-                (let copy ((i 0))
-                  (if (= i len)
-                      (utf8->string bv)
-                      (begin
-                        (bytevector-u8-set! bv i (foreign-ref 'unsigned-8 addr i))
-                        (copy (+ i 1))))))
-              (scan (+ len 1))))))
+(define (c-string->string addr)
+  (if (zero? addr)
+      #f
+      (let scan ((len 0))
+        (if (zero? (foreign-ref 'unsigned-8 addr len))
+            (let ((bv (make-bytevector len)))
+              (let copy ((i 0))
+                (if (= i len)
+                    (utf8->string bv)
+                    (begin
+                      (bytevector-u8-set! bv i (foreign-ref 'unsigned-8 addr i))
+                      (copy (+ i 1))))))
+            (scan (+ len 1))))))
 
-  ;; A table forces the renderer to consult the extension list.
-  (define markdown "| a | b |\n|---|---|\n| 1 | 2 |\n")
+;; A table forces the renderer to consult the extension list.
+(define markdown "| a | b |\n|---|---|\n| 1 | 2 |\n")
 
-  (ensure-registered)
+(ensure-registered)
 
-  (let ((p (parser-new 0)))
-    (let ((ext (find-extension "table")))
-      (when (zero? ext) (error 'spike "table extension missing"))
-      (attach-extension p ext))
+(define p (parser-new 0))
 
-    (let ((bytes (string->utf8 markdown)))
-      (parser-feed p bytes (bytevector-length bytes)))
+(define table-ext (find-extension "table"))
+(when (zero? table-ext) (error 'spike "table extension missing"))
+(attach-extension p table-ext)
 
-    (let* ((root (parser-finish p))
-           (ext-list (get-extensions p)))
-      (case mode
-        ((buggy)
-         ;; WRONG: this is plan 8.2's ordering. ext-list now dangles.
-         (parser-free p)
-         (let ((buf (render-html root 0 ext-list)))
-           (printf "~a" (c-string->string buf))
-           (c-free buf))
-         (node-free root))
-        ((correct)
-         ;; RIGHT: parser outlives the render (ADR-0005).
-         (let ((buf (render-html root 0 ext-list)))
-           (printf "~a" (c-string->string buf))
-           (c-free buf))
-         (node-free root)
-         (parser-free p))
-        (else (error 'spike "mode must be buggy or correct")))
-      (printf "done: ~a\n" mode))))
+(define bytes (string->utf8 markdown))
+(parser-feed p bytes (bytevector-length bytes))
+
+(define root (parser-finish p))
+(define ext-list (get-extensions p))
+
+(case mode
+  ((buggy)
+   ;; WRONG: this is plan 8.2's ordering. ext-list now dangles.
+   (parser-free p)
+   (let ((buf (render-html root 0 ext-list)))
+     (printf "~a" (c-string->string buf))
+     (c-free buf))
+   (node-free root))
+  ((correct)
+   ;; RIGHT: parser outlives the render (ADR-0005).
+   (let ((buf (render-html root 0 ext-list)))
+     (printf "~a" (c-string->string buf))
+     (c-free buf))
+   (node-free root)
+   (parser-free p))
+  (else (error 'spike "mode must be buggy or correct")))
+
+(printf "done: ~a\n" mode)
 ```
 
 - [ ] **Step 3: Run the correct ordering under ASan — expect clean**
 
 ```bash
-ASAN_LIB=$(dirname $(xcrun --find clang))/../lib/clang/*/lib/darwin/libclang_rt.asan_osx_dynamic.dylib
-DYLD_INSERT_LIBRARIES=$ASAN_LIB ASAN_OPTIONS=detect_leaks=0 \
+# A bare assignment does NOT glob-expand, so resolve the wildcard with ls.
+# Several clang version directories may match; they are the same runtime.
+# `command ls` bypasses any --color alias; a coloured path carries ANSI escapes
+# that make the file impossible to open, while still looking correct when echoed.
+ASAN_LIB=$(command ls $(dirname $(xcrun --find clang))/../lib/clang/*/lib/darwin/libclang_rt.asan_osx_dynamic.dylib | head -1)
+echo "ASan runtime: $ASAN_LIB"   # must be a real path, with no '*' left in it
+
+DYLD_INSERT_LIBRARIES="$ASAN_LIB" ASAN_OPTIONS=detect_leaks=0 \
   chez --script spike/03-uaf.ss \
     build/asan/src/libcmark-gfm.dylib \
     build/asan/extensions/libcmark-gfm-extensions.dylib correct
@@ -584,7 +638,7 @@ Expected: an HTML table, then `done: correct`, with no sanitizer output.
 - [ ] **Step 4: Run the buggy ordering under ASan — expect a report**
 
 ```bash
-DYLD_INSERT_LIBRARIES=$ASAN_LIB ASAN_OPTIONS=detect_leaks=0 \
+DYLD_INSERT_LIBRARIES="$ASAN_LIB" ASAN_OPTIONS=detect_leaks=0 \
   chez --script spike/03-uaf.ss \
     build/asan/src/libcmark-gfm.dylib \
     build/asan/extensions/libcmark-gfm-extensions.dylib buggy
@@ -653,9 +707,9 @@ Create `Akku.manifest`:
 
 (akku-package ("chez-cmark-gfm" "0.1.0-alpha")
   (synopsis "CommonMark and GitHub Flavored Markdown for Chez Scheme")
-  (authors "Darren Newton")
-  (license "MIT")
-  (depends ("chez-srfi" "^0.0.0-akku.280")))
+  (authors "Kiyomi Computation Systems LLC")
+  (license "BSD-3-Clause")
+  (depends ("chez-srfi" "^0.0.0-akku.181.7879b52")))
 ```
 
 - [ ] **Step 2: Install dependencies and verify SRFI-64 resolves**
@@ -669,7 +723,11 @@ printf '(import (rnrs) (srfi :64))\n(test-begin "probe")\n(test-equal 1 1)\n(tes
 CHEZSCHEMELIBDIRS=".akku/lib" chez --program /tmp/probe.sps
 ```
 
-Expected: SRFI-64 output showing 1 pass, 0 fail. If the import fails, run `akku search srfi` and correct the dependency name before continuing.
+Expected: SRFI-64 output showing 1 pass, 0 fail.
+
+If resolution fails, note that **`akku search` does not exist in akku 1.1.0** —
+use `akku list` and `akku show chez-srfi` to find the published version, and
+correct the manifest's version constraint before continuing.
 
 - [ ] **Step 3: Write the Makefile**
 
@@ -713,8 +771,30 @@ ifeq ($(HAVE_PKG),yes)
 else
   CMARK_CFLAGS := -I$(VENDOR_BUILD)/src -I$(VENDOR_DIR)/src \
                   -I$(VENDOR_DIR)/extensions
-  CMARK_LIBS   := $(VENDOR_BUILD)/src/libcmark-gfm_static.a \
-                  $(VENDOR_BUILD)/extensions/libcmark-gfm-extensions_static.a
+  # The vendored copy is built and linked as SHARED libraries (design spec
+  # 6.1), never static. cmark-gfm's static archives are built with
+  # CMAKE_C_VISIBILITY_PRESET hidden plus CMARK_GFM_STATIC_DEFINE, which
+  # hides every cmark symbol from whatever links them. native.sls resolves
+  # cmark's entry points directly via foreign-procedure at runtime, so those
+  # symbols have to stay visible in a real shared object -- static linking
+  # cannot satisfy that no matter what the archives are named.
+  #
+  # Each shared library gets its own -Wl,-rpath entry, absolute and recorded
+  # at build time, so the shim resolves them at load time with no system
+  # library search and no dependence on the working directory or
+  # LD_LIBRARY_PATH/DYLD_LIBRARY_PATH -- the same guarantee the pkg-config
+  # path gets from the installed library's own rpath/soname handling.
+  #
+  # Extensions FIRST, then core, on the link line: kept from the static case
+  # for consistency, though it no longer determines symbol resolution --
+  # shared objects carry their own recorded dependencies (libcmark-gfm-
+  # extensions already depends on libcmark-gfm via its own CMake target).
+  CMARK_VENDOR_LIBDIR_EXT := $(abspath $(VENDOR_BUILD)/extensions)
+  CMARK_VENDOR_LIBDIR_SRC := $(abspath $(VENDOR_BUILD)/src)
+  CMARK_LIBS   := -L$(CMARK_VENDOR_LIBDIR_EXT) -lcmark-gfm-extensions \
+                  -L$(CMARK_VENDOR_LIBDIR_SRC) -lcmark-gfm \
+                  -Wl,-rpath,$(CMARK_VENDOR_LIBDIR_EXT) \
+                  -Wl,-rpath,$(CMARK_VENDOR_LIBDIR_SRC)
 endif
 
 CHEZ_LIBDIRS := src:.akku/lib
@@ -737,12 +817,25 @@ ifeq ($(HAVE_PKG),no)
 $(SHIM): vendor
 endif
 
-$(SHIM): src/cmark-gfm-shim.c src/cmark-gfm-shim.h | $(LIB_DIR)
+# Which acquisition path last built the shim. The name encodes the mode, so
+# flipping HAVE_PKG makes the prerequisite change identity and forces a relink.
+# Without this, `make HAVE_PKG=no build && make build` leaves the vendored-linked
+# shim in place -- make sees the .c unchanged and skips it -- so the two exit-gate
+# runs would silently test the same artifact twice.
+ACQ_MODE  := $(if $(filter yes,$(HAVE_PKG)),pkgconfig,vendored)
+ACQ_STAMP := $(BUILD_DIR)/.acquisition-$(ACQ_MODE)
+
+$(ACQ_STAMP): | $(LIB_DIR)
+	rm -f $(BUILD_DIR)/.acquisition-*
+	touch $@
+
+$(SHIM): src/cmark-gfm-shim.c src/cmark-gfm-shim.h $(ACQ_STAMP) | $(LIB_DIR)
 	$(CC) $(CFLAGS_DEV) $(CMARK_CFLAGS) $(SHLIB_LDFLAGS) \
 	      -o $@ src/cmark-gfm-shim.c $(CMARK_LIBS)
 
 # config.sls carries the shim's ABSOLUTE path so the loader never searches.
 $(CONFIG_SLS): $(SHIM)
+	@mkdir -p $(dir $@)
 	@printf '%s\n' \
 	  '#!r6rs' \
 	  ';; GENERATED by make -- do not edit, do not commit.' \
@@ -756,8 +849,9 @@ $(CONFIG_SLS): $(SHIM)
 vendor:
 	git submodule update --init --recursive
 	cmake -S $(VENDOR_DIR) -B $(VENDOR_BUILD) \
+	  -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
 	  -DCMAKE_BUILD_TYPE=Release -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-	  -DCMARK_TESTS=OFF -DCMARK_SHARED=OFF -DCMARK_STATIC=ON
+	  -DCMARK_TESTS=OFF -DCMARK_SHARED=ON -DCMARK_STATIC=OFF
 	cmake --build $(VENDOR_BUILD) -j
 
 dev: build
@@ -786,9 +880,16 @@ else
 	@echo "macOS: ASan preload only; LeakSanitizer is unsupported on arm64."
 	@echo "Leak claims must come from Linux CI (ADR-0003)."
 	CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) \
-	  DYLD_INSERT_LIBRARIES=$$(dirname $$(xcrun --find clang))/../lib/clang/*/lib/darwin/libclang_rt.asan_osx_dynamic.dylib \
+	  DYLD_INSERT_LIBRARIES="$$(command ls $$(dirname $$(xcrun --find clang))/../lib/clang/*/lib/darwin/libclang_rt.asan_osx_dynamic.dylib | head -1)" \
 	  ASAN_OPTIONS=detect_leaks=0 \
 	  sh -c 'for t in $(TESTS); do $(CHEZ) --program $$t || exit 1; done'
+endif
+
+# prod compiles directly rather than reusing $(SHIM), so it needs the same
+# vendored-build gate that $(SHIM) gets above; without it `make prod` fails on
+# a machine where pkg-config cannot see cmark-gfm.
+ifeq ($(HAVE_PKG),no)
+prod: vendor
 endif
 
 prod: clean
@@ -808,8 +909,10 @@ Append to `.gitignore`:
 ```
 # Generated by make build
 src/cmark/gfm/private/config.sls
-.akku/
 ```
+
+`.akku/` is already ignored by the repository's existing `.gitignore`; do not add
+a second entry for it.
 
 - [ ] **Step 5: Verify discovery works**
 
@@ -1023,10 +1126,9 @@ Create `tests/test-conditions.sps`:
 
 ```scheme
 #!r6rs
-(import (rnrs)
-        (srfi :64)
-        (only (chezscheme) exit)
-        (cmark gfm private conditions))
+(import (rnrs)          ; note: (rnrs) already exports `exit` via
+        (srfi :64)      ; (rnrs programs) -- importing it from
+        (cmark gfm private conditions))   ; (chezscheme) too is a conflict
 
 ;; SRFI-64's default runner does not set a process exit code, so a failing
 ;; suite would still exit 0 and `make test` would report success. Hold the
@@ -1074,6 +1176,25 @@ Create `tests/test-conditions.sps`:
 (test-equal "shim-unavailable carries the attempted path"
   "/nope/libchezcmarkgfm.dylib"
   (guard (e ((cmark-shim-unavailable? e) (cmark-shim-unavailable-path e)))
+    (raise (make-cmark-shim-unavailable "/nope/libchezcmarkgfm.dylib"))))
+
+;; Every condition must also be catchable as the base type, so a caller can
+;; choose its granularity. Without these, deriving one of them from &error
+;; directly -- a plausible copy-paste slip -- would break no test.
+(test-assert "dead-document is a cmark-error"
+  (guard (e ((cmark-error? e) #t) (#t #f))
+    (raise (make-cmark-dead-document))))
+
+(test-assert "extension-unavailable is a cmark-error"
+  (guard (e ((cmark-error? e) #t) (#t #f))
+    (raise (make-cmark-extension-unavailable "table"))))
+
+(test-assert "invalid-input is a cmark-error"
+  (guard (e ((cmark-error? e) #t) (#t #f))
+    (raise (make-cmark-invalid-input 'embedded-nul))))
+
+(test-assert "shim-unavailable is a cmark-error"
+  (guard (e ((cmark-error? e) #t) (#t #f))
     (raise (make-cmark-shim-unavailable "/nope/libchezcmarkgfm.dylib"))))
 
 (test-end "conditions")
@@ -1191,10 +1312,15 @@ Create `tests/test-native.sps`:
 
 ```scheme
 #!r6rs
-(import (rnrs)
-        (srfi :64)
-        (only (chezscheme) exit)
-        (cmark gfm private native))
+(import (rnrs)          ; note: (rnrs) already exports `exit` via
+        (srfi :64)      ; (rnrs programs) -- importing it from
+        (cmark gfm private native)    ; (chezscheme) too is a conflict
+        ;; foreign-alloc / foreign-set! / foreign-free build and mutate
+        ;; real C buffers for the c-string->string tests below. Neither
+        ;; name collides with an (rnrs) export, so unlike file-exists?
+        ;; and exit above, this import needs no `only` justification beyond
+        ;; keeping the list minimal.
+        (only (chezscheme) foreign-alloc foreign-set! foreign-free))
 
 ;; SRFI-64's default runner does not set a process exit code, so a failing
 ;; suite would still exit 0 and `make test` would report success. Hold the
@@ -1204,13 +1330,74 @@ Create `tests/test-native.sps`:
 
 (test-begin "native")
 
-(test-assert "loading is idempotent"
+;; This only proves a second call does not raise -- it is NOT a test of
+;; the init-mutex/initialized? guard's existence or correctness. Chez here
+;; is single-threaded within one process, and the underlying C call
+;; (cmark_gfm_core_extensions_ensure_registered) is itself idempotent and
+;; safe to invoke repeatedly with no guard at all, so this assertion would
+;; pass identically against a native.sls with no guard whatsoever. Genuine
+;; discrimination would require a concurrency test (two threads racing
+;; ensure-native-loaded!), which is out of reach for a single-threaded
+;; SRFI-64 script. Recorded here so a later reader does not mistake this
+;; for coverage of the mutex.
+(test-assert "repeated ensure-native-loaded! calls do not raise"
   (begin (ensure-native-loaded!) (ensure-native-loaded!) #t))
 
 ;; NULL must be distinguishable from the empty string. Several cmark
 ;; accessors return NULL for nodes of an incompatible type, and conflating
 ;; that with "" would silently invent data.
 (test-equal "c-string->string maps NULL to #f" #f (c-string->string 0))
+
+;; The other direction of the same distinction: a real, non-NULL buffer
+;; whose first byte already terminates the string must decode to "", never
+;; to #f. Getting this backwards would be just as wrong as the NULL case
+;; above -- it would report "this accessor does not apply" for a node that
+;; legitimately has an empty value.
+(let ((buf (foreign-alloc 1)))
+  (foreign-set! 'unsigned-8 buf 0 0)
+  (test-equal "c-string->string maps a zero-length buffer to \"\", not #f"
+    ""
+    (c-string->string buf))
+  (foreign-free buf))
+
+;; Multi-byte UTF-8 must decode by codepoint, not by byte. "cafe" with a
+;; combining/accented e (U+00E9) encodes as the 5 bytes 63 61 66 C3 A9,
+;; followed here by a NUL terminator; the result must be a 4-character
+;; Scheme string, not 5 (raw bytes) and not mojibake (wrong codepoint).
+;; The expected value is built from integer->char rather than written as a
+;; literal so the test does not depend on this source file's own encoding.
+(let ((buf (foreign-alloc 6))
+      (expected (string #\c #\a #\f (integer->char #xe9))))
+  (foreign-set! 'unsigned-8 buf 0 #x63)   ; c
+  (foreign-set! 'unsigned-8 buf 1 #x61)   ; a
+  (foreign-set! 'unsigned-8 buf 2 #x66)   ; f
+  (foreign-set! 'unsigned-8 buf 3 #xc3)   ; UTF-8 lead byte of U+00E9
+  (foreign-set! 'unsigned-8 buf 4 #xa9)   ; UTF-8 trail byte of U+00E9
+  (foreign-set! 'unsigned-8 buf 5 0)      ; NUL terminator
+  (test-equal "c-string->string decodes multi-byte UTF-8 into the right number of characters"
+    expected
+    (c-string->string buf))
+  (foreign-free buf))
+
+;; The single most important property in this file: the conversion must
+;; copy, not alias. cmark's accessors return borrowed pointers into
+;; buffers whose lifetime the caller does not control; if c-string->string
+;; ever returned something that kept reading through the original
+;; pointer instead of a self-contained copy, every AST string would be a
+;; latent use-after-free.
+(let ((buf (foreign-alloc 3)))
+  (foreign-set! 'unsigned-8 buf 0 (char->integer #\h))
+  (foreign-set! 'unsigned-8 buf 1 (char->integer #\i))
+  (foreign-set! 'unsigned-8 buf 2 0)
+  (let ((s (c-string->string buf)))
+    ;; Mutate the source buffer after conversion. A real copy is already
+    ;; fully independent of `buf` by this point, so `s` must not change.
+    (foreign-set! 'unsigned-8 buf 0 (char->integer #\X))
+    (foreign-set! 'unsigned-8 buf 1 (char->integer #\X))
+    (test-equal "c-string->string copies: mutating the source buffer after conversion leaves the result unchanged"
+      "hi"
+      s))
+  (foreign-free buf))
 
 (test-assert "option-bits sets a bit for validate-utf8"
   (> (option-bits #t #f #f #f #f #f) 0))
@@ -1273,9 +1460,12 @@ Create `src/cmark/gfm/private/native.sls`:
           node-free find-extension attach-extension
           parser-get-syntax-extensions render-html free-buffer)
   (import (rnrs)
+          ;; NOT file-exists? -- (rnrs) exports it via (rnrs files), and
+          ;; importing both raises "multiple definitions for file-exists?".
+          ;; Same conflict class as `exit`; see the test files above.
           (only (chezscheme)
                 load-shared-object foreign-procedure foreign-ref
-                make-mutex with-mutex getenv file-exists?)
+                make-mutex with-mutex getenv)
           (cmark gfm private config)
           (cmark gfm private conditions))
 
@@ -1448,7 +1638,7 @@ Create `tests/test-lifecycle.sps`:
 #!r6rs
 (import (rnrs)
         (srfi :64)
-        (only (chezscheme) call/1cc collect exit)
+        (only (chezscheme) call/1cc collect)  ; NOT exit: (rnrs) exports it
         (cmark gfm private native)
         (cmark gfm private conditions)
         (cmark gfm private scope))
@@ -1514,20 +1704,46 @@ Create `tests/test-lifecycle.sps`:
     (equal? before (live-counts))))
 
 ;; --- liveness (ADR-0006) ---------------------------------------------
-(test-assert "the handle is dead after the scope exits"
+;; A guard whose body never raises simply returns the body's own value.
+;; release! zeroes freed fields to 0, and 0 is truthy in Scheme, so
+;; comparing that fall-through value for truthiness would not discriminate
+;; a checked accessor from an unchecked one. Each guard clause below is
+;; rewritten to return a distinguishable sentinel symbol in all three
+;; outcomes -- condition raised, wrong condition raised, nothing raised --
+;; and the assertions compare against the expected sentinel, never a
+;; truthiness.
+(test-eq "the handle is dead after the scope exits"
+  'dead-document-raised
   (let ((escaped #f))
     (call-with-native-document "# hello\n" opts gfm-extensions
       (lambda (h) (set! escaped h) #t))
-    (guard (e ((cmark-dead-document? e) #t) (#t #f))
-      (doc-root escaped))))
+    (guard (e ((cmark-dead-document? e) 'dead-document-raised)
+              (#t 'wrong-condition-raised))
+      (doc-root escaped)
+      'no-condition-raised)))
 
-(test-assert "every checked accessor rejects a dead handle"
+;; The three accessors are checked independently and compared as a list
+;; rather than folded together with `and`, so a single accessor whose
+;; liveness check is broken shows up as a mismatch at its own position
+;; instead of being masked by the others' truthy results.
+(test-equal "every checked accessor rejects a dead handle"
+  '(dead-document-raised dead-document-raised dead-document-raised)
   (let ((escaped #f))
     (call-with-native-document "# hello\n" opts gfm-extensions
       (lambda (h) (set! escaped h) #t))
-    (and (guard (e ((cmark-dead-document? e) #t) (#t #f)) (doc-root escaped))
-         (guard (e ((cmark-dead-document? e) #t) (#t #f)) (doc-parser escaped))
-         (guard (e ((cmark-dead-document? e) #t) (#t #f)) (doc-extensions escaped)))))
+    (list
+     (guard (e ((cmark-dead-document? e) 'dead-document-raised)
+               (#t 'wrong-condition-raised))
+       (doc-root escaped)
+       'no-condition-raised)
+     (guard (e ((cmark-dead-document? e) 'dead-document-raised)
+               (#t 'wrong-condition-raised))
+       (doc-parser escaped)
+       'no-condition-raised)
+     (guard (e ((cmark-dead-document? e) 'dead-document-raised)
+               (#t 'wrong-condition-raised))
+       (doc-extensions escaped)
+       'no-condition-raised))))
 
 ;; --- extension failure ------------------------------------------------
 (test-equal "a missing extension is named in the condition"
@@ -1653,6 +1869,9 @@ Create `src/cmark/gfm/private/scope.sls`:
                ;; established yet, so cleanup is this procedure's duty.
                (release! h)
                (raise (make-cmark-extension-unavailable name)))
+             ;; The return value is not an error channel:
+             ;; cmark_parser_attach_syntax_extension has a single `return 1`
+             ;; and cannot fail. The real failure mode is the NULL check above.
              (attach-extension p ext)))
          extension-names)
         (parser-feed p bytes (bytevector-length bytes))
@@ -1751,16 +1970,38 @@ Expected: three `=== tests/… ===` headers, `ALL SUITES PASSED`, `exit=0`.
 
 - [ ] **Step 3: Sabotage one suite and confirm a non-zero exit**
 
+Do **not** append the sabotage with `>>`. Each suite ends with its own
+unconditional `(exit …)`, so anything appended after that line is dead code that
+never runs — the suite would pass and you would wrongly conclude the target
+works. Insert the failing assertion *before* the final `(exit …)` instead:
+
 ```bash
-printf '\n(test-begin "sabotage")\n(test-equal "deliberate" 1 2)\n(test-end "sabotage")\n' >> tests/test-conditions.sps
+python3 - <<'EOF'
+import io
+p = "tests/test-conditions.sps"
+s = io.open(p).read()
+i = s.rindex("(exit ")
+io.open(p, "w").write(
+    s[:i] + '(test-equal "deliberate sabotage" 1 2)\n\n' + s[i:])
+EOF
 make test; echo "exit=$?"
 ```
 
-Expected: the conditions suite reports a failure, `SUITE FAILED`, `exit=1`.
+Expected: the conditions suite reports `FAIL deliberate sabotage`, then
+`SUITE FAILED`, and a **non-zero** exit.
 
-If this prints `exit=0`, the target is broken. The usual cause is the recipe
-losing the `fail` variable across lines — every line of a `make` recipe runs in
-its own shell unless joined with backslashes, so the loop must remain one
+Note the exact code is not 1. The recipe's `exit $$fail` does evaluate to 1 — you
+will see `make: *** [test] Error 1` — but GNU Make itself then exits **2** on any
+recipe error. Non-zero is the contract that matters; every real consumer (CI,
+shell `&&`/`||`) treats both alike. Do not "fix" the Makefile to force a 1.
+
+If this prints `exit=0`, either the target is broken or your sabotage never ran.
+Check the output for `FAIL deliberate sabotage` first — if that line is absent,
+the assertion was inserted somewhere unreachable and you have proved nothing yet.
+
+If the sabotage did run and the target still exited 0, the usual cause is the
+recipe losing the `fail` variable across lines: every line of a `make` recipe runs
+in its own shell unless joined with backslashes, so the loop must remain one
 continuation-joined command.
 
 - [ ] **Step 4: Confirm one failing suite does not mask the others**
@@ -1865,6 +2106,32 @@ make test; echo "exit=$?"
 
 Expected: FAIL on every counter-balance test. Revert.
 
+- [ ] **Step 6b: Mutation G — disable the re-entry guard**
+
+In `scope.sls`, replace the `dynamic-wind` before-thunk with `(lambda () #f)`. Then:
+
+```bash
+make test; echo "exit=$?"
+```
+
+Expected: still passes. Record this honestly as **not covered**. `call/1cc` is
+escape-only and structurally cannot construct the re-entry scenario the guard
+exists for; catching this needs a full continuation captured inside the scope and
+reinvoked after teardown. Note it as a known gap rather than pretending the guard
+is protected. Revert.
+
+- [ ] **Step 6c: Mutation H — make `release!` genuinely double-callable**
+
+No current test invokes `release!` twice on one handle, so idempotency is
+asserted but never exercised. Rather than mutating, add a test that calls the
+scope, lets it tear down, and then triggers a second release — via a handle
+captured out of the scope — and asserts the counters do not go negative.
+
+If the current interface makes a second `release!` unreachable from outside the
+library, record that as the finding: the property is enforced structurally rather
+than tested, which is an acceptable answer, but it must be written down rather
+than assumed.
+
 - [ ] **Step 7: Confirm the tree is clean and green**
 
 ```bash
@@ -1902,7 +2169,14 @@ Note `spike/FINDINGS.md` is deliberately kept — it is the record of what Stage
 
 ## Stage 1 Exit Gate
 
-- [ ] `make build` succeeds with warnings-as-errors on both acquisition paths (test the vendored path with `HAVE_PKG=no make build`).
+- [ ] `make build` succeeds with warnings-as-errors on both acquisition paths. Test
+      the vendored path with **`make HAVE_PKG=no build`** — note the argument order.
+      `HAVE_PKG=no make build` does NOT work: the Makefile uses
+      `HAVE_PKG := $(shell …)`, and a makefile assignment overrides an environment
+      variable, so that form silently builds the pkg-config path twice and records
+      the vendored path as verified without ever selecting it.
+- [ ] `make HAVE_PKG=no test` passes — the vendored path must be exercised end to
+      end, not merely linked.
 - [ ] `make test` passes and exits 0; a deliberately broken test makes it exit 1.
 - [ ] Every mutation in Task 12 behaves as recorded in the mutation log.
 - [ ] `make test-memory` is clean on the platform that can make the claim.
