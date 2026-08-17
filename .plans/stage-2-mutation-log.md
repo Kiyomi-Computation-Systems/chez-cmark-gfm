@@ -69,7 +69,7 @@ none of them are being compared against each other.
 | D | Delete `count-buffer-free!` (and, separately, `count-buffer-new!`) | One counter call removed from `call-with-render-buffer`'s after-thunk (two variants, run separately, each reverted before the next) | FAIL both times, render 6/9, exit=2 | "counters balance after a successful render"; "counters balance after the render scope's body raises"; "200 renders leave the counters balanced" | **Yes** |
 | E | Remove the `hardbreaks?`/`nobreaks?` rejection | Deleted the contradictory-pair `when` block from `validate` | FAIL, options 34/36, exit=2 | "hardbreaks? and nobreaks? together are rejected"; "cmark-options-with cannot reach the contradictory pair either" | **Yes** |
 | F | `cmark-options-with` skips validation | `cmark-options-with`'s `build` call replaced with a direct `%make-cmark-options` call using `o`'s own 8 field values — the plist argument and `validate` are both dropped | FAIL, options 33/36, exit=2 | "cmark-options-with overrides the named field"; "cmark-options-with rejects an unknown key"; "cmark-options-with cannot reach the contradictory pair either" | **Yes** — one more name than predicted; see below |
-| G | Flip the `source-positions?` default to `#t` | `make-cmark-options`'s 3rd positional default (`source-positions?`) changed from `#f` to `#t` | FAIL, differential 27/28, options 35/36, render 30/35, exit=2 | 7 names, across 3 suites — see below | **Yes** — 7 names, only 1 of the brief's 5 predicted names among them; see below |
+| G | Flip the `source-positions?` default to `#t` | `make-cmark-options`'s 3rd positional default (`source-positions?`) changed from `#f` to `#t` | FAIL, differential 27/28, options 35/36, render 30/35, exit=2 | 7 names, across 3 suites — see below | **Yes** — 7 names, only 2 of the brief's 6 predicted names among them; see below |
 | H | Change one extension's mapped string | `(tagfilter . "tagfilter")` → `(tagfilter . "tagfiltr")` in `options.sls`'s native-name alist | FAIL, render 27/35, exit=2 | 8 names, all in `test-render.sps` — see below | **Yes** — 8 names, not the predicted 2; see below |
 
 ## Notes on each mutation
@@ -496,13 +496,16 @@ SUITE FAILED
 make: *** [test] Error 1
 ```
 
-`MAKE_EXIT=2`. Total: 7 named failures (1 + 1 + 5), against a prediction of 5
+`MAKE_EXIT=2`. Total: 7 named failures (1 + 1 + 5), against a prediction of 6
 names ("source-positions? defaults to #f", "the default options do NOT emit
 data-sourcepos (ADR-0008)", and the four "default options agree with the CLI in
-..." cells). Only **one** of the five predicted names actually failed. The other
-four predicted names — all differential parity cells — did **not** fail, and a
-**different** differential test failed instead, together with three
-`test-render.sps` names the brief never mentioned.
+..." cells). **Two** of the six predicted names actually failed — "source-positions?
+defaults to #f" and "the default options do NOT emit data-sourcepos (ADR-0008)" —
+each for the direct, unsurprising reason that it asserts the pre-mutation default
+(`#f`) and the mutation makes it `#t`. The other four predicted names — all
+differential parity cells — did **not** fail, and a **different** differential
+test failed instead, together with four `test-render.sps` names the brief never
+mentioned.
 
 **Why the four predicted "agree with the CLI" cells did not fail.** Confirmed
 directly (probe run while the mutation was still applied):
@@ -536,8 +539,16 @@ its documented job (§7.3: "a differential assertion only discriminates if the f
 actually changes output... Expect this to force at least one baseline adjustment"),
 just against a mutation nobody anticipated it would be the one to catch.
 
-**Why the `test-render.sps` failures.** Verified with a direct probe (mutation
-still applied):
+**Why the `test-render.sps` failures.** Five names failed in this suite. One of
+them, "the default options do NOT emit data-sourcepos (ADR-0008)", is one of the
+brief's six predicted names, and it fired exactly as predicted: the assertion
+checks that the *default* options do not emit `data-sourcepos`, and the mutation
+makes `source-positions?` default to `#t`, so the property it guards is false by
+construction — no further diagnosis needed. The other four — "markdown->html
+renders a heading", "markdown->xml emits a CommonMark XML document", "tables
+render through markdown->html, given the default extension set", and "the façade
+exposes the renderers" — were not predicted by the brief. Verified with a direct
+probe (mutation still applied):
 
 ```
 (markdown->html "# hi\n" (make-cmark-options 'extensions '()))
