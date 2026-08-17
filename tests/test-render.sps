@@ -2,11 +2,11 @@
 (import (rnrs)
         (srfi :64)
         (only (chezscheme) collect)   ; NOT exit: (rnrs) exports it
-        (cmark gfm options)
-        (cmark gfm render)
-        (cmark gfm private native)
-        (cmark gfm private conditions)
-        (cmark gfm private scope))
+        (cmark gfm)
+        (cmark gfm private native)    ; option-bits, live-counts, render-html,
+                                      ; runtime-version-string
+        (cmark gfm private scope))    ; call-with-native-document, doc-*,
+                                      ; call-with-render-buffer
 
 (define runner (test-runner-simple))
 (test-runner-current runner)
@@ -280,6 +280,35 @@
             (#t 'wrong-condition))
     (markdown->html "hi\n" 'not-options)
     'no-condition))
+
+;; --- capability inspection ---------------------------------------------
+(test-equal "cmark-gfm-version reports the loaded library's version string"
+  (runtime-version-string) (cmark-gfm-version))
+
+(test-assert "cmark-gfm-version-compatible? is true for the pinned build"
+  (eq? #t (cmark-gfm-version-compatible?)))
+
+;; Compared against the expected LIST, not asserted truthy: a probe that
+;; returned '() or dropped one extension would still be truthy-ish under a
+;; weaker assertion.
+(test-equal "all five standard extensions are available in the loaded library"
+  '(autolink strikethrough table tagfilter tasklist)
+  (cmark-gfm-available-extensions))
+
+;; This is what stops options.sls's symbol->string mapping from being an
+;; invariant held by luck. If a native name in that alist were misspelled,
+;; find-extension would return NULL for it and it would drop out of this list.
+(test-equal "every supported extension symbol maps to a name cmark resolves"
+  (supported-extensions)
+  (cmark-gfm-available-extensions))
+
+;; --- the façade really re-exports --------------------------------------
+(test-equal "the façade exposes the renderers"
+  "<h1>hi</h1>\n" (markdown->html "# hi\n" (make-cmark-options 'extensions '())))
+
+(test-assert "the façade exposes the condition predicates"
+  (guard (e ((cmark-invalid-option? e) #t) (#t #f))
+    (make-cmark-options 'nope #t)))
 
 (test-end "render")
 
