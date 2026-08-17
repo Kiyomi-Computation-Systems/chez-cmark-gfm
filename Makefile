@@ -119,10 +119,11 @@ check-pins:
 	     exit 1 ;; \
 	esac
 
-# options.sls must import no library that loads a shared object, directly or
-# transitively (its own header comment states this). That purity is what
-# makes every one of test-options.sps's 36 assertions unable to pass by
-# accident because of native behaviour -- they exercise Scheme values only.
+# options.sls and ast.sls must import no library that loads a shared object,
+# directly or transitively (each file's own header comment states this).
+# That purity is what makes every one of test-options.sps's 49 assertions
+# and test-ast.sps's 30 unable to pass by accident because of native
+# behaviour -- they exercise Scheme values only.
 # Poisoning CHEZ_CMARK_GFM_SHIM with a path that looks absolute but does not
 # exist is a probe: if nothing in the suite's import chain ever reaches
 # (cmark gfm private native), the variable is never even read and the suite
@@ -131,14 +132,16 @@ check-pins:
 # and the suite fails outright. Per AGENTS.md ("prefer a check to a
 # comment"): the check-pins comment above was itself violated in the same
 # commit that introduced it, and only started holding once it became a
-# check. This is the same lesson applied to the options.sls boundary.
+# check. This is the same lesson applied to the options.sls and ast.sls
+# boundary.
 #
 # Caveat proven while wiring this up: Chez only instantiates an imported
 # library's body when something actually REFERENCES one of its bindings, so
-# an import added to options.sls but never called is invisible to this
-# check -- it is the same elision that lets an unused import pass silently
-# elsewhere. That is not a gap in practice: a real accidental dependency is
-# something options.sls actually CALLS, and that is exactly what trips this.
+# an import added to options.sls or ast.sls but never called is invisible to
+# this check -- it is the same elision that lets an unused import pass
+# silently elsewhere. That is not a gap in practice: a real accidental
+# dependency is something one of them actually CALLS, and that is exactly
+# what trips this.
 check-purity: build deps
 	@fail=0; \
 	for t in tests/test-options.sps tests/test-ast.sps; do \
