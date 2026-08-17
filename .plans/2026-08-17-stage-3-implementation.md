@@ -2198,6 +2198,26 @@ Insert into `tests/test-convert.sps`, immediately **before** the final
                      (make-convert-ctx 1 1000 #f))))
     'no-condition))
 
+;; Both ceilings, not just one. with-node checks depth and count before it
+;; computes `entry`, so the fallback is bound exactly as a known type is --
+;; but that has to be asserted for each, or a later edit could extend the
+;; fallback's (if entry ...) idiom to the ceiling checks with nothing noticing.
+;; Verified: making check-depth! conditional on `entry` left all 52 other
+;; assertions green. The target node is CHILDLESS on purpose -- with a
+;; non-leaf, a deeper known-type child would trip its own check-depth! and
+;; mask the mutation.
+(test-equal "the fallback still counts toward the depth ceiling"
+  '(too-deep 1)
+  (guard (e ((cmark-resource-limit? e)
+             (list (cmark-invalid-input-reason e) (cmark-resource-limit-value e)))
+            (#t 'wrong-condition))
+    (call-with-native-document
+     "---\n" (option-bits #f #f #f #f #f #f) (quote ())
+     (lambda (h)
+       (convert-node (node-first-child (doc-root h)) "footnote_definition" 2
+                     (make-convert-ctx 250000 1 #f))))
+    'no-condition))
+
 (test-equal "the fallback path released every native allocation"
   '(0 0 0) (live-counts))
 ```
@@ -2239,6 +2259,11 @@ final `make-markdown-node` call with:
 
 ```scheme
     (let* ((entry (type-string->entry type-string))
+           ;; A table publishes its alignments into the context before its
+           ;; rows and cells are walked, and restores the previous value
+           ;; afterwards so nested tables cannot leak alignments outward.
+           ;; cmark cannot nest tables today; the save/restore costs one
+           ;; binding and removes the question.
            (saved (convert-ctx-column-alignments ctx))
            (props (or properties-override
                       (if entry
@@ -2261,7 +2286,7 @@ final `make-markdown-node` call with:
 CHEZSCHEMELIBDIRS=src:build/scheme-libs chez --program tests/test-convert.sps
 ```
 
-Expected: 8 new passes, `# of unexpected failures 0`.
+Expected: 9 new passes, `# of unexpected failures 0`.
 
 - [ ] **Step 5: Watch the fallback assertions fail**
 
