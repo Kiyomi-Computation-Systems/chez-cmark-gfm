@@ -8,3 +8,63 @@ CommonMark GFM for Chez Sceme
 -----
 
 © [[https://kiyomicomputation.systems/][Kiyomi Computation Systems LLC]], all rights reserved.
+
+* Usage
+
+#+begin_src scheme
+(import (cmark gfm))
+
+;; Safe by default: raw HTML and unsafe link schemes are suppressed.
+(markdown->html "# Hello\n\n~~struck~~\n" (default-cmark-options))
+
+;; Options are named symbols. Unknown keys, duplicate keys, and unknown
+;; extensions are rejected before anything native is allocated.
+(markdown->html "<b>raw</b>\n" (make-cmark-options 'unsafe-html? #t))
+
+;; Functional update; the original is unchanged.
+(define base (make-cmark-options 'extensions '(table)))
+(markdown->html "| a |\n|---|\n| 1 |\n" (cmark-options-with base 'smart? #t))
+
+;; Wrap width applies only to the renderers that wrap. Passing one to
+;; markdown->html is an arity error, not a silently ignored setting.
+(markdown->commonmark "long paragraph text here\n" base 72)
+(markdown->plaintext  "long paragraph text here\n" base 72)
+(markdown->xml        "# Hello\n" base)
+
+;; Which native library is loaded, and what it can do.
+(cmark-gfm-version)                 ;; => "0.29.0.gfm.13"
+(cmark-gfm-version-compatible?)     ;; => #t
+(cmark-gfm-available-extensions)    ;; => (autolink strikethrough table tagfilter tasklist)
+#+end_src
+
+** Options
+
+| Key                  | Default                                        |
+|----------------------+------------------------------------------------|
+| ~extensions~         | ~(autolink strikethrough table tagfilter tasklist)~ |
+| ~validate-utf8?~     | ~#t~                                           |
+| ~source-positions?~  | ~#f~ (see ADR-0008)                            |
+| ~hardbreaks?~        | ~#f~                                           |
+| ~nobreaks?~          | ~#f~                                           |
+| ~smart?~             | ~#f~                                           |
+| ~unsafe-html?~       | ~#f~                                           |
+| ~max-input-bytes~    | ~5242880~ (5 MiB)                              |
+
+~hardbreaks?~ and ~nobreaks?~ cannot both be set. cmark gives hardbreaks
+precedence rather than leaving the combination undefined, so this is a
+deliberate policy: honouring one of two explicit requests and silently
+dropping the other would hide a caller's mistake.
+
+** Errors
+
+Every failure is a structured condition deriving from ~&cmark-error~, so a
+caller can catch the whole family or discriminate precisely.
+
+#+begin_src scheme
+(guard (e ((cmark-invalid-option? e)
+           (list 'bad-option (cmark-invalid-option-key e)
+                             (cmark-invalid-option-reason e)))
+          ((cmark-error? e) 'some-other-cmark-failure))
+  (markdown->html "# hi\n" (make-cmark-options 'unsaef-html? #t)))
+;; => (bad-option unsaef-html? unknown-key)
+#+end_src
