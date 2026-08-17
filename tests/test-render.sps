@@ -2,6 +2,8 @@
 (import (rnrs)
         (srfi :64)
         (only (chezscheme) collect)   ; NOT exit: (rnrs) exports it
+        (cmark gfm options)
+        (cmark gfm render)
         (cmark gfm private native)
         (cmark gfm private conditions)
         (cmark gfm private scope))
@@ -128,6 +130,129 @@
                                 (doc-option-bits escaped)
                                 (doc-extensions escaped))))
       'no-condition)))
+
+;; --- the four renderers -------------------------------------------------
+(define plain (make-cmark-options 'extensions '()))
+
+(test-equal "markdown->html renders a heading"
+  "<h1>hi</h1>\n" (markdown->html "# hi\n" plain))
+
+(test-equal "markdown->commonmark round-trips a heading"
+  "# hi\n" (markdown->commonmark "# hi\n" plain))
+
+(test-equal "markdown->plaintext strips the markup"
+  "hi\n" (markdown->plaintext "# hi\n" plain))
+
+;; Not merely "a non-empty string" -- that would pass for literally any
+;; output. Checked against the shape cmark actually emits, confirmed with
+;; `cmark-gfm --to xml`.
+(test-assert "markdown->xml emits a CommonMark XML document"
+  (let ((s (markdown->xml "# hi\n" plain)))
+    (and (string-contains? s "<?xml version=\"1.0\" encoding=\"UTF-8\"?>")
+         (string-contains? s "<document xmlns=\"http://commonmark.org/xml/1.0\">")
+         (string-contains? s "<heading level=\"1\">")
+         (string-contains? s "<text xml:space=\"preserve\">hi</text>"))))
+
+;; The extension list reaches the HTML renderer. Without it, a table parses
+;; but its extension nodes render as nothing -- so this discriminates the
+;; one argument only markdown->html passes.
+(test-assert "tables render through markdown->html, which requires the extension list"
+  (let ((s (markdown->html "| a |\n|---|\n| 1 |\n" (default-cmark-options))))
+    (and (string-contains? s "<table>") (string-contains? s "<td>1</td>"))))
+
+(test-assert "strikethrough renders through markdown->html"
+  (string-contains? (markdown->html "~~gone~~\n" (default-cmark-options)) "<del>"))
+
+;; --- width --------------------------------------------------------------
+(test-assert "a width argument actually wraps commonmark output"
+  (let ((wide   (markdown->commonmark "aaa bbb ccc ddd eee fff\n" plain))
+        (narrow (markdown->commonmark "aaa bbb ccc ddd eee fff\n" plain 10)))
+    (not (string=? wide narrow))))
+
+(test-equal "width defaults to 0 (nowrap), matching the CLI"
+  (markdown->commonmark "aaa bbb ccc ddd eee fff\n" plain 0)
+  (markdown->commonmark "aaa bbb ccc ddd eee fff\n" plain))
+
+(test-equal "a negative width is rejected"
+  'invalid-width
+  (guard (e ((cmark-invalid-option? e) (cmark-invalid-option-reason e))
+            (#t 'wrong-condition))
+    (markdown->commonmark "hi\n" plain -1)
+    'no-condition))
+
+(test-equal "an inexact width is rejected"
+  'invalid-width
+  (guard (e ((cmark-invalid-option? e) (cmark-invalid-option-reason e))
+            (#t 'wrong-condition))
+    (markdown->plaintext "hi\n" plain 72.0)
+    'no-condition))
+
+;; Width is validated BEFORE any native resource is acquired, so a bad width
+;; leaves nothing to clean up. Stage 1 shipped the opposite bug for
+;; extension names and this is the same class.
+(test-assert "counters balance after a bad width is rejected"
+  (let ((before (live-counts)))
+    (guard (e (#t #t)) (markdown->commonmark "hi\n" plain -1))
+    (equal? before (live-counts))))
+
+;; --- options plumbing ---------------------------------------------------
+(test-assert "source-positions? #t reaches the HTML renderer"
+  (string-contains? (markdown->html "# hi\n" (make-cmark-options 'source-positions? #t
+                                                                'extensions '()))
+                    "data-sourcepos"))
+
+(test-assert "the default options do NOT emit data-sourcepos (ADR-0008)"
+  (not (string-contains? (markdown->html "# hi\n" (default-cmark-options))
+                         "data-sourcepos")))
+
+;; --- safe by default (Stage 4 owns hardening; this is the 0.1 regression) --
+(test-assert "raw HTML is suppressed by default"
+  (string-contains? (markdown->html "<script>alert(1)</script>\n" (default-cmark-options))
+                    "<!-- raw HTML omitted -->"))
+
+;; Verified against the CLI: in safe mode cmark empties the href rather than
+;; dropping the anchor.
+(test-assert "a javascript: link has its href emptied by default"
+  (string-contains? (markdown->html "[c](javascript:alert(1))\n" (default-cmark-options))
+                    "<a href=\"\">c</a>"))
+
+;; extensions '() isolates the property under test. With the DEFAULT
+;; extension set, the tagfilter extension defangs <script> (escaping its
+;; leading '<' to '&lt;') REGARDLESS of unsafe-html?, so an un-isolated probe
+;; cannot tell "unsafe-html? plumbing works" apart from "tagfilter ran".
+;; Verified directly against this binding: with the default extensions,
+;; (markdown->html "<script>alert(1)</script>\n" (make-cmark-options
+;; 'unsafe-html? #t)) produces "&lt;script>alert(1)&lt;/script>\n" -- not the
+;; brief's predicted "<script>...". Confirmed against the CLI too:
+;; `--unsafe -e tagfilter` still yields '&lt;script>...'; only with tagfilter
+;; absent does --unsafe restore literal '<script>'.
+(test-assert "unsafe-html? #t is required to emit raw HTML"
+  (string-contains? (markdown->html "<script>alert(1)</script>\n"
+                                    (make-cmark-options 'unsafe-html? #t
+                                                         'extensions '()))
+                    "<script>"))
+
+;; --- input validation flows from the options record ---------------------
+(test-equal "max-input-bytes from the options record is enforced"
+  'too-large
+  (guard (e ((cmark-invalid-input? e) (cmark-invalid-input-reason e))
+            (#t 'wrong-condition))
+    (markdown->html "this is eleven" (make-cmark-options 'max-input-bytes 4))
+    'no-condition))
+
+(test-equal "embedded NUL is rejected through the public API"
+  'embedded-nul
+  (guard (e ((cmark-invalid-input? e) (cmark-invalid-input-reason e))
+            (#t 'wrong-condition))
+    (markdown->html "a\x0;b" (default-cmark-options))
+    'no-condition))
+
+(test-equal "a non-options second argument is rejected"
+  'invalid-value
+  (guard (e ((cmark-invalid-option? e) (cmark-invalid-option-reason e))
+            (#t 'wrong-condition))
+    (markdown->html "hi\n" 'not-options)
+    'no-condition))
 
 (test-end "render")
 
