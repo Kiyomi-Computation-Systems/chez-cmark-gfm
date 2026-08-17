@@ -255,6 +255,11 @@
     (check-depth! depth ctx)
     (count-node! ctx)
     (let* ((entry (type-string->entry type-string))
+           ;; A table publishes its alignments into the context before its
+           ;; rows and cells are walked, and restores the previous value
+           ;; afterwards so nested tables cannot leak alignments outward.
+           ;; cmark cannot nest tables today; the save/restore costs one
+           ;; binding and removes the question.
            (saved (convert-ctx-column-alignments ctx))
            (props (or properties-override
                       (if entry

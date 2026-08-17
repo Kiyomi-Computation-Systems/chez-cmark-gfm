@@ -474,6 +474,24 @@
                      (make-convert-ctx 1 1000 #f))))
     'no-condition))
 
+;; A childless node isolates the claim: unlike the node count above, a node
+;; whose own depth already exceeds max-depth would have children one level
+;; deeper still, and convert-children reads their REAL type strings, so a
+;; known child's own check-depth! call would trip the ceiling regardless of
+;; whether the fallback's call ran -- masking the very gap this proves. A
+;; thematic break has no children (see the childless-node test above).
+(test-equal "the fallback still counts toward the depth ceiling"
+  '(too-deep 1)
+  (guard (e ((cmark-resource-limit? e)
+             (list (cmark-invalid-input-reason e) (cmark-resource-limit-value e)))
+            (#t 'wrong-condition))
+    (call-with-native-document
+     "---\n" (option-bits #f #f #f #f #f #f) (quote ())
+     (lambda (h)
+       (convert-node (node-first-child (doc-root h)) "footnote_definition" 2
+                     (make-convert-ctx 1000 1 #f))))
+    'no-condition))
+
 (test-equal "the fallback path released every native allocation"
   '(0 0 0) (live-counts))
 
