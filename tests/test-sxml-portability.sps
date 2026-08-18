@@ -45,18 +45,39 @@
   (srl:sxml->html (apply markdown->sxml md opt)))
 
 ;; --- conformance --------------------------------------------------------
-;; A tree the serializer rejects raises, which SRFI-64 would turn into #f --
-;; so the expectation is a sentinel, never #f.
-(define (accepts? md)
-  (guard (e (#t 'rejected))
-    (if (string? (render md)) 'accepted 'not-a-string)))
-
-(test-equal "a document exercising every mapped node type is accepted"
-  'accepted
-  (accepts? (string-append
-             "# h\n\n> q\n\n- [x] t\n- b\n\n1. o\n\n`c` *e* **s** ~~d~~\n\n"
-             "[l](/x \"t\") ![i](/j)\n\n```scheme\n(f)\n```\n\n"
-             "| a | b |\n|:--|--:|\n| 1 | 2 |\n\n---\n\npara <b>raw</b>\n")))
+;; Asserted on the WHOLE rendering. The earlier form ran a document
+;; exercising every mapped node type through srl:sxml->html and expected the
+;; sentinel 'accepted, meaning only "this tree came back as a string" -- and
+;; that is precisely the trap in AGENTS.md's list: a serializer that does not
+;; know a construct does not reject it, it renders it wrong. Every mangling
+;; worth fearing here returns a string. `(*COMMENT* " raw HTML omitted ")`
+;; serialized as `<*COMMENT*> raw HTML omitted </*COMMENT*>` is a string; a
+;; `*TOP*` emitted as an element wrapping the whole document is a string.
+;; Acceptance could not see either, so it was not testing conformance, only
+;; that nothing raised.
+;;
+;; The two constructs under test are not incidental to this library. A
+;; `*COMMENT*` is what the DEFAULT raw-html policy emits -- `omit`,
+;; reproducing html.c:259 and html.c:337 -- so every document containing raw
+;; HTML carries one, and `*TOP*` is the root of every tree markdown->sxml
+;; returns. A serializer mishandling either mishandles everything we produce.
+;;
+;; The document is small on purpose, because the expectation has to be read
+;; to be worth anything: a block `*COMMENT*` from the html-block, two inline
+;; ones from the `<b>` and `</b>` html-inlines, and two further top-level
+;; blocks so `*TOP*` is a real container rather than a single-child wrapper.
+;; The string was produced by running srl:sxml->html and then checked by
+;; reading it against README.org's table of documented deltas: `\n` between
+;; blocks with no indentation at depth 1, NO indentation injected inside the
+;; `<p>` (srl exempts an element with a bare-text child, the same rule the
+;; `pre` assertion below depends on), and no trailing newline. `*TOP*`
+;; contributes no tag of its own, which is the half acceptance could not see.
+(test-equal "a *TOP* with block and inline comments serializes to HTML"
+  (string-append
+   "<!-- raw HTML omitted -->\n"
+   "<h1>heading</h1>\n"
+   "<p>para <!-- raw HTML omitted -->bold<!-- raw HTML omitted --> tail</p>")
+  (render "<div>raw</div>\n\n# heading\n\npara <b>bold</b> tail\n"))
 
 ;; --- escaping: the security claim ---------------------------------------
 ;; Asserted on BOTH the absence of the dangerous form and the presence of the
