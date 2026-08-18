@@ -2905,3 +2905,182 @@ portability.sps` (untracked, new). `make test`: 14 suites, all `ALL SUITES
 PASSED`, `tests/test-sxml-portability.sps` at 4. `make check-purity`: three
 "purity holds" lines (57/30/28), unchanged. `make check-pins`: three "pins
 agree" lines. All scratch copies and probe scripts deleted afterward.
+
+---
+
+## Task 11a — the attribute marker becomes an option
+
+ADR-0013. `sxml-options` gains `attribute-marker` (`caret` | `at`, default
+`caret`); `src/cmark/gfm/sxml.sls` computes the marker symbol once at
+`markdown-ast->sxml` and threads it as `mark` beside `opts` to the six sites
+that build an attribute list; `tests/sxml-html-serializer.sls` accepts
+either marker; `tests/test-sxml-differential.sps` runs the corpus sweep, the
+option matrix, and the CLI leg once per marker;
+`tests/test-sxml-portability.sps` drops its `@`→`^` rewrite.
+
+### Method note
+
+Both mutations ran in scratch copies OUTSIDE the repo,
+`$SCRATCH/mut1` and `$SCRATCH/mut2`, each holding real copies of `src/` and
+`tests/` and symlinks to the repo's `build/` and `vendor/`. `CMARK_CLI` was
+set to `cmark-gfm`, the value `make -s deps-info` reports, because the
+scratch copies carry no `Makefile`. Each copy was confirmed green before
+being mutated: 64 / 31 / 17 / 5 / 50 across test-options, test-sxml,
+test-sxml-serializer, test-sxml-portability, test-sxml-differential. The
+repo's own files were never edited by either probe — confirmed afterward by
+`git status --short` (empty).
+
+### Mutation 1 — the marker constant ignores the option and always emits `^`
+
+`src/cmark/gfm/sxml.sls`:
+```
+  (define (marker opts)
+-   (if (eq? 'at (sxml-options-attribute-marker opts)) '\x40; '^))
++   '^)
+```
+
+Predicted: the `at`-dialect assertions fail by name, the `caret` ones stay
+green.
+
+```
+test-options             exit=0  # of expected passes      64
+test-sxml                exit=1  # of expected passes      30 # of unexpected failures  1
+test-sxml-serializer     exit=0  # of expected passes      17
+test-sxml-portability    exit=1  # of expected passes      4  # of unexpected failures  1
+test-sxml-differential   exit=0  # of expected passes      50
+```
+```
+FAIL attribute-marker at emits the specification's marker at every site
+FAIL the at dialect carries the specification's own marker
+```
+
+Exactly the two `at` assertions, and only those: `test-sxml` lost one of
+thirty-one, and the two it kept are "the default marker is a caret at every
+attribute site" and "attribute-marker caret, spelled explicitly, agrees with
+the default".
+
+**`test-sxml-differential` does NOT move, and that is correct.** The marker
+never reaches HTML bytes — `tests/sxml-html-serializer.sls` accepts both and
+writes neither — so byte-identity against cmark cannot see this mutation at
+all. The differential is not the guard for *which* marker is emitted; the
+pure unit suites are. What the differential does guard is that everything
+downstream of an attribute list still agrees under both dialects, which is
+Mutation 2's subject.
+
+**Inverse half — always emit `\x40;`** (same file, `'^` → `'\x40;`), to
+confirm the `caret` assertions are not vacuous either:
+```
+=== test-sxml exit=1                    18 passes, 13 failures
+FAIL only the first token of the fence info becomes the class
+FAIL an empty title is omitted, a present one is kept
+FAIL a URL is percent-encoded but ampersand and apostrophe pass through
+FAIL dangerous schemes yield an empty href, in any case
+FAIL data: is rejected except for the four image subtypes
+FAIL image alt is the flattened plaintext of its children
+FAIL an image title is omitted when empty and kept when present
+FAIL an image src takes the same dangerous-URL policy
+FAIL ol start is emitted only when it is not one
+FAIL task items get a disabled checkbox, checked ones get the attribute
+FAIL alignment renders on header and body cells alike, omitted when none
+FAIL the default marker is a caret at every attribute site
+FAIL attribute-marker caret, spelled explicitly, agrees with the default
+=== test-sxml-portability exit=1        4 passes, 1 failure
+FAIL a quote in an attribute value comes out escaped
+=== test-sxml-differential exit=0       50 passes
+```
+
+That portability failure is the whole point of dropping the `@`→`^`
+rewrite, so it is worth stating plainly. Handed a `@`-marked tree,
+`srl:sxml->html` does not raise — "a document exercising every mapped node
+type is accepted" still passes — it silently nests the attribute pairs as
+child elements, so the link title lands in ELEMENT content and is escaped by
+`srl:string->char-data`, which handles only `& < >`, instead of in an
+ATTRIBUTE value escaped by `srl:string->html-att`, which also handles `"`.
+Under the old suite, `attrs->caret` rewrote the marker before handing the
+tree over, so that assertion passed no matter what the adapter emitted. It
+now depends on the tree the library actually produces.
+
+**Revert.** Scratch copy deleted; the repo file was never touched
+(`git status --short` empty, `md5 src/cmark/gfm/sxml.sls` =
+`8519fe697487660fb064c6a5a29f0cd8` before and after).
+
+### Mutation 2 — the test serializer's attribute predicate accepts only `^`
+
+`tests/sxml-html-serializer.sls`:
+```
+  (define (attributes? x)
+-   (and (pair? x) (memq (car x) '(^ \x40;)) #t))
++   (and (pair? x) (eq? '^ (car x))))
+```
+
+Predicted: the `at`-marker corpus sweep fails. This is what proves the twin
+sweep is real coverage rather than the same run twice — if the second leg
+were not actually running under `at`, a serializer that could not read `at`
+would go unnoticed.
+
+```
+test-options             exit=0  # of expected passes      64
+test-sxml                exit=0  # of expected passes      31
+test-sxml-serializer     exit=1  # of expected passes       9 # of unexpected failures  8
+test-sxml-portability    exit=0  # of expected passes       5
+test-sxml-differential   exit=1  # of expected passes      47 # of unexpected failures  3
+```
+```
+FAIL every corpus example agrees in-process, under both markers
+FAIL every fixture agrees under every option configuration, under both markers
+FAIL every fixture agrees against the pinned CLI, under both markers
+```
+
+All three legs, and only under the second marker. SRFI-64's simple runner
+prints no values, so the report was read back through a standalone probe in
+the same scratch copy, running the same driver over `spec.txt`:
+
+```
+(marker at 111 "```ruby\ndef foo(x)\n  return 3\nend\n```\n"
+ ours   "<pre><code><@><class>language-ruby</class></@>def foo(x)…</code></pre>\n"
+ theirs "<pre><code class=\"language-ruby\">def foo(x)…</code></pre>\n")
+```
+
+`marker at` — so the `caret` leg agreed across all 672 `spec.txt` examples
+first and the `at` leg then diverged at example 111, which is the two legs
+being genuinely different runs. The report names the marker, the example
+index, the failing input, and both renderings, which is what "structure it
+so a failure still names which marker and which example diverged" asked for.
+
+`test-sxml` is untouched, correctly: it is the PURE suite and never loads
+the serializer. `test-sxml-portability` is untouched too — it serializes
+through `wak-sxml-tools`, not through ours.
+
+**Revert.** Scratch copy and probe deleted; the repo file was never touched
+(`git status --short` empty, `md5 tests/sxml-html-serializer.sls` =
+`6aaa92e67120d5e1988919acd85609a6` before and after).
+
+### The non-vacuity guard on the twin-sweep driver itself
+
+`per-marker` is the new harness, so it needs its own pin: a driver that
+iterated an empty list, or only the default, would leave all three sweeps
+passing while covering one dialect or none. `tests/test-sxml-differential
+.sps` asserts it directly with a probe leg that fails for `at` only:
+
+```scheme
+(test-equal "the per-marker driver runs both markers and names the failing one"
+  '(marker at probe-failed)
+  (per-marker (lambda (m) (if (eq? 'at m) '(probe-failed) 'agree))))
+```
+
+Watched fail before it passed: the first version returned the bare symbol
+`'probe-failed`, so `(cons 'marker (cons m r))` built the improper list
+`(marker at . probe-failed)` and the assertion failed — which also confirmed
+the assertion reads the driver's real output rather than a shape it was
+written to match.
+
+### Final reconfirmation for the task
+
+```
+test-options            64   test-sxml               31
+test-sxml-serializer    17   test-sxml-portability    5
+test-sxml-differential  50
+```
+`make test`: 14 suites, `ALL SUITES PASSED`. `make check-purity`: three
+"purity holds" lines (64 / 30 / 31). `make check-pins`: three "pins agree"
+lines. The 744-example corpus is byte-identical to cmark under both markers.
