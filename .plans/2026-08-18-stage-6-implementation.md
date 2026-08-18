@@ -689,7 +689,8 @@ EXAMPLES := $(wildcard examples/*.sps)
 # Each examples/NN-name.sps pairs with examples/expected/NN.out. Keeps going
 # after a failure so one stale example cannot hide the others.
 examples: build
-	@fail=0; \
+	@mkdir -p tests/tmp; \
+	fail=0; \
 	for e in $(EXAMPLES); do \
 	  base=$$(basename $$e .sps); \
 	  exp=examples/expected/$$(echo $$base | cut -d- -f1).out; \
@@ -713,13 +714,9 @@ examples: build
 	exit $$fail
 ```
 
-`examples` is already in `.PHONY` from Task 3 Step 4. The target writes to `tests/tmp/`, which `make deps` already creates; add a `mkdir -p tests/tmp` guard as the target's first line:
+`examples` is already in `.PHONY` from Task 3 Step 4.
 
-```make
-examples: build
-	@mkdir -p tests/tmp; \
-	fail=0; \
-```
+Note the recipe's first line is `@mkdir -p tests/tmp; \`, not `@fail=0; \`: the target writes each example's actual output under `tests/tmp/`, and that directory is created by `make deps`, which `examples` deliberately does not depend on. Write the recipe with that line already in place rather than adding it as a second edit.
 
 - [ ] **Step 5: Run it**
 
@@ -1015,14 +1012,10 @@ For each of the five: write the file, run it with `CHEZSCHEMELIBDIRS=src:fallbac
         'no-condition))
 
 ;; The predicates and accessors for conditions this example cannot trigger
-;; through the public API are listed in examples/coverage-exemptions.scm with
-;; the reason each is unreachable.
-(line "predicates:     "
-      (list (cmark-version-incompatible? 'not-a-condition)
-            (cmark-extension-unavailable? 'not-a-condition)
-            (cmark-shim-unavailable? 'not-a-condition)
-            (cmark-render-failed? 'not-a-condition)
-            (cmark-unsupported-node? 'not-a-condition)))
+;; through the public API are listed in examples/coverage-exemptions.scm, each
+;; with the reason it is unreachable. Calling them on a non-condition just to
+;; make them appear here would satisfy the coverage gate while teaching a
+;; reader nothing, which is the opposite of what the gate is for.
 ```
 
 **Note on Step 4:** the `malformed tree` and `depth limit` cases must be run and confirmed to actually raise before their output is saved. If either returns `no-condition`, the fixture is wrong — fix the fixture, do not save the passing-looking output. The `'no-condition` sentinel exists precisely so this is visible.
@@ -1138,6 +1131,21 @@ Create `examples/coverage-exemptions.scm`:
    used after its scope closes. No public entry point can produce it: every
    public renderer and parser opens and closes its own scope. Genuinely
    unreachable, not merely awkward.")
+ (cmark-version-incompatible?
+  "Predicate for a condition raised only when the runtime cmark-gfm is outside
+   the supported range. An example cannot arrange that without a second,
+   deliberately-wrong native library, so it can only be shown returning #f for
+   a non-condition -- which documents nothing.")
+ (cmark-extension-unavailable?
+  "Predicate, unreachable for the same reason as its accessor below.")
+ (cmark-shim-unavailable?
+  "Predicate for a condition raised at import time, before any example code
+   runs. See tests/test-fallback-config.sps, which needs a subprocess for
+   exactly this reason.")
+ (cmark-render-failed?
+  "Predicate, unreachable for the same reason as its accessor below.")
+ (cmark-unsupported-node?
+  "Predicate, unreachable for the same reason as its accessor below.")
  (cmark-version-incompatible-compiled
   "Accessor on a condition raised only when the runtime cmark-gfm is outside
    the supported range. An example cannot arrange that without a second,
@@ -1371,7 +1379,15 @@ Create `tests/test-stress.sps`:
         (srfi :64)
         (only (chezscheme) getenv)
         (cmark gfm)
-        (cmark gfm private native))
+        (cmark gfm private native)
+        ;; For call-with-native-document, which the seeded control needs: no
+        ;; public entry point exposes a live document, by design.
+        (cmark gfm private scope))
+
+;; Native extension NAMES, which call-with-native-document wants -- not the
+;; option record's symbols. Same list as tests/test-lifecycle.sps:20.
+(define gfm-extension-names
+  '("autolink" "strikethrough" "table" "tagfilter" "tasklist"))
 
 (define runner (test-runner-simple))
 (test-runner-current runner)
@@ -1416,13 +1432,21 @@ Create `tests/test-stress.sps`:
 
 (test-begin "stress")
 
-;; A seeded control. If the counters were unavailable -- a prod shim freezes
-;; them at zero -- every assertion below would pass vacuously, so establish
-;; that they MOVE before asserting that they return.
-(test-assert "the counters are instrumented in this build"
+;; A seeded control, and it must demand the counters MOVE -- not merely that
+;; they start at zero. A prod shim compiles the counters away and freezes all
+;; three at 0 (cmark-gfm-shim.c:67-69), which satisfies "starts at (0 0 0)"
+;; and "returns to (0 0 0)" alike, so without this every assertion below
+;; passes vacuously against `make prod`. Same shape and same reason as
+;; tests/test-lifecycle.sps:53, which is where this pattern comes from;
+;; reaching a live document needs (cmark gfm private scope), because no
+;; public entry point exposes one.
+(test-assert "the counters actually move while a document is live"
   (let ((before (live-counts)))
-    (and (equal? before '(0 0 0))
-         (begin (exercise-all "# probe\n") #t))))
+    (call-with-native-document "# probe\n" opts gfm-extension-names
+      (lambda (h)
+        (let ((during (live-counts)))
+          (and (> (car during)  (car before))       ; live-parsers
+               (> (cadr during) (cadr before))))))))  ; live-roots
 
 (test-equal "counters are zero before the loop"
   '(0 0 0) (live-counts))
@@ -1450,13 +1474,23 @@ Create `tests/test-stress.sps`:
 
 **Note:** `live-counts` comes from `(cmark gfm private native)` (defined at `native.sls:278`, exported at `native.sls:18`) and returns a three-element list — parsers, roots, buffers. `tests/test-lifecycle.sps` calls the same procedure; that is the one to use.
 
-- [ ] **Step 2: Run it**
+- [ ] **Step 2: Run it, and prove the seeded control is not vacuous**
 
 ```bash
 CHEZSCHEMELIBDIRS=src:fallback:tests:build/scheme-libs chez --program tests/test-stress.sps
 ```
 
 Expected: PASS, 4 expected passes. Time it — if it exceeds a few seconds, lower the default iteration count.
+
+Then confirm the control does its job. Without it, every other assertion in this file passes against a shim whose counters are frozen at zero, and the whole suite would be theatre:
+
+```bash
+make prod
+CHEZSCHEMELIBDIRS=src:fallback:tests:build/scheme-libs chez --program tests/test-stress.sps; echo "exit=$?"
+make clean && make build && make deps
+```
+
+Expected: **FAIL** on `the counters actually move while a document is live`, `exit=1`. A prod shim compiles the counters away (`cmark-gfm-shim.c:60-69`), and this is the assertion that notices. If the suite passes under `make prod`, the control is empty — stop and fix it before going further.
 
 - [ ] **Step 3: Verify it catches a leak**
 
@@ -2246,6 +2280,7 @@ AGENTS.md: a test is finished when you have watched it fail. This task is the co
 | Exempt an identifier an example uses | coverage assertion 2 — **Task 6 Step 4b** | 6 |
 | Exempt a non-existent export | coverage assertion 3 — **Task 6 Step 4c** | 6 |
 | Skip one `free-buffer` in the render path | `no native resource accumulates` — **Task 7 Step 3** | 7 |
+| Build a prod shim (`make prod`), whose counters are frozen at 0 | `the counters actually move while a document is live` — without it the whole stress suite is vacuous — **Task 7 Step 2** | 7 |
 | Edit one README matrix version | the CI matrix check | 8 |
 
 - [ ] **Step 2: Record any mutation that could not break its assertion**
