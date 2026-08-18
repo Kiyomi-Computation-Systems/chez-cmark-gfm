@@ -446,3 +446,192 @@ exit 0.
 **Final reconfirmation for the task.** `make test`: 11 suites, all `ALL
 SUITES PASSED`. `make check-purity`: holds. `make check-pins`: holds.
 Scratch copies and probe scripts deleted afterward.
+
+---
+
+## Task 4 — the adapter's local block and inline nodes
+
+Two mutations, both against `src/cmark/gfm/sxml.sls` (brief Step 8). Method
+as stated above: scratch copy outside the repo (mirroring the library's path
+as `<scratch>/cmark/gfm/sxml.sls`), `CHEZSCHEMELIBDIRS` prepended with the
+scratch directory so the mutated copy resolves first for `(cmark gfm sxml)`
+while `(cmark gfm)`, `(sxml-html-serializer)`, and everything else still
+resolve normally from `src`/`tests`/`build/scheme-libs`; the tracked file
+never edited.
+
+**Baseline**, `CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez --program
+tests/test-sxml.sps`: 12/12 passes, exit 0.
+`CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez --program
+tests/test-sxml-differential.sps`: 9/9 passes, exit 0. `make test`: 13
+suites, all `ALL SUITES PASSED`. `make check-purity`: three "purity holds"
+lines. `make check-pins`: holds. `md5` of the tracked file at baseline:
+`9acbaa836113922af00abcf1206d6728`.
+
+### Mutation 1 — `strikethrough` mapped to `s` instead of `del`
+
+**Mutation** (brief Step 8): in a scratch copy only, change the
+`strikethrough` case:
+
+```diff
+-      ((strikethrough) (element 'del n raw-html))
++      ((strikethrough) (element 's n raw-html))
+```
+
+`src/cmark/gfm/sxml.sls` in the repo was never touched — only
+`<scratch>/mutation1/cmark/gfm/sxml.sls` was edited.
+
+**Run:** `CHEZSCHEMELIBDIRS=<scratch>/mutation1:src:tests:build/scheme-libs
+chez --program tests/test-sxml-differential.sps`, then the same
+`CHEZSCHEMELIBDIRS` against `tests/test-sxml-serializer.sps`.
+
+**Result: FAIL, 8/9 in the differential — exactly the assertion the brief
+names, nothing wider. The serializer's own suite stays fully green.**
+
+```
+%%%% Starting test sxml-differential
+FAIL emphasis agrees
+# of expected passes      8
+# of unexpected failures  1
+```
+
+```
+%%%% Starting test sxml-serializer
+# of expected passes      16
+```
+
+Only **"emphasis agrees"** fails in the differential; every other
+assertion — including "blockquotes agree", "breaks agree", and "adjacent
+blocks agree", which exercise unrelated node types — stays green. The
+serializer's own 16 assertions all still pass, unaffected, because
+`tests/test-sxml-serializer.sps` imports only `(sxml-html-serializer)` and
+never touches `(cmark gfm sxml)` at all — it cannot see this mutation to
+compensate for it even in principle.
+
+**Confirmed by direct probe** (`probe-mutation1.sps`, scratch-only) calling
+`ours` and `theirs` on `"*e* **s** ~~d~~ \`c\`\n"` directly, reproducing what
+the differential's `divergence` helper computes and would report as
+`(list 'ours a 'theirs b)`:
+
+```
+ours:   "<p><em>e</em> <strong>s</strong> <s>d</s> <code>c</code></p>\n"
+theirs: "<p><em>e</em> <strong>s</strong> <del>d</del> <code>c</code></p>\n"
+agree?  #f
+```
+
+The two strings differ at exactly one place, the strikethrough tag —
+`<s>d</s>` from the mutated adapter against cmark's real `<del>d</del>` —
+which is precisely the property Step 8 exists to establish: the serializer
+is generic over element names (it maps whatever tag the tree hands it), so
+it renders `s` faithfully rather than silently correcting it back to `del`.
+A wrong tag from the adapter is a byte difference in the differential, not
+an error the serializer's own suite could ever be positioned to catch,
+since that suite never constructs a strikethrough tree in the first place
+and never imports the adapter under test here.
+
+**Revert.** Nothing in the repo was ever edited during the mutation — only
+`<scratch>/mutation1/cmark/gfm/sxml.sls` was. Confirmed via `git status
+--short` (only the pre-existing untracked/modified files this task itself
+added — `src/cmark/gfm/sxml.sls`, `tests/test-sxml.sps`,
+`tests/test-sxml-differential.sps`, `Makefile` — unchanged before and after)
+and via `md5 src/cmark/gfm/sxml.sls` (`9acbaa836113922af00abcf1206d6728`,
+identical before the scratch copy was mutated and after). Re-ran the suite
+through the ordinary, non-scratch command:
+`CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez --program
+tests/test-sxml-differential.sps` → `# of expected passes 9`, exit 0.
+
+### Mutation 2 — `first-token` returns the whole info string
+
+**Mutation** (brief Step 8): in a fresh scratch copy, collapse `first-token`
+to the identity function, so the entire fence-info string (not just its
+first whitespace-delimited token) reaches the `class` attribute:
+
+```diff
+   ;; The first whitespace-delimited token of the info string, per
+   ;; html.c:223-227.
+-  (define (first-token s)
+-    (let loop ((i 0))
+-      (cond ((>= i (string-length s)) s)
+-            ((memv (string-ref s i) '(#\space #\tab #\newline #\return))
+-             (substring s 0 i))
+-            (else (loop (+ i 1))))))
++  (define (first-token s) s)
+```
+
+`src/cmark/gfm/sxml.sls` in the repo was never touched — only
+`<scratch>/mutation2/cmark/gfm/sxml.sls` was edited.
+
+**Run:** `CHEZSCHEMELIBDIRS=<scratch>/mutation2:src:tests:build/scheme-libs
+chez --program tests/test-sxml.sps`, then the same `CHEZSCHEMELIBDIRS`
+against `tests/test-sxml-differential.sps`.
+
+**Result: FAIL in both suites, exactly the two assertions the brief names,
+nothing wider.**
+
+```
+%%%% Starting test sxml
+FAIL only the first token of the fence info becomes the class
+# of expected passes      11
+# of unexpected failures  1
+```
+
+```
+%%%% Starting test sxml-differential
+FAIL code blocks agree
+# of expected passes      8
+# of unexpected failures  1
+```
+
+Every other assertion in both suites stays green, including "a code block
+with no info has a bare code element" (info is `""`, so `first-token`'s
+mutation is a no-op on that fixture — the empty-info branch never calls
+`first-token` on anything but an already-empty string) and every
+differential case that touches no code block at all.
+
+**Confirmed by direct probe** (`probe-mutation2.sps`, scratch-only):
+
+```
+pure-suite actual:   (*TOP* (pre (code (\x40; (class "language-scheme linenos=3")) "x\n")))
+pure-suite expected: (*TOP* (pre (code (\x40; (class "language-scheme")) "x\n")))
+
+differential ours:   "<pre><code class=\"language-scheme linenos\">(f x)\n</code></pre>\n<pre><code>indented\n</code></pre>\n"
+differential theirs: "<pre><code class=\"language-scheme\">(f x)\n</code></pre>\n<pre><code>indented\n</code></pre>\n"
+agree?  #f
+```
+
+In both cases the mutated adapter leaks the full fence-info string
+(`"scheme linenos=3"`, `"scheme linenos"`) into the `class` attribute
+instead of stopping at the first whitespace, exactly matching html.c:223-227
+(`cmark_isspace` scan to the first space/tab/newline/CR) and exactly the
+property both named assertions exist to guard. The indented-code-block half
+of the differential fixture (`"    indented\n"`, empty fence-info) is
+unaffected in both outputs, isolating the failure to the fenced case as
+expected.
+
+**Revert.** Nothing in the repo was ever edited during the mutation — only
+`<scratch>/mutation2/cmark/gfm/sxml.sls` was. Confirmed via `md5
+src/cmark/gfm/sxml.sls` (`9acbaa836113922af00abcf1206d6728`, identical
+before the scratch copy was mutated and after) and via `git status --short`
+(unchanged). Re-ran both suites through the ordinary, non-scratch command:
+`CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez --program
+tests/test-sxml.sps` → `# of expected passes 12`, exit 0;
+`CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez --program
+tests/test-sxml-differential.sps` → `# of expected passes 9`, exit 0.
+
+**Final reconfirmation for the task.** `make test`: 13 suites, all `ALL
+SUITES PASSED`. `make check-purity`: three "purity holds" lines. `make
+check-pins`: holds. Scratch copies and probe scripts deleted afterward.
+
+**Note on the differential test's import list.** The brief's Step 6 code for
+`tests/test-sxml-differential.sps` imports only `(rnrs)`, `(srfi :64)`,
+`(cmark gfm)`, and `(sxml-html-serializer)`, then calls `markdown-ast->sxml`
+unqualified. `(cmark gfm)` does not currently re-export `markdown-ast->sxml`
+— that re-export is `(cmark gfm)`'s Task 8 (`markdown->sxml`), which this
+task's own Files list (Create: `src/cmark/gfm/sxml.sls`; Test:
+`tests/test-sxml.sps`, `tests/test-sxml-differential.sps`; Modify:
+`Makefile`) does not include `src/cmark/gfm.sls` for. As literally
+transcribed, the brief's differential test fails to load under any correct
+`sxml.sls` (unbound identifier `markdown-ast->sxml`), independent of the
+adapter's correctness — a self-inconsistent fixture in the sense the plan's
+task notes warn about (input, not expectation, needs the fix). Fixed by
+adding `(cmark gfm sxml)` to this test file's own import list, touching no
+assertion, no expected value, and no file outside this task's scope.

@@ -152,7 +152,7 @@ check-pins:
 # what trips this.
 check-purity: build deps
 	@fail=0; \
-	for t in tests/test-options.sps tests/test-ast.sps; do \
+	for t in tests/test-options.sps tests/test-ast.sps tests/test-sxml.sps; do \
 	  echo "=== check-purity: $$t, CHEZ_CMARK_GFM_SHIM poisoned ==="; \
 	  if CHEZ_CMARK_GFM_SHIM=/nonexistent CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) \
 	      $(CHEZ) --program $$t; then \
