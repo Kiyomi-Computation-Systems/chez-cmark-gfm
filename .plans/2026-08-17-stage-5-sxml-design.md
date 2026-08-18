@@ -89,11 +89,20 @@ behaviour.
 
 ### 3.1 `make-sxml-options`
 
-One field in 0.3:
+Three fields in 0.3:
 
 | Key | Values | Default |
 |---|---|---|
 | `raw-html` | `omit`, `escape` | `omit` |
+| `softbreak` | `newline`, `break`, `space` | `newline` |
+| `attribute-marker` | `caret`, `at` | `caret` |
+
+`softbreak` exists because cmark's `hardbreaks?` and `nobreaks?` are renderer
+options that never reach the parse, so no AST can carry them —
+`markdown->sxml` refuses all three renderer-only options rather than discard
+them silently (§3.2). `attribute-marker` exists because the two SXML
+serializers available on this platform use `^`, not the specification's `@`;
+see ADR-0013.
 
 A record rather than a bare symbol argument, for three reasons: it matches
 `make-cmark-options`, so callers meet one convention rather than two; it inherits

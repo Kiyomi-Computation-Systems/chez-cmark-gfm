@@ -2472,6 +2472,27 @@ git commit -m "test: verify SXML conformance and escaping through wak-sxml-tools
 - Modify: `README.org`, `CHANGELOG.md`, `AGENTS.md`
 - Verify: `.plans/stage-5-mutation-log.md`
 
+### Task 11a: the attribute marker becomes an option
+
+Landed after Task 11 revealed that neither available serializer accepts `@`.
+See ADR-0013 for the reasoning; this records the shape.
+
+- `sxml-options` gains `attribute-marker`, `caret` or `at`, default `caret`,
+  validated like its siblings.
+- `src/cmark/gfm/sxml.sls` threads it to the six sites that build an attribute
+  list: `link`, `image`, the `code-block` class, `ol start`, `th`/`td` align,
+  and the tasklist `input`.
+- `tests/sxml-html-serializer.sls`'s attribute predicate accepts **either**
+  marker, so one serializer serves both dialects.
+- `tests/test-sxml-differential.sps` runs the full 744-example sweep once per
+  marker, keeping ADR-0012's oracle total rather than covering one dialect
+  with 744 examples and the other with a handful.
+- `tests/test-sxml-portability.sps` drops its `@`→`^` rewrite and feeds
+  `wak-sxml-tools` the tree the adapter actually emits. That is the only
+  construction under which §6.6's conformance claim means anything.
+
+---
+
 - [ ] **Step 0: Cleanup pass**
 
 Every task's review deferred its Minor findings here. Fix them in one commit
