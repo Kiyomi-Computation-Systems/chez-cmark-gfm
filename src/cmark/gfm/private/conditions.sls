@@ -25,6 +25,7 @@
 
           &cmark-shim-unavailable make-cmark-shim-unavailable
           cmark-shim-unavailable? cmark-shim-unavailable-path
+          cmark-shim-unavailable-reason
 
           &cmark-invalid-option make-cmark-invalid-option
           cmark-invalid-option? cmark-invalid-option-key
@@ -81,9 +82,22 @@
     make-cmark-resource-limit cmark-resource-limit?
     (value cmark-resource-limit-value))
 
+  ;; Raised when the shim cannot be resolved or loaded. path is the path that
+  ;; failed, or #f when no path was ever configured. reason is a symbol:
+  ;;   'not-built        -- the fallback config is in force; no `make build`
+  ;;   'missing          -- the generated default path is not a regular file
+  ;;   'invalid-override -- CHEZ_CMARK_GFM_SHIM is set but is not an absolute
+  ;;                        path to an existing regular file
+  ;;   'load-failed      -- load-shared-object raised on a validated file
+  ;;
+  ;; 'invalid-override deliberately covers three causes (empty string, not
+  ;; absolute, absolute but absent) because resolve-shim-path's single `else`
+  ;; branch already conflates them. Splitting it would restructure the load
+  ;; path this release exists to freeze; recorded in the design spec 11.
   (define-condition-type &cmark-shim-unavailable &cmark-error
     make-cmark-shim-unavailable cmark-shim-unavailable?
-    (path cmark-shim-unavailable-path))
+    (path   cmark-shim-unavailable-path)
+    (reason cmark-shim-unavailable-reason))
 
   ;; Raised by the options layer before any native resource exists. key is a
   ;; field name, or #f when the problem is the argument list as a whole

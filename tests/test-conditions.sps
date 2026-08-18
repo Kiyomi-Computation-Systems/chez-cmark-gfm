@@ -50,7 +50,7 @@
 (test-equal "shim-unavailable carries the attempted path"
   "/nope/libchezcmarkgfm.dylib"
   (guard (e ((cmark-shim-unavailable? e) (cmark-shim-unavailable-path e)))
-    (raise (make-cmark-shim-unavailable "/nope/libchezcmarkgfm.dylib"))))
+    (raise (make-cmark-shim-unavailable "/nope/libchezcmarkgfm.dylib" 'missing))))
 
 ;; Every condition must also be catchable as the base type, so a caller can
 ;; choose its granularity. Without these, deriving one of them from &error
@@ -69,7 +69,7 @@
 
 (test-assert "shim-unavailable is a cmark-error"
   (guard (e ((cmark-error? e) #t) (#t #f))
-    (raise (make-cmark-shim-unavailable "/nope/libchezcmarkgfm.dylib"))))
+    (raise (make-cmark-shim-unavailable "/nope/libchezcmarkgfm.dylib" 'missing))))
 
 ;; --- Stage 2: invalid option ------------------------------------------
 ;; key is #f for whole-plist problems (odd length), a symbol otherwise.

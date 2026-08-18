@@ -180,34 +180,45 @@
 (define a-real-non-library-file
   (string-append (current-directory) "/Makefile"))
 
-(test-equal "resolve-shim-path rejects a directory given as an override"
-  a-real-directory
-  (guard (e ((cmark-shim-unavailable? e) (cmark-shim-unavailable-path e)))
-    (resolve-shim-path "/irrelevant/default" a-real-directory)))
+;; --- reason discriminates the four resolution failures -------------------
+;; Asserting (list path reason) rather than the path alone is deliberate, and
+;; is a fix, not a flourish. resolve-shim-path RETURNS the path it accepts, so
+;; an assertion expecting just the path is satisfied by the success path:
+;; verified by deleting every rejection from resolve-shim-path, after which
+;; this suite still reported 54 expected passes and exit 0. A two-element list
+;; is a value no success path here produces, and the trailing 'no-condition
+;; closes the other half -- a guard returns its body's value when nothing
+;; raises.
+(define (shim-failure thunk)
+  (guard (e ((cmark-shim-unavailable? e)
+             (list (cmark-shim-unavailable-path e)
+                   (cmark-shim-unavailable-reason e))))
+    (thunk)
+    'no-condition))
 
-(test-equal "resolve-shim-path rejects a directory as the default path when there is no override"
-  a-real-directory
-  (guard (e ((cmark-shim-unavailable? e) (cmark-shim-unavailable-path e)))
-    (resolve-shim-path a-real-directory #f)))
+(test-equal "a directory override is rejected as invalid-override"
+  (list a-real-directory 'invalid-override)
+  (shim-failure (lambda () (resolve-shim-path "/irrelevant/default" a-real-directory))))
 
-(test-equal "resolve-shim-path rejects a non-absolute override"
-  "relative/path.dylib"
-  (guard (e ((cmark-shim-unavailable? e) (cmark-shim-unavailable-path e)))
-    (resolve-shim-path a-real-non-library-file "relative/path.dylib")))
+(test-equal "a directory as the default path, with no override, is missing"
+  (list a-real-directory 'missing)
+  (shim-failure (lambda () (resolve-shim-path a-real-directory #f))))
 
-(test-equal "resolve-shim-path rejects a nonexistent override"
-  "/no/such/path.dylib"
-  (guard (e ((cmark-shim-unavailable? e) (cmark-shim-unavailable-path e)))
-    (resolve-shim-path a-real-non-library-file "/no/such/path.dylib")))
+(test-equal "a non-absolute override is rejected as invalid-override"
+  (list "relative/path.dylib" 'invalid-override)
+  (shim-failure (lambda () (resolve-shim-path a-real-non-library-file "relative/path.dylib"))))
 
-(test-assert "resolve-shim-path accepts a valid absolute, existing, regular-file override"
-  (equal? a-real-non-library-file
-          (resolve-shim-path "/irrelevant/default" a-real-non-library-file)))
+(test-equal "a nonexistent override is rejected as invalid-override"
+  (list "/no/such/path.dylib" 'invalid-override)
+  (shim-failure (lambda () (resolve-shim-path a-real-non-library-file "/no/such/path.dylib"))))
 
-(test-equal "load-shim wraps a real dlopen failure in cmark-shim-unavailable, carrying the path"
-  a-real-non-library-file
-  (guard (e ((cmark-shim-unavailable? e) (cmark-shim-unavailable-path e)))
-    (load-shim a-real-non-library-file)))
+(test-assert "a valid absolute, existing, regular-file override is accepted"
+  (string=? a-real-non-library-file
+            (resolve-shim-path "/irrelevant/default" a-real-non-library-file)))
+
+(test-equal "load-shim wraps a real dlopen failure as load-failed"
+  (list a-real-non-library-file 'load-failed)
+  (shim-failure (lambda () (load-shim a-real-non-library-file))))
 
 ;; --- Stage 2: version string ------------------------------------------
 ;; Not asserted against a hardcoded "0.29.0.gfm.13", which would only pin the
