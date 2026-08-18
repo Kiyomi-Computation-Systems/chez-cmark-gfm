@@ -4244,3 +4244,236 @@ under the AddressSanitizer preload, `tests/test-sxml-differential.sps`
 included — `markdown->sxml` parses, so that path is instrumented here even
 though the adapter itself allocates nothing native. No ASan report on any
 suite.
+
+---
+
+## Final whole-branch review — the fix pass
+
+Six findings from the whole-branch review of Stage 5, fixed before merge. Three
+are documentation-only and carry no mutation, which is stated rather than left
+to be inferred. Method as at the top of this file: scratch copies outside the
+repo, prepended to `CHEZSCHEMELIBDIRS`; the tracked tree is never edited.
+
+Platform: macOS (Darwin 25.5.0), arm64; Chez Scheme 10.4.1; `cmark-gfm`
+0.29.0.gfm.13 via pkg-config, so `HAVE_PKG=yes`. `CMARK_CLI` from `make -s
+deps-info | sed -n 's/^cmark-gfm CLI *: //p'` → `cmark-gfm`.
+
+### Important 1 — `make test` on a fresh clone
+
+Not an assertion, so no mutation applies in the usual sense; the check is a
+diagnosis, and what follows is the evidence it works.
+
+Confirmed first that the gap is real. `make -n test | grep 'submodule update'`
+listed `vendor/chez-srfi`, `vendor/wak-sxml-tools`, `vendor/wak-common` — and
+not `vendor/cmark-gfm`. Under `HAVE_PKG=yes` the `$(SHIM): vendor` prerequisite
+is guarded out, so `vendor` never runs and nothing initialised the submodule
+whose `test/*.txt` `tests/test-sxml-differential.sps` reads.
+
+**R1** — the failure mode, reproduced with `corpus-dir` pointed at an absent
+path in a scratch copy of the suite, and the guard stripped back out of it:
+```
+FAIL the corpus parser finds every example
+FAIL tab arrows are translated to tabs
+Exception in open-file-input-port: failed for
+  vendor/cmark-gfm-absent/test/regression.txt: no such file or directory
+```
+exit **255**. The first two are SRFI-64 swallowing the raise into `#f`; the
+third kills the program, because `all-examples` is built at top level outside
+any `test-` form. Nothing in that output names a submodule.
+
+The same scratch copy **with** the guard:
+```
+tests/test-sxml-differential.sps: cmark's example corpus is not in
+  vendor/cmark-gfm-absent/test/
+The vendor/cmark-gfm submodule is not checked out. Run:
+    git submodule update --init vendor/cmark-gfm
+or `make deps`, which does exactly that (no build required --
+this suite reads test/*.txt only).
+```
+exit **1**.
+
+`deps` now runs `git submodule update --init $(VENDOR_DIR)` — checkout only, no
+cmake. Re-confirmed with `make -n test`, which now lists all four submodules.
+The `HAVE_PKG=no` path is undisturbed: `vendor` still builds that submodule for
+the shim to link against, and `git submodule update --init` is idempotent and
+only ever resets to the recorded gitlink, which is the commit both paths need.
+
+### Important 2 — the oracle is not total for `attribute-marker`
+
+**R2 — the probe that proves the claim was false.** In a scratch copy of
+`src/cmark/gfm/sxml.sls` only, `marker` ignores the option and always returns
+the default:
+```diff
+ (define (marker opts)
+-  (if (eq? 'at (sxml-options-attribute-marker opts)) '\x40; '^))
++  (if #f (sxml-options-attribute-marker opts)) '^)
+```
+This is the mutation ADR-0013's "the oracle stays total" claimed the twin
+corpus sweep would catch. It does not:
+```
+$ CHEZSCHEMELIBDIRS=<scratch>/probe-marker:src:tests:build/scheme-libs \
+  CMARK_CLI=cmark-gfm chez --program tests/test-sxml-differential.sps
+%%%% Starting test sxml-differential
+# of expected passes      53
+exit 0
+
+$ … chez --program tests/test-sxml-portability.sps
+# of expected passes      5
+exit 0
+```
+53/53 covers **both** corpus sweeps (744 examples × 2 markers), the
+ten-configuration option matrix over the four fixtures under both markers, and
+both CLI legs. Every one of them passes against an adapter that cannot emit `@`
+at all.
+
+The reason is structural, not a missing fixture:
+`tests/sxml-html-serializer.sls`'s `attributes?` is `(memq (car x) '(^ \x40;))`,
+so the marker is normalised away before any byte is compared. Both sweeps
+produce identical bytes by construction.
+
+What does catch it is the file the ADR called "a handful of assertions":
+```
+$ … CHEZ_CMARK_GFM_SHIM=/nonexistent chez --program tests/test-sxml.sps
+FAIL attribute-marker at emits the specification's marker at every site
+FAIL attribute-marker at agrees with the specification's own (string->symbol "@")
+# of expected passes      38
+# of unexpected failures  2
+exit 1
+```
+So the ADR had it backwards: `at` is covered by three hand-written assertions
+and by nothing else, and the corpus adds nothing to them. Reverted; suite green.
+
+**Cost of the second sweep, measured** so the trade is visible rather than
+asserted. A full 744-example sweep timed in isolation with
+`(current-time 'time-monotonic)`:
+```
+(examples 744)
+(caret-sweep-seconds 0.0167)
+(at-sweep-seconds    0.0202)
+```
+against a suite that runs end to end in ~0.36 s. Kept, for the narrower
+property it does prove — 744 documents converting under `at` without raising.
+
+Corrected in `.plans/decisions/0013-sxml-attribute-marker.md` (both the
+Decision paragraph and the Consequence), design spec §6.5 and §10,
+`CHANGELOG.md`, `README.org`, and the two test-file comments that restated the
+same claim (`tests/sxml-html-serializer.sls`, `tests/test-sxml-differential
+.sps`). `tests/test-sxml.sps` now carries the "do not delete these" note, since
+the concrete risk was a contributor reading the ADR and pruning them.
+
+### Important 3 — the CHANGELOG overstated the CLI leg
+
+Documentation-only; no mutation applies. One measurement was taken to price the
+trade rather than assume it — a full corpus CLI leg, run by hand in a scratch
+script with the same flags `cli-flags` builds:
+```
+(examples 744)
+(caret seconds 6.686 divergences 0)
+(at    seconds 6.257 divergences 0)
+```
+6.7 s per marker, 13 s for the pair, against ~0.36 s for the whole suite. The
+**0 divergences** matter: the shortfall against design spec §8.1 was a cost
+trade, not a suppressed failure. Recorded as a deliberate gap in §10 with what
+it gives up; §8.1 corrected so it no longer states a requirement the suite does
+not meet; `CHANGELOG.md` brought into line with `README.org`, which was right.
+
+### Minor 4 — the portability suite's conformance assertion
+
+`accepts?` returned `'accepted` for any tree `srl:sxml->html` turned into a
+string, which is AGENTS.md's most expensive trap in this repo: a serializer
+that does not know a construct renders it wrong rather than rejecting it, and
+every such rendering is still a string. Replaced with the full expected
+rendering of a small document carrying a block `*COMMENT*`, two inline
+`*COMMENT*`s, and two further top-level blocks. The expectation was produced by
+running `srl:sxml->html` and then read back against `README.org`'s delta table.
+
+Both mutations are in a scratch copy of the vendored third-party serializer
+(`<scratch>/mut-srl/wak/sxml-tools/{serializer.sls,upstream/serializer.scm}`),
+the same technique as P4 above. Each was also run against a scratch copy of the
+**pre-fix** suite, restored with `git show HEAD:tests/test-sxml-portability
+.sps`, which is what makes "the old form was vacuous" a measurement.
+
+**R3 — the serializer no longer knows `*COMMENT*`.** Both `((*COMMENT*)` case
+keys renamed to `((*COMMENT-DISABLED*)`, so a comment falls through to the
+element branch:
+```
+mutated   "<*COMMENT*> raw HTML omitted </*COMMENT*>\n<h1>heading</h1>\n
+           <p>para <*COMMENT*> raw HTML omitted </*COMMENT*>bold…</p>"
+unmutated "<!-- raw HTML omitted -->\n<h1>heading</h1>\n
+           <p>para <!-- raw HTML omitted -->bold…</p>"
+```
+New assertion:
+```
+FAIL a *TOP* with block and inline comments serializes to HTML
+# of expected passes      4
+# of unexpected failures  1
+exit 1
+```
+Old `'accepted` form, same mutation: **5/5, exit 0.** The assertion was empty
+against precisely the corruption it existed to detect.
+
+**R4 — `*TOP*` is no longer a document node.** In `normaliz-step-5`,
+`(eq? (caar seq) '*TOP*)` → `'*TOP-DISABLED*`, so the root is serialized as an
+element:
+```
+mutated "<*TOP*>\n  <!-- raw HTML omitted -->\n  <h1>heading</h1>\n
+         <p>para <!-- raw HTML omitted -->bold…</p>\n</*TOP*>"
+```
+New assertion FAILs by name. The `pre` assertion fails too under this one — the
+extra nesting level reintroduces indentation — which is a second genuine
+detection of the same corruption, not an artefact of the edit. The old
+`'accepted` form does **not** notice: it reports only the `pre` failure, 4/5,
+and its own conformance assertion passes.
+
+Scratch reverted; suite 5/5. `git status --short` on the repo showed only
+`tests/test-sxml-portability.sps`, and `git -C vendor/wak-sxml-tools status
+--short` was clean — the vendored tree was never touched.
+
+### Minor 5 and Minor 6 — documentation only
+
+No mutation applies to either; both state what the code already does.
+
+Minor 5: `Makefile`'s `MEMORY_TESTS` block reasoned about two differential
+suites and argued each in or out by name, while three now exist. Confirmed with
+`make -s -p` that `MEMORY_TESTS` expands to 13 suites and includes
+`tests/test-sxml-differential.sps`. Its inclusion is right and the block now
+says why, plus the criterion both judgements share: not "does it spawn
+subprocesses" but "is there instrumented work that would be lost".
+
+Minor 6: the three ill-shaped-tree behaviours named at `markdown-ast->sxml`
+were each read off the code before being written down — `table->sxml` maps
+`(cons 'tr …)` over whatever children it is given; `(prop n 'tight?)` reads `#f`
+for a missing property, which is the loose branch; `first-token` reaches
+`(string-length #f)` with no `fence-info`. No type checks added, per (cmark gfm
+ast)'s stated position.
+
+### Gate after the fix pass
+
+```
+$ make test
+… 14 suites …
+test-ast-differential  80   test-ast               30   test-conditions   29
+test-convert           66   test-differential      28   test-lifecycle    22
+test-native            54   test-options           72   test-render       35
+test-shim-loading      10   test-sxml-differential 53   test-sxml-portability 5
+test-sxml-serializer   19   test-sxml              40
+ALL SUITES PASSED
+
+$ make check-purity
+purity holds: tests/test-options.sps pulled in no native code
+purity holds: tests/test-ast.sps pulled in no native code
+purity holds: tests/test-sxml.sps pulled in no native code
+exit 0
+
+$ make check-pins
+pins agree: chez-srfi 7879b52
+pins agree: wak-sxml-tools 5c14730
+pins agree: wak-common 6d495fc
+exit 0
+```
+
+Assertion counts are unchanged in every suite. Minor 4 rewrote an existing
+assertion rather than adding one, so `test-sxml-portability` holds at 5 — the
+same shape as Step 4's `pre` fix. The 744-example corpus stayed byte-identical
+to cmark throughout: no expectation anywhere in this pass was adjusted to make
+anything pass.
