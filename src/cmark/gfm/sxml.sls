@@ -166,6 +166,39 @@
   (define (maybe-title title)
     (if (string=? "" title) '() (list (list 'title title))))
 
+  ;; --- tables ------------------------------------------------------------
+  ;; A fold over the row list, not a per-node rewrite: the AST is flat
+  ;; (table -> row(header?) -> cell) and HTML is nested. extensions/table.c
+  ;; :774-797 -- a header row opens and closes <thead> around itself; the
+  ;; first non-header row opens <tbody>, which stays open until the table
+  ;; ends. Either section is absent when it has no rows.
+  (define (table->sxml n raw-html)
+    (let loop ((rows (markdown-node-children n)) (head '()) (body '()))
+      (cond
+        ((null? rows)
+         (cons 'table
+               (append
+                (if (null? head) '() (list (cons 'thead (reverse head))))
+                (if (null? body) '() (list (cons 'tbody (reverse body)))))))
+        (else
+         (let* ((r (car rows))
+                (header? (markdown-node-property r 'header?))
+                (tr (cons 'tr (map (lambda (c) (cell->sxml c header? raw-html))
+                                   (markdown-node-children r)))))
+           (if header?
+               (loop (cdr rows) (cons tr head) body)
+               (loop (cdr rows) head (cons tr body))))))))
+
+  (define (cell->sxml c header? raw-html)
+    (let ((tag   (if header? 'th 'td))
+          (align (markdown-node-property c 'alignment))
+          ;; A cell holds inlines only, so tightness cannot reach here.
+          (kids  (children->sxml c raw-html #f)))
+      (if (memq align '(left center right))
+          (cons tag (cons (list '\x40; (list 'align (symbol->string align)))
+                          kids))
+          (cons tag kids))))
+
   ;; tight? is #f at every call except the one the `list` and `item` cases
   ;; make for their own children -- see the comment on children->sxml.
   (define (node->sxml n raw-html tight?)
@@ -243,6 +276,7 @@
                                             '((disabled ""))))))
                          (cons " " kids))
                    kids))))
+      ((table) (table->sxml n raw-html))
       ((extension)
        (raise (make-cmark-unsupported-node (prop n 'native-type))))
       (else

@@ -85,6 +85,16 @@
 ;; Recorded here as a permanent fixture so the fix cannot silently regress.
 (agrees "a blockquote in a tight item keeps its own <p>" "- > q\n- b\n")
 
+(agrees "tables agree"
+        "| a | b |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |\n")
+(agrees "table alignment agrees"
+        "| l | c | r | n |\n|:--|:-:|--:|---|\n| 1 | 2 | 3 | 4 |\n")
+(agrees "header-only tables agree" "| a | b |\n| --- | --- |\n")
+(agrees "tables with inline content agree"
+        "| *a* | `b` |\n| --- | --- |\n| [c](/x) | ~~d~~ |\n")
+(agrees "tables adjacent to blocks agree"
+        "para\n\n| a |\n| --- |\n| 1 |\n\npara\n")
+
 (test-end "sxml-differential")
 
 (exit (if (zero? (test-runner-fail-count runner)) 0 1))

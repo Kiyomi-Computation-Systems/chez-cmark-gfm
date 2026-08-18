@@ -226,6 +226,50 @@
                        (node 'item '((index . 2) (task? . #t) (checked? . #f))
                              (list (para (text "b"))))))))
 
+;; --- tables -------------------------------------------------------------
+(define (cell align . kids)
+  (node 'table-cell (list (cons 'alignment align)) kids))
+
+(define (row header? . cells)
+  (node 'table-row (list (cons 'header? header?)) cells))
+
+(define (table . rows)
+  (node 'table (list (cons 'columns (length (markdown-node-children (car rows))))
+                     (cons 'alignments '()))
+        rows))
+
+;; extensions/table.c:774-797. A header row opens and closes thead around
+;; itself; the first non-header row opens tbody, which stays open to the end
+;; of the table. This is the only structural regrouping in the mapping --
+;; the AST is flat and HTML is nested.
+(test-equal "header rows go in thead, body rows share one tbody"
+  '(*TOP* (table (thead (tr (th "h")))
+                 (tbody (tr (td "a")) (tr (td "b")))))
+  (->sxml (doc (table (row #t (cell 'none (text "h")))
+                      (row #f (cell 'none (text "a")))
+                      (row #f (cell 'none (text "b")))))))
+
+(test-equal "a table with no body rows emits no tbody"
+  '(*TOP* (table (thead (tr (th "h")))))
+  (->sxml (doc (table (row #t (cell 'none (text "h")))))))
+
+;; extensions/table.c:806-811 switches on 'l'/'c'/'r' and writes nothing
+;; otherwise -- and unlike the XML renderer, it emits align on BODY cells
+;; too. That is the one ADR-0010 blind spot this oracle closes.
+(test-equal "alignment renders on header and body cells alike, omitted when none"
+  '(*TOP* (table (thead (tr (th (\x40; (align "left")) "h")
+                            (th (\x40; (align "center")) "i")
+                            (th "j")))
+                 (tbody (tr (td (\x40; (align "right")) "a")
+                            (td "b")
+                            (td "c")))))
+  (->sxml (doc (table (row #t (cell 'left (text "h"))
+                              (cell 'center (text "i"))
+                              (cell 'none (text "j")))
+                      (row #f (cell 'right (text "a"))
+                              (cell 'none (text "b"))
+                              (cell 'none (text "c")))))))
+
 (test-end "sxml")
 
 (exit (if (zero? (test-runner-fail-count runner)) 0 1))

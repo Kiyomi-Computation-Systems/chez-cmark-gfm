@@ -1154,3 +1154,226 @@ repo throughout showed only this task's own three intended files modified
 probe run. `make test`: 13 suites, all `ALL SUITES PASSED`. `make
 check-purity`: three "purity holds" lines. Scratch clone and probe scripts
 deleted afterward.
+
+---
+
+## Task 7 — tables
+
+Three mutations, all against `src/cmark/gfm/sxml.sls` (brief Step 7). Same
+rsync-a-full-scratch-clone method as Tasks 5-6: `<scratch>/mutation-repo/`,
+the whole tree except `.git` (including the already-built
+`build/scheme-libs`), each suite run from inside that clone with
+`CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs`. The tracked file in the
+real repo is never edited; `diff` against it and `md5
+src/cmark/gfm/sxml.sls` on the real repo confirm this before, during, and
+after every mutation.
+
+**Baseline**, `CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez --program
+tests/test-sxml.sps`: 26/26 passes, exit 0.
+`CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez --program
+tests/test-sxml-differential.sps`: 28/28 passes, exit 0. `make test`: 13
+suites, all `ALL SUITES PASSED`. `make check-purity`: three "purity holds"
+lines. `md5` of the tracked file at this baseline:
+`da305d27db8c95c518041b3144d58b02`. Reconfirmed identical in the scratch
+clone before any mutation (`diff src/cmark/gfm/sxml.sls
+<scratch>/mutation-repo/src/cmark/gfm/sxml.sls` → no output) and both
+suites re-run inside the untouched scratch clone as a second baseline:
+26/26 and 28/28.
+
+### Mutation 1 — open a new `tbody` per body row
+
+**Mutation** (brief Step 7.1): in the scratch clone only, stop
+accumulating body rows under one shared `tbody`; instead wrap each body
+row's `tr` in its own `tbody` as soon as it is folded in:
+
+```diff
+        ((null? rows)
+         (cons 'table
+               (append
+                (if (null? head) '() (list (cons 'thead (reverse head))))
+-               (if (null? body) '() (list (cons 'tbody (reverse body)))))))
++               (reverse body))))
+        (else
+         (let* ((r (car rows))
+                (header? (markdown-node-property r 'header?))
+                (tr (cons 'tr (map (lambda (c) (cell->sxml c header? raw-html))
+                                   (markdown-node-children r)))))
+           (if header?
+               (loop (cdr rows) (cons tr head) body)
+-              (loop (cdr rows) head (cons tr body))))))))
++              (loop (cdr rows) head (cons (list 'tbody tr) body))))))))
+```
+
+**Run:** both suites, from inside `<scratch>/mutation-repo`.
+
+**Result: FAIL in both suites, exactly the two assertions the brief names,
+nothing wider.**
+
+```
+%%%% Starting test sxml
+FAIL header rows go in thead, body rows share one tbody
+# of expected passes      25
+# of unexpected failures  1
+```
+
+```
+%%%% Starting test sxml-differential
+FAIL tables agree
+# of expected passes      27
+# of unexpected failures  1
+```
+
+Confirmed with a direct probe (`probe-mutation1.sps`, scratch-only) on the
+"tables agree" fixture (`"| a | b |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4
+|\n"`):
+
+```
+OURS:   "<table>\n<thead>\n<tr>\n<th>a</th>\n<th>b</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>1</td>\n<td>2</td>\n</tr>\n</tbody>\n<tbody>\n<tr>\n<td>3</td>\n<td>4</td>\n</tr>\n</tbody>\n</table>\n"
+THEIRS: "<table>\n<thead>\n<tr>\n<th>a</th>\n<th>b</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>1</td>\n<td>2</td>\n</tr>\n<tr>\n<td>3</td>\n<td>4</td>\n</tr>\n</tbody>\n</table>\n"
+```
+
+Two body rows produce two separate `<tbody>` elements in OURS instead of
+one shared `<tbody>` holding both `<tr>`s — exactly the mechanism Step 7.1
+names, and exactly what `extensions/table.c:781-785`'s `else if
+(!table_state->need_closing_table_body)` guard exists to prevent: cmark
+opens a fresh `<tbody>` only the *first* time a non-header row is seen,
+not on every one.
+
+**Revert.** Confirmed via `diff` against the tracked file (no output) and
+`md5 src/cmark/gfm/sxml.sls` on the real repo
+(`da305d27db8c95c518041b3144d58b02`, unchanged). Re-ran both suites through
+the ordinary, non-scratch command against the real repo → 26/26 and 28/28,
+exit 0 both.
+
+### Mutation 2 — `align` emitted only on header cells
+
+**Mutation** (brief Step 7.2): in a fresh scratch clone, restrict
+`cell->sxml`'s alignment attribute to header cells only — the XML
+renderer's behaviour (`extensions/table.c`'s `xml_attr`, not its
+`html_render`):
+
+```diff
+-      (if (memq align '(left center right))
++      (if (and header? (memq align '(left center right)))
+           (cons tag (cons (list '\x40; (list 'align (symbol->string align)))
+                           kids))
+           (cons tag kids))))
+```
+
+**Run:** both suites, from inside the fresh scratch clone.
+
+**Result: FAIL in both suites — exactly the two assertions the brief
+names, nothing wider. This is the assertion that proves the ADR-0010 blind
+spot is actually closed.**
+
+```
+%%%% Starting test sxml
+FAIL alignment renders on header and body cells alike, omitted when none
+# of expected passes      25
+# of unexpected failures  1
+```
+
+```
+%%%% Starting test sxml-differential
+FAIL table alignment agrees
+# of expected passes      27
+# of unexpected failures  1
+```
+
+Confirmed with a direct probe (`probe-mutation2.sps`, scratch-only) on the
+"table alignment agrees" fixture (`"| l | c | r | n |\n|:--|:-:|--:|---|\n|
+1 | 2 | 3 | 4 |\n"`):
+
+```
+OURS:   "<table>\n<thead>\n<tr>\n<th align=\"left\">l</th>\n<th align=\"center\">c</th>\n<th align=\"right\">r</th>\n<th>n</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>1</td>\n<td>2</td>\n<td>3</td>\n<td>4</td>\n</tr>\n</tbody>\n</table>\n"
+THEIRS: "<table>\n<thead>\n<tr>\n<th align=\"left\">l</th>\n<th align=\"center\">c</th>\n<th align=\"right\">r</th>\n<th>n</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td align=\"left\">1</td>\n<td align=\"center\">2</td>\n<td align=\"right\">3</td>\n<td>4</td>\n</tr>\n</tbody>\n</table>\n"
+```
+
+The header row is byte-identical in both. The body row's three aligned
+cells lose `align="left"`/`"center"`/`"right"` in OURS under the mutation
+while THEIRS (real cmark) keeps them. This is `extensions/table.c:798-812`
+exactly: entering a `CMARK_NODE_TABLE_CELL`, the `if
+(table_state->in_table_header)` test at line 801 picks only the tag name
+(`<th>` vs `<td>`); the `switch (get_cell_alignment(node))` at lines
+807-812 that actually writes the `align` attribute sits *outside* that
+`if`/`else` and runs unconditionally for every cell, header or body alike.
+Had this suite been built against cmark's XML renderer instead (ADR-0010's
+oracle for the AST stage; `extensions/table.c:608-621`'s `xml_attr`, which
+DOES gate `align` behind `cmark_gfm_extensions_get_table_row_is_header
+(node->parent)`), the mutated code above would satisfy every XML-oracle
+assertion while still silently disagreeing with cmark's actual HTML
+output. That is the precise blind spot the design docs charge to ADR-0010
+and that Stage 5's HTML-oracle differential (ADR-0012) closes: this
+mutation is caught here specifically because the HTML renderer, unlike the
+XML renderer, was actually consulted.
+
+**Revert.** Confirmed via `diff` against the tracked file (no output) and
+`md5 src/cmark/gfm/sxml.sls` on the real repo
+(`da305d27db8c95c518041b3144d58b02`, unchanged). Re-ran both suites through
+the ordinary, non-scratch command against the real repo → 26/26 and 28/28,
+exit 0 both.
+
+### Mutation 3 — an empty `(tbody)` emitted when there are no body rows
+
+**Mutation** (brief Step 7.3): in a fresh scratch clone, drop the `(if
+(null? body) …)` guard around the `tbody` half of the result so an empty
+`tbody` is always appended:
+
+```diff
+                (if (null? head) '() (list (cons 'thead (reverse head))))
+-               (if (null? body) '() (list (cons 'tbody (reverse body)))))))
++               (list (cons 'tbody (reverse body))))))
+```
+
+**Run:** both suites, from inside the fresh scratch clone.
+
+**Result: FAIL in both suites, exactly the two assertions the brief names,
+nothing wider.**
+
+```
+%%%% Starting test sxml
+FAIL a table with no body rows emits no tbody
+# of expected passes      25
+# of unexpected failures  1
+```
+
+```
+%%%% Starting test sxml-differential
+FAIL header-only tables agree
+# of expected passes      27
+# of unexpected failures  1
+```
+
+Confirmed with a direct probe (`probe-mutation3.sps`, scratch-only) on the
+"header-only tables agree" fixture (`"| a | b |\n| --- | --- |\n"`):
+
+```
+OURS:   "<table>\n<thead>\n<tr>\n<th>a</th>\n<th>b</th>\n</tr>\n</thead>\n<tbody>\n</tbody>\n</table>\n"
+THEIRS: "<table>\n<thead>\n<tr>\n<th>a</th>\n<th>b</th>\n</tr>\n</thead>\n</table>\n"
+```
+
+OURS appends a spurious empty `<tbody>\n</tbody>` that cmark's own
+`html_render` never writes. In the C, `need_closing_table_body`
+(`extensions/table.c:742-743,784`) is a bit set only inside the
+`CMARK_NODE_TABLE_ROW` entering branch, the first time a genuine
+non-header row is seen; a table with zero body rows never sets it, so the
+table's own closing branch (`extensions/table.c:764-768`) never writes
+`</tbody>` — and, because there is no procedural "enter tbody" event
+independent of a row in cmark's model at all, no `<tbody>` was ever opened
+either. Our fold mirrors this by keeping `body` an empty list and gating
+the whole `(cons 'tbody …)` on `(null? body)`; the mutation deletes exactly
+that gate.
+
+**Revert.** Confirmed via `diff` against the tracked file (no output) and
+`md5 src/cmark/gfm/sxml.sls` on the real repo
+(`da305d27db8c95c518041b3144d58b02`, unchanged). Re-ran both suites through
+the ordinary, non-scratch command against the real repo → 26/26 and 28/28,
+exit 0 both.
+
+**Final reconfirmation for the task.** `git status --short` on the real
+repo throughout all three mutations showed only this task's own three
+intended files modified (`src/cmark/gfm/sxml.sls`, `tests/test-sxml.sps`,
+`tests/test-sxml-differential.sps`) — never touched by any mutation or
+probe run. `make test`: 13 suites, all `ALL SUITES PASSED`. `make
+check-purity`: three "purity holds" lines. Scratch clone and probe scripts
+deleted afterward.
