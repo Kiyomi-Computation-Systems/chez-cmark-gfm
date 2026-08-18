@@ -41,25 +41,52 @@
 ;; default while cmark's ran the flag, and the two would differ for a reason
 ;; that is ours, not cmark's. This is the in-process counterpart of the CLI
 ;; leg's -e flags -- one options record, each renderer told what it says.
-(define (sxml-opts-for o)
+(define (sxml-opts-for o m)
   (make-sxml-options
+   'attribute-marker m
    'softbreak (cond ((cmark-options-hardbreaks? o) 'break)
                     ((cmark-options-nobreaks? o)   'space)
                     (else                          'newline))))
 
-(define (ours md o)
-  (sxml->html (markdown-ast->sxml (markdown->ast md o) (sxml-opts-for o))))
+;; ADR-0013's two dialects. The sweeps below run once per entry, so the
+;; oracle is total for BOTH rather than covering one with 744 examples and
+;; the other with a handful of hand-written assertions. Everything reachable
+;; from an attribute list -- the href policy, the alt flattening, table
+;; alignment, the tasklist input -- is then judged against cmark's own bytes
+;; under either marker, and tests/sxml-html-serializer.sls accepts both so
+;; one serializer serves both legs.
+(define markers '(caret at))
+
+;; Every non-sweep assertion in this file uses the default marker, which is
+;; what a caller who sets nothing gets; the marker only ever varies through
+;; the sweeps.
+(define default-marker 'caret)
+
+(define ours
+  (case-lambda
+    ((md o)   (ours md o default-marker))
+    ((md o m) (sxml->html (markdown-ast->sxml (markdown->ast md o)
+                                              (sxml-opts-for o m))))))
 (define (theirs md o) (markdown->html md o))
 
 ;; Returns #f when the two agree, or a pair for the report. Callers wrap it
 ;; in (or … 'agree): SRFI-64 turns a raise in the actual expression into #f,
 ;; so expecting #f here would pass against a crash.
+;;
+;; The marker leads rather than trails: with it last, (md o m) and the
+;; existing (md our-o their-o) would be the same arity and case-lambda could
+;; not tell a marker from a second options record.
+(define divergence-under
+  (case-lambda
+    ((m md o) (divergence-under m md o o))
+    ((m md our-o their-o)
+     (let ((a (ours md our-o m)) (b (theirs md their-o)))
+       (if (string=? a b) #f (list 'ours a 'theirs b))))))
+
 (define divergence
   (case-lambda
-    ((md o) (divergence md o o))
-    ((md our-o their-o)
-     (let ((a (ours md our-o)) (b (theirs md their-o)))
-       (if (string=? a b) #f (list 'ours a 'theirs b))))))
+    ((md o)             (divergence-under default-marker md o))
+    ((md our-o their-o) (divergence-under default-marker md our-o their-o))))
 
 ;; A markdown document whose rendering depends on the extension list, used
 ;; by both legs' discrimination guards below.
@@ -255,16 +282,46 @@
 
 ;; One assertion for the whole sweep rather than 744, so a failure names the
 ;; first divergent example instead of drowning the report. The result is the
-;; failing input and both renderings, which is what a debugger needs.
-(define (sweep examples o)
+;; example's index, the failing input, and both renderings, which is what a
+;; debugger needs.
+;;
+;; `compare` is the leg's comparator, already closed over its options record
+;; and its marker. Passing it in rather than hardcoding `divergence` is what
+;; lets the in-process and CLI legs share one driver and one report shape.
+(define (sweep compare examples)
   (let loop ((es examples) (i 0))
     (cond
       ((null? es) 'agree)
-      ((divergence (car es) o) => (lambda (d) (cons i (cons (car es) d))))
+      ((compare (car es)) => (lambda (d) (cons i (cons (car es) d))))
       (else (loop (cdr es) (+ i 1))))))
 
-(test-equal "every corpus example agrees in-process"
-  'agree (sweep all-examples opts))
+;; Runs `leg` once per marker, stopping at the first that disagrees and
+;; naming it. The marker is named HERE rather than inside each comparator so
+;; there is one place it can come from, and so a leg's own report shape --
+;; index, input, both renderings -- stays exactly what it was.
+(define (per-marker leg)
+  (let loop ((ms markers))
+    (cond
+      ((null? ms) 'agree)
+      (else
+       (let ((r (leg (car ms))))
+         (if (eq? 'agree r) (loop (cdr ms)) (cons 'marker (cons (car ms) r))))))))
+
+;; Without this, a driver that iterated an empty list, or only the default,
+;; would leave every sweep below passing while covering one dialect or none
+;; -- and the twin sweeps would be the same run twice. The probe fails for
+;; `at` only, so this also pins that `at` is reached and that the marker
+;; reaches the report. It returns a LIST, as every real leg does, because the
+;; report is built by consing onto it.
+(test-equal "the per-marker driver runs both markers and names the failing one"
+  '(marker at probe-failed)
+  (per-marker (lambda (m) (if (eq? 'at m) '(probe-failed) 'agree))))
+
+(test-equal "every corpus example agrees in-process, under both markers"
+  'agree
+  (per-marker (lambda (m)
+                (sweep (lambda (md) (divergence-under m md opts))
+                       all-examples))))
 
 ;; No corpus example may reach the adapter's unmapped-type branch. If one
 ;; does, that is a finding about our node coverage, not a pass.
@@ -307,13 +364,20 @@
         (make-cmark-options 'extensions '(autolink))
         (make-cmark-options 'extensions '(tagfilter))))
 
-(test-equal "every fixture agrees under every option configuration"
+;; The configuration's index joins the report: with ten records and four
+;; fixtures, "some fixture disagreed" is not enough to start from.
+(test-equal "every fixture agrees under every option configuration, under both markers"
   'agree
-  (let loop ((os option-matrix))
-    (if (null? os)
-        'agree
-        (let ((r (sweep fixtures (car os))))
-          (if (eq? 'agree r) (loop (cdr os)) r)))))
+  (per-marker
+   (lambda (m)
+     (let loop ((os option-matrix) (i 0))
+       (if (null? os)
+           'agree
+           (let ((r (sweep (lambda (md) (divergence-under m md (car os)))
+                           fixtures)))
+             (if (eq? 'agree r)
+                 (loop (cdr os) (+ i 1))
+                 (cons 'options (cons i r)))))))))
 
 ;; --- the CLI leg --------------------------------------------------------
 ;; Not redundant with the in-process leg. Our SXML path and markdown->html
@@ -347,12 +411,18 @@
    (capture-command (string-append cli " " (cli-flags o) " " in-path)
                     out-path)))
 
+;; Marker-leading for the same reason divergence-under is.
+(define cli-divergence-under
+  (case-lambda
+    ((m md o) (cli-divergence-under m md o o))
+    ((m md our-o their-o)
+     (let ((a (ours md our-o m)) (b (cli-html md their-o)))
+       (if (string=? a b) #f (list 'ours a 'cli b))))))
+
 (define cli-divergence
   (case-lambda
-    ((md o) (cli-divergence md o o))
-    ((md our-o their-o)
-     (let ((a (ours md our-o)) (b (cli-html md their-o)))
-       (if (string=? a b) #f (list 'ours a 'cli b))))))
+    ((md o)             (cli-divergence-under default-marker md o))
+    ((md our-o their-o) (cli-divergence-under default-marker md our-o their-o))))
 
 ;; Calls cli-divergence itself rather than inlining string=?, so the guard
 ;; exercises the comparator's branch polarity and not merely the fact that
@@ -368,12 +438,11 @@
   #t
   (if (cli-divergence table-md opts (make-cmark-options 'extensions '())) #t #f))
 
-(test-equal "every fixture agrees against the pinned CLI"
+(test-equal "every fixture agrees against the pinned CLI, under both markers"
   'agree
-  (let loop ((fs fixtures))
-    (cond ((null? fs) 'agree)
-          ((cli-divergence (car fs) opts) => (lambda (d) d))
-          (else (loop (cdr fs))))))
+  (per-marker (lambda (m)
+                (sweep (lambda (md) (cli-divergence-under m md opts))
+                       fixtures))))
 
 
 (test-end "sxml-differential")

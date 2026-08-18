@@ -346,6 +346,67 @@
     (sxml-options-with (default-sxml-options) 'raw-html 'reject)
     'no-raise))
 
+
+;; --- attribute-marker (ADR-0013) ----------------------------------------
+;; The values NAME the marker rather than being it. `@` cannot be written as
+;; a symbol literal in #!r6rs source at all (Global Constraints), so an
+;; option whose value WERE the marker could not be spelled by a caller
+;; writing #!r6rs -- the very callers this library targets.
+(test-equal "the default attribute marker is caret"
+  'caret (sxml-options-attribute-marker (default-sxml-options)))
+
+;; Both names, in one assertion: a validator that accepted only the default
+;; would still pass a test that set nothing, and one that accepted anything
+;; is caught by the invalid-value test below.
+(test-equal "attribute-marker accepts both names"
+  '(caret at)
+  (list (sxml-options-attribute-marker (make-sxml-options 'attribute-marker 'caret))
+        (sxml-options-attribute-marker (make-sxml-options 'attribute-marker 'at))))
+
+;; Also pins that the update carries the OTHER field through. A functional
+;; update that rebuilt from defaults instead of from o would pass a
+;; single-field round-trip and silently reset raw-html.
+(test-equal "sxml-options-with sets the marker and carries raw-html through"
+  '(caret at escape)
+  (let* ((base    (make-sxml-options 'raw-html 'escape))
+         (updated (sxml-options-with base 'attribute-marker 'at)))
+    (list (sxml-options-attribute-marker base)
+          (sxml-options-attribute-marker updated)
+          (sxml-options-raw-html updated))))
+
+(test-equal "a misspelled attribute-marker key is rejected"
+  '(attribute-mraker unknown-key)
+  (guard (e ((cmark-invalid-option? e)
+             (list (cmark-invalid-option-key e) (cmark-invalid-option-reason e)))
+            (#t 'wrong-condition))
+    (make-sxml-options 'attribute-mraker 'at)
+    'no-raise))
+
+(test-equal "a duplicate attribute-marker key is rejected"
+  '(attribute-marker duplicate-key)
+  (guard (e ((cmark-invalid-option? e)
+             (list (cmark-invalid-option-key e) (cmark-invalid-option-reason e)))
+            (#t 'wrong-condition))
+    (make-sxml-options 'attribute-marker 'caret 'attribute-marker 'at)
+    'no-raise))
+
+;; The marker itself is not a legal value: the option names a dialect.
+(test-equal "an unknown attribute-marker value is rejected"
+  '(attribute-marker invalid-value)
+  (guard (e ((cmark-invalid-option? e)
+             (list (cmark-invalid-option-key e) (cmark-invalid-option-reason e)))
+            (#t 'wrong-condition))
+    (make-sxml-options 'attribute-marker '^)
+    'no-raise))
+
+(test-equal "sxml-options-with validates attribute-marker too"
+  '(attribute-marker invalid-value)
+  (guard (e ((cmark-invalid-option? e)
+             (list (cmark-invalid-option-key e) (cmark-invalid-option-reason e)))
+            (#t 'wrong-condition))
+    (sxml-options-with (default-sxml-options) 'attribute-marker 'at-sign)
+    'no-raise))
+
 (test-end "options")
 
 (exit (if (zero? (test-runner-fail-count runner)) 0 1))

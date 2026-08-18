@@ -26,7 +26,8 @@
           supported-extensions
           extension->native-name
           make-sxml-options default-sxml-options sxml-options-with
-          sxml-options? sxml-options-raw-html sxml-options-softbreak)
+          sxml-options? sxml-options-raw-html sxml-options-softbreak
+          sxml-options-attribute-marker)
   (import (rnrs)
           (cmark gfm private limits)
           (cmark gfm private conditions))
@@ -203,7 +204,7 @@
   ;; the plist validation above, which a symbol cannot have, and a second
   ;; field later costs no arity change at any call site.
   (define-record-type (sxml-options %make-sxml-options sxml-options?)
-    (fields raw-html softbreak))
+    (fields raw-html softbreak attribute-marker))
 
   ;; softbreak is the SXML side of cmark's hardbreaks?/nobreaks? RENDERER
   ;; flags (html.c:319-325). They are not parse options -- CMARK_OPT_HARDBREAKS
@@ -213,7 +214,21 @@
   ;; than as two booleans, because cmark's own pair is mutually exclusive with
   ;; a precedence rule (html.c:320 wins over html.c:322) and a three-valued
   ;; field cannot express the contradictory state at all.
-  (define sxml-option-keys '(raw-html softbreak))
+  ;; attribute-marker is ADR-0013. The SXML specification marks an attribute
+  ;; list with `@`, but both serializers reachable through Akku --
+  ;; wak-sxml-tools (sxml-tools/upstream/sxml-tools.scm:44-48,
+  ;; upstream/serializer.scm:215,246) and wak-htmlprag
+  ;; (htmlprag/htmlprag.scm:334,1351,1485) -- use `^`, and neither contains a
+  ;; \x40; escape anywhere, so neither can consume a `@`-marked tree at all.
+  ;; It fails SILENTLY, turning the attribute list into bogus child elements.
+  ;; The default is therefore `caret`, the dialect this platform can actually
+  ;; render; `at` is the specification's spelling, for callers pattern-
+  ;; matching SXML by hand or moving trees to another Scheme.
+  ;;
+  ;; The values NAME the marker rather than being it: `@` cannot be written
+  ;; as a symbol literal in #!r6rs source, so a caller writing #!r6rs could
+  ;; not spell the option value if the value were the marker itself.
+  (define sxml-option-keys '(raw-html softbreak attribute-marker))
 
   ;; Reuses plist->alist, which takes its key list as a parameter. Each
   ;; caller supplies only its own, so the two option families still cannot
@@ -227,12 +242,15 @@
       (raise (make-cmark-invalid-option 'raw-html 'invalid-value)))
     (unless (memq (sxml-options-softbreak o) '(newline break space))
       (raise (make-cmark-invalid-option 'softbreak 'invalid-value)))
+    (unless (memq (sxml-options-attribute-marker o) '(caret at))
+      (raise (make-cmark-invalid-option 'attribute-marker 'invalid-value)))
     o)
 
   (define (make-sxml-options . plist)
     (let ((a (plist->alist plist sxml-option-keys)))
       (validate-sxml (%make-sxml-options (lookup a 'raw-html 'omit)
-                                        (lookup a 'softbreak 'newline)))))
+                                        (lookup a 'softbreak 'newline)
+                                        (lookup a 'attribute-marker 'caret)))))
 
   (define (default-sxml-options) (make-sxml-options))
 
@@ -247,4 +265,5 @@
       (validate-sxml
        (%make-sxml-options
         (lookup a 'raw-html  (sxml-options-raw-html o))
-        (lookup a 'softbreak (sxml-options-softbreak o)))))))
+        (lookup a 'softbreak (sxml-options-softbreak o))
+        (lookup a 'attribute-marker (sxml-options-attribute-marker o)))))))

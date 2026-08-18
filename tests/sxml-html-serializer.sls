@@ -81,14 +81,25 @@
   (define block-comment-parents '(*TOP* blockquote li))
 
   ;; --- output ------------------------------------------------------------
-  ;; \x40; is standard SXML's '@' attribute-list marker, spelled with R6RS's
-  ;; inline hex escape instead of the bare character -- see the matching
-  ;; comment in test-sxml-serializer.sps for why: Chez's strict #!r6rs
-  ;; reader, which `chez --program` enforces on every file it loads
-  ;; (including this one), rejects a bare '@' token. \x40; reads as the
-  ;; exact same interned symbol.
+  ;; BOTH markers open an attribute list (ADR-0013). '^ is what the adapter
+  ;; emits by default, because it is what wak-sxml-tools and wak-htmlprag
+  ;; read; '\x40; is what it emits under 'attribute-marker 'at, the SXML
+  ;; specification's own spelling. Accepting either is what lets one
+  ;; serializer judge both dialects, so test-sxml-differential.sps can run
+  ;; its corpus sweep once per marker instead of covering one with the
+  ;; oracle and the other with a handful of assertions.
+  ;;
+  ;; \x40; is R6RS's inline hex escape for '@' -- see the matching comment in
+  ;; test-sxml-serializer.sps: Chez's strict #!r6rs reader, which `chez
+  ;; --program` enforces on every file it loads (including this one), rejects
+  ;; a bare '@' token. \x40; reads as the exact same interned symbol.
+  ;;
+  ;; This is a two-element memq, not a wildcard: a tree marked with some
+  ;; THIRD symbol must still serialize as an element, because that is what it
+  ;; is. The serializer stays generic over the tree either way -- it learns
+  ;; no node-type knowledge here, only one extra spelling of one marker.
   (define (attributes? x)
-    (and (pair? x) (eq? '\x40; (car x))))
+    (and (pair? x) (memq (car x) '(^ \x40;)) #t))
 
   (define (write-attributes attrs port)
     (for-each

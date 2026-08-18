@@ -22,6 +22,7 @@
           ;; SXML options
           make-sxml-options default-sxml-options sxml-options-with
           sxml-options? sxml-options-raw-html sxml-options-softbreak
+          sxml-options-attribute-marker
 
           ;; renderers
           markdown->html markdown->commonmark markdown->plaintext markdown->xml

@@ -60,6 +60,18 @@
   "<p><a href=\"/x\" title=\"it's\">l</a></p>\n"
   (sxml->html '(*TOP* (p (a (\x40; (href "/x") (title "it's")) "l")))))
 
+;; ADR-0013: the adapter emits '^ by default and '\x40; under
+;; 'attribute-marker 'at, so ONE serializer has to speak both dialects --
+;; otherwise test-sxml-differential.sps's twin corpus sweep would be judging
+;; one marker against a serializer that could not read it. Asserted as
+;; equality of the two renderings AND against the literal bytes: equality
+;; alone would hold if the predicate rejected both markers and the pairs
+;; landed as child elements in both trees.
+(test-equal "either attribute marker opens an attribute list"
+  '("<p><a href=\"/x\">l</a></p>\n" "<p><a href=\"/x\">l</a></p>\n")
+  (list (sxml->html '(*TOP* (p (a (^ (href "/x")) "l"))))
+        (sxml->html '(*TOP* (p (a (\x40; (href "/x")) "l"))))))
+
 ;; --- childless elements -------------------------------------------------
 ;; The text child is "b", not "\nb": br's own trailing newline
 ;; (void-tags-with-newline) is an unconditional emit, not emit-cr, because

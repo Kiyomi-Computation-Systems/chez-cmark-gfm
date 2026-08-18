@@ -72,7 +72,7 @@
 ;; remainder is reachable only through CMARK_OPT_FULL_INFO_STRING, which
 ;; this library does not expose.
 (test-equal "only the first token of the fence info becomes the class"
-  '(*TOP* (pre (code (\x40; (class "language-scheme")) "x\n")))
+  '(*TOP* (pre (code (^ (class "language-scheme")) "x\n")))
   (->sxml (doc (node 'code-block
                      '((literal . "x\n") (fence-info . "scheme linenos=3"))
                      '()))))
@@ -113,7 +113,7 @@
 ;; html.c:392 writes the title attribute only when title.len is non-zero.
 ;; An empty title="" is a byte difference, not a harmless extra.
 (test-equal "an empty title is omitted, a present one is kept"
-  '(*TOP* (p (a (\x40; (href "/x")) "l") (a (\x40; (href "/y") (title "t")) "m")))
+  '(*TOP* (p (a (^ (href "/x")) "l") (a (^ (href "/y") (title "t")) "m")))
   (->sxml (doc (node 'paragraph '()
                      (list (link "/x" "" (text "l"))
                            (link "/y" "t" (text "m")))))))
@@ -123,7 +123,7 @@
 ;; serializer's half of the split, and encoding them here would produce
 ;; &amp;amp; on output.
 (test-equal "a URL is percent-encoded but ampersand and apostrophe pass through"
-  '(*TOP* (p (a (\x40; (href "/a%20b?x=1&y='z'%C3%A9")) "l")))
+  '(*TOP* (p (a (^ (href "/a%20b?x=1&y='z'%C3%A9")) "l")))
   (->sxml (doc (node 'paragraph '()
                      (list (link "/a b?x=1&y='z'é" "" (text "l")))))))
 
@@ -131,8 +131,8 @@
 ;; case-insensitive, so mixed case is caught. A rejected URL yields an EMPTY
 ;; attribute (html.c:387-391), not a raise and not a removed attribute.
 (test-equal "dangerous schemes yield an empty href, in any case"
-  '(*TOP* (p (a (\x40; (href "")) "a") (a (\x40; (href "")) "b")
-             (a (\x40; (href "")) "c") (a (\x40; (href "")) "d")))
+  '(*TOP* (p (a (^ (href "")) "a") (a (^ (href "")) "b")
+             (a (^ (href "")) "c") (a (^ (href "")) "d")))
   (->sxml (doc (node 'paragraph '()
                      (list (link "javascript:alert(1)" "" (text "a"))
                            (link "JaVaScRiPt:alert(1)" "" (text "b"))
@@ -140,9 +140,9 @@
                            (link "file:///etc/passwd" "" (text "d")))))))
 
 (test-equal "data: is rejected except for the four image subtypes"
-  '(*TOP* (p (a (\x40; (href "")) "html")
-             (a (\x40; (href "data:image/png;base64,AA")) "png")
-             (a (\x40; (href "data:image/webp,x")) "webp")))
+  '(*TOP* (p (a (^ (href "")) "html")
+             (a (^ (href "data:image/png;base64,AA")) "png")
+             (a (^ (href "data:image/webp,x")) "webp")))
   (->sxml (doc (node 'paragraph '()
                      (list (link "data:text/html,<b>" "" (text "html"))
                            (link "data:image/png;base64,AA" "" (text "png"))
@@ -153,7 +153,7 @@
 ;; html-inline contribute literals; breaks contribute a single space;
 ;; everything else contributes nothing but is still descended into.
 (test-equal "image alt is the flattened plaintext of its children"
-  '(*TOP* (p (img (\x40; (src "/i") (alt "a b c d e")))))
+  '(*TOP* (p (img (^ (src "/i") (alt "a b c d e")))))
   (->sxml (doc (node 'paragraph '()
                      (list (node 'image '((url . "/i") (title . ""))
                                  (list (text "a ")
@@ -165,14 +165,14 @@
                                        (text " e"))))))))
 
 (test-equal "an image title is omitted when empty and kept when present"
-  '(*TOP* (p (img (\x40; (src "/i") (alt "")))
-             (img (\x40; (src "/j") (alt "") (title "t")))))
+  '(*TOP* (p (img (^ (src "/i") (alt "")))
+             (img (^ (src "/j") (alt "") (title "t")))))
   (->sxml (doc (node 'paragraph '()
                      (list (node 'image '((url . "/i") (title . "")) '())
                            (node 'image '((url . "/j") (title . "t")) '()))))))
 
 (test-equal "an image src takes the same dangerous-URL policy"
-  '(*TOP* (p (img (\x40; (src "") (alt "")))))
+  '(*TOP* (p (img (^ (src "") (alt "")))))
   (->sxml (doc (node 'paragraph '()
                      (list (node 'image '((url . "javascript:x") (title . ""))
                                  '()))))))
@@ -195,7 +195,7 @@
 
 ;; html.c:174-183 -- start is written only when it is not 1.
 (test-equal "ol start is emitted only when it is not one"
-  '(*TOP* (ol (li (p "a"))) (ol (\x40; (start "3")) (li (p "a"))))
+  '(*TOP* (ol (li (p "a"))) (ol (^ (start "3")) (li (p "a"))))
   (->sxml (doc (ordered 1 #f (li (para (text "a"))))
                (ordered 3 #f (li (para (text "a")))))))
 
@@ -218,8 +218,8 @@
 ;; unchecked box has no checked attribute at all. The trailing space cmark
 ;; writes after "/>" is a text node here.
 (test-equal "task items get a disabled checkbox, checked ones get the attribute"
-  '(*TOP* (ul (li (input (\x40; (type "checkbox") (checked "") (disabled ""))) " " "a")
-              (li (input (\x40; (type "checkbox") (disabled ""))) " " "b")))
+  '(*TOP* (ul (li (input (^ (type "checkbox") (checked "") (disabled ""))) " " "a")
+              (li (input (^ (type "checkbox") (disabled ""))) " " "b")))
   (->sxml (doc (bullet #t
                        (node 'item '((index . 1) (task? . #t) (checked? . #t))
                              (list (para (text "a"))))
@@ -278,10 +278,10 @@
 ;; otherwise -- and unlike the XML renderer, it emits align on BODY cells
 ;; too. That is the one ADR-0010 blind spot this oracle closes.
 (test-equal "alignment renders on header and body cells alike, omitted when none"
-  '(*TOP* (table (thead (tr (th (\x40; (align "left")) "h")
-                            (th (\x40; (align "center")) "i")
+  '(*TOP* (table (thead (tr (th (^ (align "left")) "h")
+                            (th (^ (align "center")) "i")
                             (th "j")))
-                 (tbody (tr (td (\x40; (align "right")) "a")
+                 (tbody (tr (td (^ (align "right")) "a")
                             (td "b")
                             (td "c")))))
   (->sxml (doc (table (row #t (cell 'left (text "h"))
@@ -290,6 +290,61 @@
                       (row #f (cell 'right (text "a"))
                               (cell 'none (text "b"))
                               (cell 'none (text "c")))))))
+
+
+;; --- the attribute marker (ADR-0013) ------------------------------------
+;; One fixture reaching all six sites that build an attribute list: the
+;; code-block class, `ol` start, the tasklist input, a link, an image, and a
+;; table cell's align. The two expectations below are written out in full
+;; rather than one being derived from the other by a rewrite: a derived
+;; expectation would agree with the adapter through whatever the rewrite
+;; does, which is the exact mistake this option exists to undo.
+(define every-attribute-site
+  (doc (node 'code-block '((literal . "x\n") (fence-info . "scheme")) '())
+       (ordered 3 #t
+                (node 'item '((index . 3) (task? . #t) (checked? . #t))
+                      (list (para (link "/x" "" (text "l"))
+                                  (node 'image '((url . "/i") (title . ""))
+                                        '())))))
+       (table (row #t (cell 'left (text "h"))))))
+
+;; ADR-0013: the default is `^`, not the specification's `@`, because both
+;; serializers reachable through Akku speak `^` and neither recognises `@`.
+(define caret-tree
+  '(*TOP*
+    (pre (code (^ (class "language-scheme")) "x\n"))
+    (ol (^ (start "3"))
+        (li (input (^ (type "checkbox") (checked "") (disabled ""))) " "
+            (a (^ (href "/x")) "l")
+            (img (^ (src "/i") (alt "")))))
+    (table (thead (tr (th (^ (align "left")) "h"))))))
+
+;; Identical but for the marker. `@` is spelled \x40; because Chez's #!r6rs
+;; reader rejects the bare token (Global Constraints).
+(define at-tree
+  '(*TOP*
+    (pre (code (\x40; (class "language-scheme")) "x\n"))
+    (ol (\x40; (start "3"))
+        (li (input (\x40; (type "checkbox") (checked "") (disabled ""))) " "
+            (a (\x40; (href "/x")) "l")
+            (img (\x40; (src "/i") (alt "")))))
+    (table (thead (tr (th (\x40; (align "left")) "h"))))))
+
+(test-equal "the default marker is a caret at every attribute site"
+  caret-tree (->sxml every-attribute-site))
+
+;; The explicit spelling must reach the same place as the default. A lookup
+;; that defaulted correctly but mishandled a supplied value would pass the
+;; assertion above and fail here.
+(test-equal "attribute-marker caret, spelled explicitly, agrees with the default"
+  caret-tree
+  (markdown-ast->sxml every-attribute-site
+                      (make-sxml-options 'attribute-marker 'caret)))
+
+(test-equal "attribute-marker at emits the specification's marker at every site"
+  at-tree
+  (markdown-ast->sxml every-attribute-site
+                      (make-sxml-options 'attribute-marker 'at)))
 
 (test-end "sxml")
 
