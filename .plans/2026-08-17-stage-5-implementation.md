@@ -1391,7 +1391,19 @@ Tightness has to reach the paragraph two levels down, so `node->sxml` gains a
     (cons tag (children->sxml n raw-html tight?)))
 ```
 
-Update the existing cases to pass `tight?` through unchanged, then add:
+Update the existing cases to pass `tight?` through unchanged **with one
+exception**: `blockquote` must pass `#f`, not `tight?`. `html.c:288-289`
+requires the paragraph's grandparent to *be* the list node; once a blockquote
+sits between an item and a paragraph, that paragraph's grandparent is the
+item, so cmark always gives it a `<p>`. Verified against the pinned binary —
+`- > q\n- b\n` renders as `<blockquote>\n<p>q</p>\n</blockquote>` while the
+sibling `<li>b</li>` confirms the list is tight:
+
+```scheme
+      ((blockquote) (element 'blockquote n raw-html #f))
+```
+
+Then add:
 
 ```scheme
       ((list)
@@ -1472,6 +1484,9 @@ Expected: PASS, `# of expected passes 23`.
 (agrees "nested lists agree"  "- a\n  - b\n\n    c\n- d\n")
 (agrees "task lists agree"    "- [ ] a\n- [x] b\n- c\n")
 (agrees "loose task lists agree" "- [ ] a\n\n- [x] b\n")
+;; A blockquote between a tight list's item and a paragraph stops the
+;; elision: the paragraph's grandparent is the item, not the list.
+(agrees "blockquotes in tight lists agree" "- > q\n- b\n")
 ```
 
 - [ ] **Step 6: Run the differential**
@@ -1480,7 +1495,7 @@ Expected: PASS, `# of expected passes 23`.
 CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez --program tests/test-sxml-differential.sps
 ```
 
-Expected: PASS, `# of expected passes 22`.
+Expected: PASS, `# of expected passes 23`.
 
 - [ ] **Step 7: Mutation — watch it fail**
 
@@ -1650,7 +1665,7 @@ Expected: PASS, `# of expected passes 26`.
 CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez --program tests/test-sxml-differential.sps
 ```
 
-Expected: PASS, `# of expected passes 27`.
+Expected: PASS, `# of expected passes 28`.
 
 - [ ] **Step 7: Mutation — watch it fail**
 
@@ -1797,7 +1812,7 @@ In `tests/test-sxml-differential.sps`, add before `(test-end …)`:
 CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez --program tests/test-sxml-differential.sps
 ```
 
-Expected: PASS, `# of expected passes 29`.
+Expected: PASS, `# of expected passes 30`.
 
 - [ ] **Step 7: Mutation — watch it fail**
 
@@ -1963,7 +1978,7 @@ Create `tests/spec-corpus.sls`:
 CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez --program tests/test-sxml-differential.sps
 ```
 
-Expected: PASS, `# of expected passes 31`. If the counts are `(0 0 0 0)`, the
+Expected: PASS, `# of expected passes 32`. If the counts are `(0 0 0 0)`, the
 suite is being run from somewhere other than the repo root — `corpus-dir` is
 relative.
 
