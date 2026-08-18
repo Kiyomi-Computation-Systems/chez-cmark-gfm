@@ -173,7 +173,7 @@
   ;; first non-header row opens <tbody>, which stays open until the table
   ;; ends. Either section is absent when it has no rows.
   (define (table->sxml n raw-html)
-    (let loop ((rows (markdown-node-children n)) (head '()) (body '()))
+    (let loop ((rows (markdown-node-children n)) (i 0) (head '()) (body '()))
       (cond
         ((null? rows)
          (cons 'table
@@ -185,9 +185,25 @@
                 (header? (markdown-node-property r 'header?))
                 (tr (cons 'tr (map (lambda (c) (cell->sxml c header? raw-html))
                                    (markdown-node-children r)))))
+           ;; The parser cannot produce a header row anywhere but first:
+           ;; extensions/table.c:402-403 sets is_header exactly once, on the
+           ;; row synthesised when the table block opens, and every later row
+           ;; is calloc'd false (table.c:447). markdown-ast->sxml is public
+           ;; and takes an arbitrary tree, though, so a caller who built or
+           ;; rewrote one can hand us an order the parser never makes.
+           ;;
+           ;; Raising beats both alternatives. Bucketing every header row into
+           ;; one merged thead is silently NOT what cmark does -- table.c
+           ;; :777-780,792-795 opens and closes a thead around each header row,
+           ;; with no accumulation guard like tbody's need_closing_table_body.
+           ;; And reproducing cmark exactly is worse still: its header-after-
+           ;; body output opens a thead while a tbody is still open, which is
+           ;; not well-formed HTML.
+           (when (and header? (positive? i))
+             (raise (make-cmark-invalid-input 'malformed-table)))
            (if header?
-               (loop (cdr rows) (cons tr head) body)
-               (loop (cdr rows) head (cons tr body))))))))
+               (loop (cdr rows) (+ i 1) (cons tr head) body)
+               (loop (cdr rows) (+ i 1) head (cons tr body))))))))
 
   (define (cell->sxml c header? raw-html)
     (let ((tag   (if header? 'th 'td))

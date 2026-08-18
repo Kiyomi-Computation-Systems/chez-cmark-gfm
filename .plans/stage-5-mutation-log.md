@@ -1377,3 +1377,114 @@ intended files modified (`src/cmark/gfm/sxml.sls`, `tests/test-sxml.sps`,
 probe run. `make test`: 13 suites, all `ALL SUITES PASSED`. `make
 check-purity`: three "purity holds" lines. Scratch clone and probe scripts
 deleted afterward.
+
+---
+
+## Task 7 review fix — refusing a non-canonical table row order
+
+A review finding against Task 7's `table->sxml`: the fold bucketed every
+header-flagged row into one merged `thead`, which cmark does not do —
+`extensions/table.c:777-780,792-795` opens and closes a `<thead>` around
+*each* header row, with no accumulation guard analogous to `tbody`'s
+`need_closing_table_body`. The parser itself can never produce more than
+one header row, or one anywhere but first (`table.c:402-403` sets
+`is_header` exactly once, on the row synthesised when the table block
+opens; every later row is `calloc`'d with it false at `table.c:447`), so no
+differential fixture can reach this path. But `markdown-ast->sxml` is a
+public entry point taking an arbitrary AST, and `(cmark gfm ast)` ships
+`markdown-node-map`/`markdown-node-with-children` precisely so callers can
+rewrite trees, so the shape is reachable from outside the parser. The
+project owner decided to refuse it rather than normalise it: silently
+bucketing is not what cmark does, and reproducing cmark's own
+header-after-body output exactly is worse, since it opens a `<thead>` while
+a `<tbody>` is still open, which is not well-formed HTML. The fix gives the
+fold a row index and raises `&cmark-invalid-input` with reason
+`'malformed-table` when a header row appears at any position but the first
+— covering both bad shapes, since a second header row necessarily follows a
+first row, and a header row after body rows likewise follows earlier rows.
+Two assertions were added to `tests/test-sxml.sps`, immediately before
+"alignment renders on header and body cells alike, omitted when none": "a
+header row after the first row is refused" and "two leading header rows are
+refused".
+
+**Baseline**, `CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez --program
+tests/test-sxml.sps`: 28/28 passes, exit 0 (26 pre-existing + this fix
+pass's two new assertions). `CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs
+chez --program tests/test-sxml-differential.sps`: 28/28 passes, exit 0,
+unchanged from before the fix — every differential fixture goes through the
+parser, which only ever produces canonical row order, so the new guard is
+never exercised there. `make check-purity`: holds (all three pure suites,
+including `test-sxml.sps` at 28/28). `make test`: 13 suites, all `ALL
+SUITES PASSED`.
+
+**Mutation**: in a scratch copy at `<scratch>/cmark/gfm/sxml.sls` (outside
+the repo; the tracked file was never edited), delete the guard just added
+to `table->sxml`:
+
+```diff
+-           ;; The parser cannot produce a header row anywhere but first:
+-           ;; extensions/table.c:402-403 sets is_header exactly once, on the
+-           ;; row synthesised when the table block opens, and every later row
+-           ;; is calloc'd false (table.c:447). markdown-ast->sxml is public
+-           ;; and takes an arbitrary tree, though, so a caller who built or
+-           ;; rewrote one can hand us an order the parser never makes.
+-           ;;
+-           ;; Raising beats both alternatives. Bucketing every header row into
+-           ;; one merged thead is silently NOT what cmark does -- table.c
+-           ;; :777-780,792-795 opens and closes a thead around each header row,
+-           ;; with no accumulation guard like tbody's need_closing_table_body.
+-           ;; And reproducing cmark exactly is worse still: its header-after-
+-           ;; body output opens a thead while a tbody is still open, which is
+-           ;; not well-formed HTML.
+-           (when (and header? (positive? i))
+-             (raise (make-cmark-invalid-input 'malformed-table)))
+            (if header?
+```
+
+`src/cmark/gfm/sxml.sls` in the repo was never touched — only
+`<scratch>/cmark/gfm/sxml.sls` was edited. Confirmed by `md5`, taken before
+the scratch copy was made and again after the exercise
+(`42593826a30894e00aa6e357feb55e79`, unchanged), and by `git diff --stat`
+(the same 19 insertions / 3 deletions in `src/cmark/gfm/sxml.sls` and 21
+insertions / 0 deletions in `tests/test-sxml.sps` as this fix pass's
+legitimate change, identical before and after).
+
+**Run:** `CHEZSCHEMELIBDIRS=<scratch>:src:tests:build/scheme-libs chez
+--program tests/test-sxml.sps` and the same against
+`tests/test-sxml-differential.sps`.
+
+**Result: FAIL in `test-sxml.sps`, exactly the two assertions the fix
+brief names, nothing wider; `test-sxml-differential.sps` stays at
+28/28.**
+
+```
+%%%% Starting test sxml
+FAIL a header row after the first row is refused
+FAIL two leading header rows are refused
+# of expected passes      26
+# of unexpected failures  2
+```
+
+```
+%%%% Starting test sxml-differential
+# of expected passes      28
+```
+
+Both new assertions fail by name and nothing else does: each `guard`'s
+`(#t 'wrong-condition)` clause never fires, because the call no longer
+raises at all — `->sxml` returns normally (bucketing every header row into
+one `thead`, the same pre-fix behaviour), so the enclosing `test-equal`
+compares `'malformed-table` against the trailing `'no-raise` instead, and
+that mismatch is what `test-sxml.sps` reports as the two named failures.
+`test-sxml-differential.sps` is unaffected for the reason the fix brief
+predicts: no fixture there is anything but parser output, the parser
+cannot construct the row order this guard exists to catch, so the deleted
+code was dead weight from that suite's point of view — this is the
+intended asymmetry, not a gap.
+
+**Revert.** Confirmed via `md5 src/cmark/gfm/sxml.sls` on the real repo
+(`42593826a30894e00aa6e357feb55e79`, unchanged throughout) and `git status
+--short` showing only `src/cmark/gfm/sxml.sls` and `tests/test-sxml.sps`
+modified, both this fix pass's own legitimate changes. Re-ran
+`tests/test-sxml.sps` through the ordinary, non-scratch command → 28/28,
+exit 0. Scratch copy deleted afterward.

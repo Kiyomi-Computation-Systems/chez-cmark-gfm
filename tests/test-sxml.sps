@@ -253,6 +253,27 @@
   '(*TOP* (table (thead (tr (th "h")))))
   (->sxml (doc (table (row #t (cell 'none (text "h")))))))
 
+;; A header row anywhere but first is a tree the parser cannot produce, so
+;; the adapter refuses it rather than silently normalising it into output
+;; cmark would not generate. Reachable only through markdown-ast->sxml on a
+;; caller-built or caller-transformed AST.
+(test-equal "a header row after the first row is refused"
+  'malformed-table
+  (guard (e ((cmark-invalid-input? e) (cmark-invalid-input-reason e))
+            (#t 'wrong-condition))
+    (->sxml (doc (table (row #t (cell 'none (text "h")))
+                        (row #f (cell 'none (text "a")))
+                        (row #t (cell 'none (text "h2"))))))
+    'no-raise))
+
+(test-equal "two leading header rows are refused"
+  'malformed-table
+  (guard (e ((cmark-invalid-input? e) (cmark-invalid-input-reason e))
+            (#t 'wrong-condition))
+    (->sxml (doc (table (row #t (cell 'none (text "h")))
+                        (row #t (cell 'none (text "h2"))))))
+    'no-raise))
+
 ;; extensions/table.c:806-811 switches on 'l'/'c'/'r' and writes nothing
 ;; otherwise -- and unlike the XML renderer, it emits align on BODY cells
 ;; too. That is the one ADR-0010 blind spot this oracle closes.
