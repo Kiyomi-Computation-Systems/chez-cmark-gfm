@@ -1743,7 +1743,13 @@ git commit -m "feat: map tables, regrouping flat rows into thead and tbody"
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `tests/test-options.sps`, before its final `(exit …)`:
+These go in `tests/test-sxml-differential.sps`, before its `(test-end …)` —
+**not** in `tests/test-options.sps`. They exercise `markdown->sxml`, which
+lives in `(cmark gfm)` and loads native code; `test-options.sps` is one of the
+three suites `make check-purity` runs with the shim poisoned, and importing
+`(cmark gfm)` there would forfeit that gate for the pure options library.
+Assertions placed after `(test-end …)` do not count toward the suite's total,
+so mind the order.
 
 ```scheme
 ;; --- markdown->sxml rejects unsafe-html? --------------------------------
@@ -1765,13 +1771,10 @@ Append to `tests/test-options.sps`, before its final `(exit …)`:
   (markdown->sxml "# hi\n" (make-cmark-options 'unsafe-html? #f)))
 ```
 
-Note: this suite imports `(cmark gfm)`, which loads native code, so it is
-**not** in the purity gate. `tests/test-sxml.sps` is the pure one.
-
 - [ ] **Step 2: Run test to verify it fails**
 
 ```bash
-CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez --program tests/test-options.sps
+CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez --program tests/test-sxml-differential.sps
 ```
 
 Expected: FAIL at import — `unbound variable markdown->sxml`.
@@ -1814,12 +1817,12 @@ conditions)` is in this library's imports.
 - [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
-CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez --program tests/test-options.sps
+CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez --program tests/test-sxml-differential.sps
 make check-purity
 ```
 
-Expected: PASS, `# of expected passes 59`; purity still holds for all three
-pure suites.
+Expected: the differential reaches 30; `make check-purity` still names all
+three pure suites — `test-options.sps`, `test-ast.sps`, `test-sxml.sps`.
 
 - [ ] **Step 5: Assert positions have no effect**
 
@@ -1852,7 +1855,7 @@ In `tests/test-sxml-differential.sps`, add before `(test-end …)`:
 CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez --program tests/test-sxml-differential.sps
 ```
 
-Expected: PASS, `# of expected passes 30`.
+Expected: PASS, `# of expected passes 32`.
 
 - [ ] **Step 7: Mutation — watch it fail**
 
@@ -1864,7 +1867,7 @@ unsafe-html?"** stays green. Revert; confirm green. Record it.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add src/cmark/gfm.sls tests/test-options.sps tests/test-sxml-differential.sps .plans/stage-5-mutation-log.md
+git add src/cmark/gfm.sls tests/test-sxml-differential.sps .plans/stage-5-mutation-log.md
 git commit -m "feat: add markdown->sxml, rejecting unsafe-html? as not applicable"
 ```
 
