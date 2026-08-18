@@ -346,6 +346,59 @@
     (sxml-options-with (default-sxml-options) 'raw-html 'reject)
     'no-raise))
 
+;; --- softbreak -----------------------------------------------------------
+;; Mirrors the seven raw-html assertions immediately above: default, valid
+;; values, an sxml-options-with round-trip, unknown key, duplicate key,
+;; invalid value, and that sxml-options-with validates too. Before this,
+;; softbreak had no test at all -- deleting options.sls's `(unless (memq
+;; (sxml-options-softbreak o) '(newline break space)) ...)` clause broke
+;; nothing.
+(test-equal "default softbreak policy is newline"
+  'newline (sxml-options-softbreak (default-sxml-options)))
+
+(test-equal "softbreak can be set to break or space"
+  '(break space)
+  (list (sxml-options-softbreak (make-sxml-options 'softbreak 'break))
+        (sxml-options-softbreak (make-sxml-options 'softbreak 'space))))
+
+(test-equal "sxml-options-with returns a new record with softbreak changed"
+  '(newline break)
+  (let ((base (default-sxml-options)))
+    (list (sxml-options-softbreak base)
+          (sxml-options-softbreak (sxml-options-with base 'softbreak 'break)))))
+
+(test-equal "an unknown softbreak-shaped key is rejected"
+  '(softbrek unknown-key)
+  (guard (e ((cmark-invalid-option? e)
+             (list (cmark-invalid-option-key e) (cmark-invalid-option-reason e)))
+            (#t 'wrong-condition))
+    (make-sxml-options 'softbrek 'break)
+    'no-raise))
+
+(test-equal "a duplicate softbreak key is rejected"
+  '(softbreak duplicate-key)
+  (guard (e ((cmark-invalid-option? e)
+             (list (cmark-invalid-option-key e) (cmark-invalid-option-reason e)))
+            (#t 'wrong-condition))
+    (make-sxml-options 'softbreak 'newline 'softbreak 'break)
+    'no-raise))
+
+(test-equal "an unknown softbreak value is rejected"
+  '(softbreak invalid-value)
+  (guard (e ((cmark-invalid-option? e)
+             (list (cmark-invalid-option-key e) (cmark-invalid-option-reason e)))
+            (#t 'wrong-condition))
+    (make-sxml-options 'softbreak 'tab)
+    'no-raise))
+
+(test-equal "sxml-options-with validates softbreak too"
+  '(softbreak invalid-value)
+  (guard (e ((cmark-invalid-option? e)
+             (list (cmark-invalid-option-key e) (cmark-invalid-option-reason e)))
+            (#t 'wrong-condition))
+    (sxml-options-with (default-sxml-options) 'softbreak 'tab)
+    'no-raise))
+
 
 ;; --- attribute-marker (ADR-0013) ----------------------------------------
 ;; The values NAME the marker rather than being it. `@` cannot be written as

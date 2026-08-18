@@ -138,6 +138,28 @@
   "<p>a<!-- raw HTML omitted -->b</p>\n"
   (sxml->html '(*TOP* (p "a" (*COMMENT* " raw HTML omitted ") "b"))))
 
+;; The other two members of block-comment-parents -- *TOP* is covered above,
+;; and p (not a member) stands in for "anywhere else" in the inline case.
+;; Neither blockquote nor li had a direct test before this.
+;;
+;; The comment is NOT blockquote's only child: blockquote is also in
+;; cr-before-close, so with the comment alone, that unrelated rule inserts
+;; the very same newline before "</blockquote>" regardless of whether the
+;; comment itself is treated as block or inline -- a fixture that used only
+;; "(blockquote (*COMMENT* ...))" would pass whether or not blockquote were
+;; even a member of block-comment-parents at all. Found by mutating
+;; block-comment-parents to '(*TOP*) and watching this assertion NOT fail
+;; (Task 12 Step 0 mutation log). The trailing "x" -- a plain string, which
+;; triggers no cr rule of its own -- makes the comment's own newline the
+;; only source of the line break that separates it from "x".
+(test-equal "a comment directly in a blockquote is a block comment"
+  "<blockquote>\n<!-- raw HTML omitted -->\nx\n</blockquote>\n"
+  (sxml->html '(*TOP* (blockquote (*COMMENT* " raw HTML omitted ") "x"))))
+
+(test-equal "a comment directly in a list item is a block comment"
+  "<ul>\n<li>\n<!-- raw HTML omitted -->\n</li>\n</ul>\n"
+  (sxml->html '(*TOP* (ul (li (*COMMENT* " raw HTML omitted "))))))
+
 (test-end "sxml-serializer")
 
 (exit (if (zero? (test-runner-fail-count runner)) 0 1))

@@ -3084,3 +3084,349 @@ test-sxml-differential  50
 `make test`: 14 suites, `ALL SUITES PASSED`. `make check-purity`: three
 "purity holds" lines (64 / 30 / 31). `make check-pins`: three "pins agree"
 lines. The 744-example corpus is byte-identical to cmark under both markers.
+
+---
+
+## Task 12 Step 0 — the cleanup pass
+
+Eleven reviewed tasks each deferred their Minor findings to this pass. The
+findings that touch code are fixed here in a handful of commits grouped by
+kind. This entry covers the first group, "untested code paths" — the one the
+dispatch instructions singled out as mattering most, because a code path
+with no assertion is the same failure as an assertion that cannot fail.
+Later groups (latent traps, stale comments, the Task 11/11a review items)
+follow below. Method as stated at the top of this file throughout.
+
+### Group 1 — untested code paths
+
+#### `sxml-options`' `softbreak` field (`tests/test-options.sps`)
+
+Seven assertions added, mirroring raw-html's seven exactly: default, valid
+values, an `sxml-options-with` round-trip, unknown key, duplicate key,
+invalid value, and that `sxml-options-with` validates too.
+
+**Baseline**, `CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez --program
+tests/test-options.sps`: 71/71 passes, exit 0 (64 pre-existing + 7 new).
+
+**Mutation 1** — the exact clause the brief named, `src/cmark/gfm/options.sls`:
+```diff
+    (unless (memq (sxml-options-raw-html o) '(omit escape))
+      (raise (make-cmark-invalid-option 'raw-html 'invalid-value)))
+-   (unless (memq (sxml-options-softbreak o) '(newline break space))
+-     (raise (make-cmark-invalid-option 'softbreak 'invalid-value)))
+    (unless (memq (sxml-options-attribute-marker o) '(caret at))
+```
+**Result: FAIL, 69/71 — exactly the two predicted assertions, nothing wider.**
+```
+FAIL an unknown softbreak value is rejected
+FAIL sxml-options-with validates softbreak too
+```
+This is options.sls:228 (the brief's own words: "deleting [it] currently
+breaks nothing"); it now has two assertions that notice.
+
+**Mutation 2** — the hardcoded default, `(lookup a 'softbreak 'newline)` →
+`(lookup a 'softbreak 'break)` in `make-sxml-options`.
+**Result: FAIL, 69/71 — wider than the single assertion "default softbreak
+policy is newline" predicts, but through the same property.**
+```
+FAIL default softbreak policy is newline
+FAIL sxml-options-with returns a new record with softbreak changed
+```
+The second assertion's own baseline reads `(sxml-options-softbreak
+(default-sxml-options))` and expects `'newline`; moving the shared default
+moves that baseline too, so both failures are the intended property (the
+real default value), not a different one — no second probe needed.
+
+**Mutation 3** — remove `softbreak` from `sxml-option-keys` entirely.
+**Result: FAIL, 66/71 — wider still, and for two different reasons.**
+```
+FAIL softbreak can be set to break or space
+FAIL sxml-options-with returns a new record with softbreak changed
+FAIL a duplicate softbreak key is rejected
+FAIL an unknown softbreak value is rejected
+FAIL sxml-options-with validates softbreak too
+```
+The first two fail through the intended property (softbreak stops being
+settable at all). The last three fail for a DIFFERENT reason than their own
+names claim: with `softbreak` unrecognised, `plist->alist`'s unknown-key
+check fires before duplicate-key or invalid-value is ever reached, so they
+report `unknown-key`, not the property each is named for. Still a genuine
+FAIL — SRFI-64 sees a value mismatch either way — but not proof of the
+specific claim, so a narrower probe follows for the one most in need of it.
+
+**Mutation 4 (isolating duplicate-key)** — `softbreak` restored to
+`sxml-option-keys`; delete only `plist->alist`'s duplicate check:
+```diff
+            (unless (memq k valid-keys)
+              (raise (make-cmark-invalid-option k 'unknown-key)))
+-           (when (memq k seen)
+-             (raise (make-cmark-invalid-option k 'duplicate-key)))
+            (loop (cddr p) (cons k seen) (cons (cons k v) acc)))))))
+```
+**Result: FAIL, 67/71 — every "duplicate key" assertion across both option
+records, softbreak's included, each for exactly the reason it claims** (a
+`no-raise` sentinel from silent last-wins, not the expected condition):
+```
+FAIL a duplicate key is rejected rather than last-wins
+FAIL a duplicate sxml key is rejected
+FAIL a duplicate softbreak key is rejected
+FAIL a duplicate attribute-marker key is rejected
+```
+Mutations 1 and 4 isolate softbreak's invalid-value and duplicate-key
+assertions cleanly. "An unknown softbreak-shaped key is rejected" and the
+valid-values/round-trip assertions ride the same generic `plist->alist`
+mechanism raw-html's own sibling tests already exercise (confirmed jointly
+failing in Mutation 3's five-wide result); they are not independently at
+risk of being vacuous.
+
+**Revert.** Only scratch copies (outside the repo) were ever edited.
+`git diff --stat src/cmark/gfm/options.sls` empty after every mutation
+above; `md5` unchanged throughout (`cb84dab86111612ff7ccaebe62f5b97a`).
+Re-ran the ordinary command after each: 71/71, exit 0.
+
+#### Nested-`strong` collapse and `softbreak` 'break/'space, pure suite (`tests/test-sxml.sps`)
+
+Three assertions added: the nested-strong splice and both non-default
+`softbreak` renderings, previously exercised only through the native shim
+and the CLI in `tests/test-sxml-differential.sps`.
+
+**Baseline**, `CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez --program
+tests/test-sxml.sps`: green (counts below fold in later mutations in this
+same file; see the running total after each).
+
+**Mutation 1** — `src/cmark/gfm/sxml.sls`'s `strong` case, dropping the
+parent-type splice:
+```diff
+       ((strong)
+-       (if (eq? 'strong parent-type)
+-           (cons 'splice (children->sxml n opts mark tight?))
+-           (element 'strong n opts mark tight?)))
++       (element 'strong n opts mark tight?))
+```
+**Result: FAIL, 1 failure — exactly the predicted assertion.**
+```
+FAIL a strong directly inside a strong collapses to one tag
+```
+
+**Mutation 2** — the `softbreak` case, collapsing all three policies to the
+default:
+```diff
+-      ((softbreak)
+-       (case (sxml-options-softbreak opts)
+-         ((break) '(br))
+-         ((space) " ")
+-         (else    "\n")))
++      ((softbreak) "\n")
+```
+**Result: FAIL, 2 failures — exactly the two predicted assertions; the
+pre-existing default-policy test stays green, as it must** (the default
+still routes through `else`/the hardcoded `"\n"` either way):
+```
+FAIL softbreak 'break renders a br element
+FAIL softbreak 'space renders a literal space
+```
+
+**Revert.** Scratch copies only. `git diff --stat src/cmark/gfm/sxml.sls`
+empty after both mutations; `md5` unchanged throughout
+(`8519fe697487660fb064c6a5a29f0cd8`, the same value Task 11a's final entry
+recorded).
+
+#### The adapter's `else` branch, distinct from `extension` (`tests/test-sxml.sps`)
+
+**Mutation** — `sxml.sls`'s fallthrough, made to swallow instead of raise:
+```diff
+       ((extension)
+        (raise (make-cmark-unsupported-node (prop n 'native-type))))
+-      (else
+-       ;; A node type this library produces but the adapter has not mapped.
+-       ;; Reported through the same condition rather than silently dropped.
+-       (raise (make-cmark-unsupported-node
+-               (symbol->string (markdown-node-type n)))))))
++      (else '())))
+```
+**Result: FAIL, 1 failure — exactly "an unmapped node type raises via the
+else branch, not extension"; the sibling "an extension node raises, carrying
+its native type" stays green**, confirming the two assertions guard
+genuinely different branches rather than one covering the other by
+coincidence.
+
+**Revert.** Scratch copy only; `md5` unchanged.
+
+#### `markdown-ast->sxml`'s `sxml-options?` guard, pure suite (`tests/test-sxml.sps`)
+
+**Mutation** — delete the guard:
+```diff
+       ((ast o)
+-       (unless (sxml-options? o)
+-         (raise (make-cmark-invalid-option #f 'invalid-value)))
+        (node->sxml ast o (marker o) #f #f)))))
+```
+**Result: FAIL, 1 failure — exactly "markdown-ast->sxml rejects a
+non-sxml-options second argument."** With the guard gone, `(marker o)` calls
+`sxml-options-attribute-marker` on a `cmark-options` record, a bare R6RS
+accessor type-mismatch; the test's `guard` catches it as `'wrong-condition`,
+which fails against the expected `'(#f invalid-value)` — the same shape of
+finding as Task 2's review-fix entry for `sxml-options-with`'s own guard.
+
+**Revert.** Scratch copy only; `md5` unchanged.
+
+#### `markdown->sxml`'s `cmark-options?` guard (`tests/test-sxml-differential.sps`)
+
+This guard lives in `src/cmark/gfm.sls`, not the pure adapter, so it is
+pinned in the differential suite alongside the sibling
+hardbreaks?/nobreaks?/unsafe-html? guard tests.
+
+**Baseline**, `CMARK_CLI=<pinned> CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs
+chez --program tests/test-sxml-differential.sps`: 51/51 passes (50
+pre-existing + 1 new).
+
+**Mutation** — delete the guard in the 3-argument clause of `markdown->sxml`:
+```diff
+       ((md o so)
+-       (unless (cmark-options? o)
+-         (raise (make-cmark-invalid-option #f 'invalid-value)))
+```
+**Result: FAIL, 50/51 — exactly "markdown->sxml rejects a non-cmark-options
+second argument."**
+
+**Revert.** Scratch copy only; `git diff --stat src/cmark/gfm.sls` empty;
+`md5` unchanged (`1e50f9fc17b76d639ba412a3cc33f1de`).
+
+#### Body-only and empty tables (`tests/test-sxml.sps`)
+
+Two assertions added: a table with body rows but no header (the mirror of
+the pre-existing "no body rows" test), and a table with no rows at all —
+`table->sxml`'s fold's base case with both accumulators still empty, which
+the pre-existing "no body rows" test does not reach (there, head is
+non-empty).
+
+**Mutation** — `table->sxml`'s head-emptiness check, made unconditional:
+```diff
+                (append
+-                (if (null? head) '() (list (cons 'thead (reverse head))))
++                (list (cons 'thead (reverse head)))
+                 (if (null? body) '() (list (cons 'tbody (reverse body)))))))
+```
+**Result: FAIL, 2 failures — exactly the two predicted assertions; the
+pre-existing "no body rows" test (non-empty head) stays green**, confirming
+it does not already cover the empty-head cases:
+```
+FAIL a body-only table emits no thead
+FAIL a table with no rows at all emits neither section
+```
+
+**Revert.** Scratch copy only; `md5` unchanged.
+
+#### URL edge cases and all four `data:image` subtypes (`tests/test-sxml.sps`)
+
+Three changes: the pre-existing `data:image` assertion extended from two
+subtypes (png, webp) to all four named in its own title (+gif, +jpeg); a new
+assertion for a URL where every byte needs percent-encoding (the pre-existing
+percent-encoding assertion mixes safe and unsafe bytes); and an attempted
+"empty URL" assertion, which mutation testing found to be vacuous and which
+was removed rather than kept — see below.
+
+**Mutation 1** — `dangerous-url?`'s allowlist, gif and jpeg dropped:
+```diff
+-        ((or (prefix? "data:image/png"  u) (prefix? "data:image/gif"  u)
+-             (prefix? "data:image/jpeg" u) (prefix? "data:image/webp" u))
++        ((or (prefix? "data:image/png"  u)
++             (prefix? "data:image/webp" u))
+          #f)
+```
+**Result: FAIL, 1 failure — exactly "data: is rejected except for the four
+image subtypes."** Confirms the extended fixture actually exercises the gif
+and jpeg prefix checks, not merely the two the old fixture already covered.
+
+**Mutation 2** — `href-safe-byte?`, made to accept every byte:
+```diff
+-  (define (href-safe-byte? b)
+-    (let ((c (integer->char b)))
+-      (or (char<=? #\a c #\z) (char<=? #\A c #\Z) (char<=? #\0 c #\9)
+-          (memv c href-safe-extra))))
++  (define (href-safe-byte? b) #t)
+```
+**Result: FAIL, 2 failures — the pre-existing mixed-bytes assertion and the
+new all-unsafe-bytes one; nothing else moves:**
+```
+FAIL a URL is percent-encoded but ampersand and apostrophe pass through
+FAIL a URL of entirely unsafe bytes is percent-encoded throughout
+```
+
+**The "empty URL" assertion — attempted, found vacuous, removed.** The
+initial fixture asserted `(link "" "" ...)` renders `(href "")`. Mutation
+attempt: make `dangerous-url?` treat the empty string as dangerous —
+```diff
+   (define (dangerous-url? url)
++    (or (string=? "" url)
+     (let ((u (ascii-downcase url)))
+       (cond
+```
+**Result: no failure. All 40 assertions still passed.** `percent-encode("")`
+is `""` — the same value `safe-url` returns on the *rejected* branch — so
+`safe-url("")` is `""` whichever branch runs, and this assertion cannot
+distinguish "empty routes to encoding" from "empty routes to rejection." Per
+this repo's own rule ("if no mutation can break the assertion, the assertion
+is empty"), the fixture was removed rather than left as a green check that
+proves nothing; `tests/test-sxml.sps` carries a comment recording the
+attempt and this result in its place. This is the "judgement call" the
+dispatch instructions anticipated for the portability suite's text-node
+fixture, arising instead here.
+
+**Revert.** Scratch copies only throughout this subsection; `md5` of
+`src/cmark/gfm/sxml.sls` unchanged after every mutation
+(`8519fe697487660fb064c6a5a29f0cd8`).
+
+#### `*COMMENT*` inside `blockquote` and `li` (`tests/test-sxml-serializer.sps`)
+
+Two assertions added for the other two members of `block-comment-parents`
+(`*TOP*` already had a direct test; `p`, a non-member, already stood in for
+"anywhere else").
+
+**Baseline**, `CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez --program
+tests/test-sxml-serializer.sps`: 19/19 (17 pre-existing + 2 new).
+
+**Mutation** — `tests/sxml-html-serializer.sls`'s `block-comment-parents`,
+narrowed to `'(*TOP*)`.
+
+**Result, first fixture (comment as blockquote's ONLY child): FAIL, 1 of 2
+— only the `li` assertion moved.** The `li` fixture failed exactly as
+predicted; the `blockquote` fixture did not fail at all. Root cause: unlike
+`li`, `blockquote` is also in `cr-before-close`, which — with the comment as
+blockquote's sole child — inserts the identical trailing newline before
+`</blockquote>` regardless of whether the comment itself was treated as
+block or inline. The fixture passed whether or not `blockquote` was even a
+member of `block-comment-parents`, i.e. it was vacuous as originally
+written.
+
+**Fix and second probe.** The `blockquote` fixture was changed to give the
+comment a plain-string sibling (`"x"`, which triggers no `cr` rule of its
+own, unlike a `p` or another block element, either of which would have
+reintroduced the same masking): `(blockquote (*COMMENT* " raw HTML omitted
+") "x")`, expecting `"<blockquote>\n<!-- raw HTML omitted -->\nx\n</blockquote>\n"`
+(confirmed against the real, unmutated serializer before use, not assumed).
+Re-run under the same mutation:
+```
+FAIL a comment directly in a blockquote is a block comment
+FAIL a comment directly in a list item is a block comment
+# of expected passes      17
+```
+Both now fail, each for the intended reason. `tests/test-sxml-serializer.sps`
+carries a comment recording why the fixture takes this shape.
+
+**Revert.** Scratch copy only; `git diff --stat tests/sxml-html-serializer.sls`
+empty; `md5` unchanged (`6aaa92e67120d5e1988919acd85609a6`, the same value
+Task 3's entry recorded).
+
+### Group 1 — final counts
+
+```
+test-options            71   test-sxml               39
+test-sxml-serializer    19   test-sxml-portability     5
+test-sxml-differential  51
+```
+`make test`: 14 suites, `ALL SUITES PASSED`. `make check-purity`: three
+"purity holds" lines. `make check-pins`: three "pins agree" lines. The
+744-example corpus stayed byte-identical to cmark under both markers
+throughout (unchanged from Task 11a — nothing in this group touches parse
+or render behaviour).

@@ -45,6 +45,17 @@
                            (node 'strikethrough '() (list (text "d")))
                            (node 'code '((literal . "c")) '()))))))
 
+;; html.c:366-374 -- a STRONG directly inside a STRONG emits neither tag; its
+;; children splice into the enclosing one. Pure adapter logic, but until now
+;; exercised only through the native shim and the CLI
+;; (test-sxml-differential.sps's "nested strong emits one tag" and its
+;; siblings), never pinned in this pure suite.
+(test-equal "a strong directly inside a strong collapses to one tag"
+  '(*TOP* (p (strong "x")))
+  (->sxml (doc (node 'paragraph '()
+                     (list (node 'strong '()
+                                 (list (node 'strong '() (list (text "x"))))))))))
+
 (test-equal "blockquote wraps its blocks"
   '(*TOP* (blockquote (p "a")))
   (->sxml (doc (node 'blockquote '()
@@ -59,6 +70,24 @@
   (->sxml (doc (node 'paragraph '()
                      (list (text "a") (node 'softbreak '() '()) (text "b")
                            (node 'linebreak '() '()) (text "c"))))))
+
+;; softbreak's other two policies (html.c:319-325). The default ('newline,
+;; pinned above) needs no options argument; these do. Pure adapter logic,
+;; but until now exercised only through test-sxml-differential.sps's option
+;; sweep.
+(test-equal "softbreak 'break renders a br element"
+  '(*TOP* (p "a" (br) "b"))
+  (markdown-ast->sxml
+   (doc (node 'paragraph '()
+              (list (text "a") (node 'softbreak '() '()) (text "b"))))
+   (make-sxml-options 'softbreak 'break)))
+
+(test-equal "softbreak 'space renders a literal space"
+  '(*TOP* (p "a" " " "b"))
+  (markdown-ast->sxml
+   (doc (node 'paragraph '()
+              (list (text "a") (node 'softbreak '() '()) (text "b"))))
+   (make-sxml-options 'softbreak 'space)))
 
 (test-equal "thematic break is a childless hr"
   '(*TOP* (hr)) (->sxml (doc (node 'thematic-break '() '()))))
@@ -106,6 +135,31 @@
     (->sxml (doc (node 'extension '((native-type . "custom_block")) '())))
     'no-raise))
 
+;; The adapter's OWN `else` fallthrough -- a node type this library has
+;; simply not mapped -- as opposed to the `extension` case above, which is
+;; cmark's own escape hatch for a type it flags as such. Both raise the same
+;; condition, so only the reported type string tells them apart; "bogus-type"
+;; is not "custom_block" and could not be produced by the extension case,
+;; which is what makes this a test of the sibling branch and not a repeat of
+;; the one above.
+(test-equal "an unmapped node type raises via the else branch, not extension"
+  "bogus-type"
+  (guard (e ((cmark-unsupported-node? e) (cmark-unsupported-node-type e))
+            (#t 'wrong-condition))
+    (->sxml (doc (node 'bogus-type '() '())))
+    'no-raise))
+
+;; markdown-ast->sxml's own guard on its second argument. Distinct from
+;; markdown->sxml's cmark-options? guard in (cmark gfm) -- untestable here,
+;; this being the PURE suite -- which test-sxml-differential.sps covers.
+(test-equal "markdown-ast->sxml rejects a non-sxml-options second argument"
+  '(#f invalid-value)
+  (guard (e ((cmark-invalid-option? e)
+             (list (cmark-invalid-option-key e) (cmark-invalid-option-reason e)))
+            (#t 'wrong-condition))
+    (markdown-ast->sxml (doc) (default-cmark-options))
+    'no-raise))
+
 ;; --- links --------------------------------------------------------------
 (define (link url title . kids)
   (node 'link (list (cons 'url url) (cons 'title title)) kids))
@@ -139,14 +193,34 @@
                            (link "vbscript:x" "" (text "c"))
                            (link "file:///etc/passwd" "" (text "d")))))))
 
+;; All FOUR allowed subtypes, named in the assertion's own title -- the
+;; earlier version of this fixture exercised only two (png, webp) and left
+;; the gif and jpeg prefix checks in dangerous-url? untested.
 (test-equal "data: is rejected except for the four image subtypes"
   '(*TOP* (p (a (^ (href "")) "html")
              (a (^ (href "data:image/png;base64,AA")) "png")
+             (a (^ (href "data:image/gif;base64,AA")) "gif")
+             (a (^ (href "data:image/jpeg;base64,AA")) "jpeg")
              (a (^ (href "data:image/webp,x")) "webp")))
   (->sxml (doc (node 'paragraph '()
                      (list (link "data:text/html,<b>" "" (text "html"))
                            (link "data:image/png;base64,AA" "" (text "png"))
+                           (link "data:image/gif;base64,AA" "" (text "gif"))
+                           (link "data:image/jpeg;base64,AA" "" (text "jpeg"))
                            (link "data:image/webp,x" "" (text "webp")))))))
+
+;; An "empty URL" fixture was tried here and dropped: percent-encode("") is
+;; "" exactly as dangerous-url?'s rejection path also yields "", so
+;; safe-url("") is "" whichever branch runs and no mutation of the routing
+;; decision can move this assertion. Confirmed by mutation (see
+;; .plans/stage-5-mutation-log.md, Task 12 Step 0) rather than assumed.
+;;
+;; Every byte here needs escaping, unlike the mixed fixture above -- this
+;; exercises percent-encode's loop with no href-safe byte anywhere in the
+;; input.
+(test-equal "a URL of entirely unsafe bytes is percent-encoded throughout"
+  '(*TOP* (p (a (^ (href "%20%3C%3E")) "l")))
+  (->sxml (doc (node 'paragraph '() (list (link " <>" "" (text "l")))))))
 
 ;; --- images -------------------------------------------------------------
 ;; html.c:118-139 -- children render in PLAIN mode into alt: text, code, and
@@ -252,6 +326,21 @@
 (test-equal "a table with no body rows emits no tbody"
   '(*TOP* (table (thead (tr (th "h")))))
   (->sxml (doc (table (row #t (cell 'none (text "h")))))))
+
+;; The mirror image of the above: a table the parser could not itself
+;; produce (extensions/table.c:402-403 always synthesises a header row
+;; first) but markdown-ast->sxml accepts a caller-built tree, so this is
+;; reachable and had no test.
+(test-equal "a body-only table emits no thead"
+  '(*TOP* (table (tbody (tr (td "a")))))
+  (->sxml (doc (table (row #f (cell 'none (text "a")))))))
+
+;; Both accumulators empty from the start -- the fold's base case, distinct
+;; from "no body rows" above, where body stays empty but head does not.
+;; Unreachable from the parser for the same reason; reachable here.
+(test-equal "a table with no rows at all emits neither section"
+  '(*TOP* (table))
+  (->sxml (doc (node 'table '((columns . 0) (alignments . ())) '()))))
 
 ;; A header row anywhere but first is a tree the parser cannot produce, so
 ;; the adapter refuses it rather than silently normalising it into output

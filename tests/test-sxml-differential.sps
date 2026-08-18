@@ -248,6 +248,19 @@
   '(*TOP* (h1 "hi"))
   (markdown->sxml "# hi\n" (make-cmark-options 'unsafe-html? #f)))
 
+;; markdown->sxml's OWN guard on its second argument -- distinct from
+;; markdown-ast->sxml's sxml-options? guard, pinned in the pure suite. Two
+;; record types with matching-shaped APIs coexist here (cmark-options and
+;; sxml-options), so passing the wrong one at the wrong position is a
+;; realistic caller error.
+(test-equal "markdown->sxml rejects a non-cmark-options second argument"
+  '(#f invalid-value)
+  (guard (e ((cmark-invalid-option? e)
+             (list (cmark-invalid-option-key e) (cmark-invalid-option-reason e)))
+            (#t 'wrong-condition))
+    (markdown->sxml "hi\n" (default-sxml-options))
+    'no-raise))
+
 ;; --- the corpus ---------------------------------------------------------
 (define corpus-dir "vendor/cmark-gfm/test/")
 
