@@ -219,6 +219,230 @@ Exceeding either raises ~&cmark-resource-limit~, which derives from
 ;; => (too-deep 64)
 #+end_src
 
+** SXML
+
+#+begin_src scheme
+(import (cmark gfm))
+
+;; Parse and convert in one step. Renderer defaults; positions off.
+(markdown->sxml "# Hello\n\n[l](/x \"t\")\n")
+;; => (*TOP* (h1 "Hello") (p (a (^ (href "/x") (title "t")) "l")))
+
+;; The pure adapter, when you already hold a tree.
+(markdown-ast->sxml (markdown->ast "# Hello\n"))
+
+;; markdown->sxml takes cmark's options first, the SXML policies second.
+(markdown->sxml "para <b>raw</b>\n"
+                (default-cmark-options)
+                (make-sxml-options 'raw-html 'escape))
+;; => (*TOP* (p "para " "<b>" "raw" "</b>"))
+#+end_src
+
+~(cmark gfm sxml)~ is pure: it imports nothing that can reach a shared
+object, and ~make check-purity~ enforces that by running its suite with
+the shim path poisoned. ~markdown->sxml~ lives in ~(cmark gfm)~ rather
+than in the adapter precisely because it parses.
+
+*** Options
+
+| Key                | Values                      | Default   |
+|--------------------+-----------------------------+-----------|
+| ~raw-html~         | ~omit~, ~escape~            | ~omit~    |
+| ~softbreak~        | ~newline~, ~break~, ~space~ | ~newline~ |
+| ~attribute-marker~ | ~caret~, ~at~               | ~caret~   |
+
+~make-sxml-options~, ~default-sxml-options~, and ~sxml-options-with~
+mirror the ~cmark-options~ trio exactly, including its rejection of
+unknown keys, duplicate keys, and unknown values.
+
+*~omit~ is the default because it is the policy that does not depend on
+the caller's serializer.* Under ~omit~ an ~html-block~ or ~html-inline~
+becomes ~(*COMMENT* " raw HTML omitted ")~ — cmark's own substitution
+(~src/html.c:259,337~) — so the tree holds no attacker-controlled markup
+at all and the output is safe whatever serializer you chose. Under
+~escape~ the literal is carried through as an ordinary string and the
+safety rests *entirely* on that serializer escaping it. That is a
+difference in what this library can promise, not a matter of taste. There
+is no trusted or unsafe mode and none is planned (ADR-0011): SXML has no
+portable raw-markup node, and a caller who needs the literal reads it
+from the AST, which preserves it.
+
+~softbreak~ is the SXML side of cmark's ~hardbreaks?~/~nobreaks?~. Those
+are renderer flags on softbreak (~html.c:319-325~) that never reach the
+parse, so no AST can carry them and the adapter has no other way to learn
+them.
+
+*The default attribute marker is deliberately not the SXML
+specification's ~@~.* Both serializers reachable on this platform mark an
+attribute list ~^~ — ~wak-sxml-tools~ (~sxml-tools/upstream/sxml-tools.scm:44-48~)
+and ~wak-htmlprag~ (~htmlprag/htmlprag.scm:334~) — and neither recognises
+~@~ at all. Handed a ~@~-marked tree, ~srl:sxml->html~ does not raise: it
+silently turns every attribute list into bogus child elements
+(~(a (@ (href "/x")) "l")~ becomes ~<a><@><href>/x</href></@>l</a>~). Do
+not assume canonical SXML here. ~'attribute-marker 'at~ gives the
+specification's spelling, for hand-written pattern matching or for moving
+a tree to another Scheme. See ADR-0013.
+
+*** Options that are refused, and one that is not
+
+~markdown->sxml~ raises ~&cmark-invalid-option~ with reason
+~not-applicable~ for ~unsafe-html?~, ~hardbreaks?~, and ~nobreaks?~:
+
+#+begin_src scheme
+(markdown->sxml "# hi\n" (make-cmark-options 'unsafe-html? #t))
+;; raises &cmark-invalid-option, key unsafe-html?, reason not-applicable
+#+end_src
+
+All three are cmark *renderer* options. They never reach the parse, so no
+AST can carry them, and SXML is a different renderer with its own
+policies — ~raw-html~ and ~softbreak~ above. Accepting one silently would
+discard a setting the caller made explicitly. The cost is real and
+accepted: one options record shared with ~markdown->html~ needs a
+~cmark-options-with~ line, which makes the divergence in security
+semantics visible at the call site rather than invisible.
+
+~source-positions?~ is the deliberate exception. It is *accepted and
+silently discarded*. Unlike the three above it genuinely does reach the
+AST — the parse honours it, at full cost — and it is the adapter that
+then drops the positions, per ADR-0011. What that costs a caller is
+wasted parse work, not a downgraded policy, so it is not refused.
+~markdown->sxml~ defaults to ~(default-cmark-options)~, where positions
+are off, rather than to ~(default-ast-options)~: turning them on would
+pay for information the output discards (ADR-0009).
+
+*** The mapping
+
+Every row is the shape a conforming serializer must render as the cited
+cmark output. ~^~ below is the attribute marker under the default
+~attribute-marker: caret~; under ~at~ it is ~@~ and nothing else changes.
+
+| AST node                       | SXML                                                                        | cmark                             |
+|--------------------------------+-----------------------------------------------------------------------------+-----------------------------------|
+| ~document~                     | ~(*TOP* …)~                                                                 | —                                 |
+| ~heading~ level /n/            | ~(h1 …)~ … ~(h6 …)~                                                         | ~html.c:201~                      |
+| ~paragraph~                    | ~(p …)~, or spliced away inside a tight list                                 | ~html.c:287~                      |
+| ~text~                         | a string, verbatim                                                          | ~html.c:311~                      |
+| ~emph~                         | ~(em …)~                                                                    | ~html.c:376~                      |
+| ~strong~                       | ~(strong …)~; directly inside a ~strong~, spliced away                       | ~html.c:366~                      |
+| ~strikethrough~                | ~(del …)~                                                                   | ~extensions/strikethrough.c:132~  |
+| ~blockquote~                   | ~(blockquote …)~                                                            | ~html.c:151~                      |
+| ~list~, bullet                 | ~(ul …)~                                                                    | ~html.c:170~                      |
+| ~list~, ordered, start = 1     | ~(ol …)~                                                                    | ~html.c:174~                      |
+| ~list~, ordered, start ≠ 1     | ~(ol (^ (start "N")) …)~                                                    | ~html.c:178~                      |
+| ~item~, plain                  | ~(li …)~                                                                    | ~html.c:190~                      |
+| ~item~, task, checked          | ~(li (input (^ (type "checkbox") (checked "") (disabled ""))) " " …)~       | ~extensions/tasklist.c:125~       |
+| ~item~, task, unchecked        | the same with *no* ~checked~ attribute at all                                | ~extensions/tasklist.c:127~       |
+| ~link~                         | ~(a (^ (href …) (title …)) …)~                                              | ~html.c:384~                      |
+| ~image~                        | ~(img (^ (src …) (alt …) (title …)))~                                       | ~html.c:402~                      |
+| ~code~                         | ~(code …)~                                                                  | ~html.c:329~                      |
+| ~code-block~, no info          | ~(pre (code …))~                                                            | ~html.c:218~                      |
+| ~code-block~, info             | ~(pre (code (^ (class "language-X")) …))~                                   | ~html.c:242~                      |
+| ~thematic-break~               | ~(hr)~                                                                      | ~html.c:280~                      |
+| ~linebreak~                    | ~(br)~                                                                      | ~html.c:315~                      |
+| ~softbreak~                    | ~"\n"~, or ~(br)~ / ~" "~ per ~softbreak~                                   | ~html.c:319-325~                  |
+| ~html-inline~ / ~html-block~   | ~(*COMMENT* " raw HTML omitted ")~, or the literal under ~escape~            | ~html.c:259,337~                  |
+| ~table~                        | ~(table (thead …) (tbody …))~, either section absent when empty              | ~extensions/table.c:756,774~      |
+| ~table-row~                    | ~(tr …)~                                                                    | ~extensions/table.c:774~          |
+| ~table-cell~, header / body    | ~(th (^ (align …)) …)~ / ~(td (^ (align …)) …)~                             | ~extensions/table.c:798,806~      |
+| ~extension~, or anything unmapped | raises ~&cmark-unsupported-node~, carrying the type                       | —                                 |
+
+Four details the table compresses:
+
+- *A tight list has no ~p~ elements in its output at all.* ~html.c:287-297~
+  reads tightness off the paragraph's grandparent and emits no ~<p>~ tags;
+  the paragraph's children go straight into the ~<li>~. This is not
+  "paragraphs that render compactly".
+- *~title~ and ~align~ are omitted, never empty.* ~html.c:392~ writes
+  ~title~ only when it is non-empty, and ~extensions/table.c:806~ writes no
+  ~align~ for an unaligned column. An empty attribute is a byte difference.
+  ~align~ appears on body cells as well as header cells.
+- *~class="language-X"~ takes the first token of the info string only*
+  (~html.c:223-227~). The rest is reachable only through
+  ~CMARK_OPT_FULL_INFO_STRING~, which this library does not expose.
+- *An image's ~alt~ is a flattened string, produced by cmark's own plain
+  mode* (~html.c:118-139~), not by the serializer: ~text~, ~code~, and
+  ~html-inline~ contribute their literals, ~linebreak~ and ~softbreak~ a
+  single space, every other node nothing while still being descended into.
+
+~markdown-ast->sxml~ is public and takes an arbitrary tree, so it also
+raises ~&cmark-malformed-tree~ (reason ~header-row-not-first~) for a table
+whose header row is not the first: cmark's parser cannot produce one, and
+reproducing what its renderer would do opens a ~thead~ inside an open
+~tbody~.
+
+*** What the mapping drops
+
+HTML vocabulary cannot express everything the AST holds. ~markdown->ast~
+remains the interface for all of it:
+
+| Dropped                            | Where it survives |
+|------------------------------------+-------------------|
+| ~list~ ~delimiter~ (period vs paren) | ~markdown->ast~ |
+| ~item~ ~index~                       | ~markdown->ast~ |
+| fence info past the first token      | ~markdown->ast~ |
+| image child structure                | ~markdown->ast~ |
+| all source positions                 | ~markdown->ast~ |
+| raw HTML literals (under ~omit~)     | ~markdown->ast~ |
+
+This is ADR-0011, not an oversight. Because the tree carries no metadata
+channel, every piece of information the tree carries /about the document/
+is information the HTML shows — which is what puts almost all of it under
+the byte-for-byte oracle below. Two properties stay outside it and are
+tested directly instead: ~raw-html: escape~, which cmark has no equivalent
+for, and ~attribute-marker~, which the test serializer accepts in both
+spellings and so normalises away before comparing. See design spec §10.
+
+*** URLs
+
+A ~link~ ~href~ and an ~image~ ~src~ take cmark's own rule, transcribed
+from ~src/scanners.re:345-354~: a URL is dangerous when it begins
+~javascript:~, ~vbscript:~, ~file:~, or ~data:~, matched
+case-insensitively, with ~data:image/png~, ~data:image/gif~,
+~data:image/jpeg~, and ~data:image/webp~ allowed through. A rejected URL
+yields an *empty* attribute value — not a raised condition and not a
+removed attribute — matching ~html.c:387-391~ and ~html.c:405-409~. There
+is no customisation hook in 0.3.
+
+The adapter percent-encodes every byte outside ~HREF_SAFE~
+(~src/houdini_href_e.c:32-44~) and *never touches ~&~ or ~'~*. Those two
+are entity-escaped by whatever serializer you run; doing both halves in
+one place produces ~%2520~ or ~&amp;amp;~, valid HTML carrying the wrong
+URL.
+
+*** Your serializer, not ours
+
+The SXML tree is verified by rendering it through a test-only serializer
+written against ~vendor/cmark-gfm/src/html.c~ and diffing byte-for-byte
+against ~markdown->html~ for the same parse, across all 744 examples of
+cmark's own corpus, under both attribute markers. *That byte-equality is a
+property of the serializer in ~tests/~, not a promise about your pipeline.*
+A conforming third-party serializer will differ, and none of
+these differences changes what the document means. Measured against
+~wak-sxml-tools~' ~srl:sxml->html~, the one this project tests
+conformance through:
+
+|                                  | cmark              | ~srl:sxml->html~                        |
+|----------------------------------+--------------------+-----------------------------------------|
+| Between blocks                   | ~\n~               | ~\n~ plus depth-proportional indentation |
+| Two adjacent inline elements     | nothing between    | newline and indent injected             |
+| ~"~ in text                      | ~&quot;~           | left raw                                |
+| ~'~ in an ~href~                 | ~&#x27;~           | ~&apos;~                                |
+| Childless elements               | ~<hr />~           | ~<hr>~                                  |
+| End of document                  | trailing ~\n~      | none                                    |
+
+The second row is the one worth knowing: an injected newline between two
+adjacent inline elements collapses to a rendered space, so
+~<p><strong>a</strong><em>b</em></p>~ and
+~<p>\n  <strong>a</strong>\n  <em>b</em>\n</p>~ do not look the same.
+~srl:sxml->html-noindent~ avoids the whole indentation family.
+
+⚠️ *A pretty-printing serializer will corrupt ~<pre>~ content.* Injected
+indentation inside a code block is content, not formatting.
+~srl:sxml->html~ does not do it — it exempts ~pre~, ~script~, ~style~, and
+~textarea~, and any element with a bare-text child, and
+~tests/test-sxml-portability.sps~ asserts the exact rendering — but that
+is a property of that serializer, checked, not a property of SXML.
+
 ** Errors
 
 Every failure is a structured condition deriving from ~&cmark-error~, so a

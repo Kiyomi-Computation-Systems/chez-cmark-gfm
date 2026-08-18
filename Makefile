@@ -81,6 +81,8 @@ else
 endif
 
 SRFI_SRC     := vendor/chez-srfi
+SXMLT_SRC    := vendor/wak-sxml-tools
+COMMON_SRC   := vendor/wak-common
 SRFI_LIBS    := $(BUILD_DIR)/scheme-libs
 CHEZ_LIBDIRS := src:tests:$(SRFI_LIBS)
 TESTS        := $(wildcard tests/test-*.sps)
@@ -97,6 +99,27 @@ TESTS        := $(wildcard tests/test-*.sps)
 # inside this very Chez process before the CLI leg ever runs. That is exactly
 # what Valgrind/ASan need to see, so excluding this suite would drop coverage
 # no other suite provides (design spec 2026-08-17-stage-3-ast-design.md 9.1).
+#
+# test-sxml-differential.sps is the THIRD differential suite and the heaviest
+# in-process, and it stays IN for the same reason test-ast-differential.sps
+# does, only more so. Its main leg parses all 744 corpus examples through
+# markdown->ast and then again through markdown->html, once per attribute
+# marker -- 744 x 2 sides x 2 markers is ~3000 parses before the option
+# matrix and the unsupported-node sweep add their own -- every one of them
+# allocating and freeing cmark objects inside this Chez process. Nothing
+# else in the suite puts that
+# volume or that variety of document through the native allocator, so this
+# is the single largest block of instrumented coverage the memory target
+# gets. The adapter itself allocates nothing native (it is pure Scheme, which
+# is what `make check-purity` gates), but the parse feeding it is not, and
+# that is what is under the tool here.
+#
+# Its own CLI leg is the four fixtures under two markers -- eight
+# subprocesses, uninstrumented like every other subprocess above, and far too
+# few to be worth excluding the suite over. That is the whole reason the
+# in/out judgement lands differently here than for test-differential.sps: the
+# question is never "does it spawn subprocesses" but "is there instrumented
+# work that would be lost".
 MEMORY_TESTS := $(filter-out tests/test-differential.sps,$(TESTS))
 
 .PHONY: all build deps check-pins check-purity check-prod dev test test-memory vendor clean prod deps-info
@@ -110,41 +133,94 @@ deps-info:
 
 build: $(SHIM) $(CONFIG_SLS)
 
-# Scheme dependencies. chez-srfi is vendored as a submodule pinned to the SAME
-# commit Akku.lock names (7879b52). Keep them equal: bumping the Akku dependency
-# without re-pinning the submodule means consumers and CI test different code,
-# and nothing here would notice. Akku itself is
-# deliberately NOT on this path: it has no prebuilt binary, and its downloader
-# fails on some hosts with CURLE_URL_MALFORMED. Akku.manifest/Akku.lock remain
-# the consumer-facing declaration.
+# Scheme dependencies. chez-srfi, wak-sxml-tools, and wak-common are each
+# vendored as a submodule pinned to the SAME commit Akku.lock names. Keep them
+# equal: bumping the Akku dependency without re-pinning the submodule means
+# consumers and CI test different code, and nothing here would notice. Akku
+# itself is deliberately NOT on this path: it has no prebuilt binary, and its
+# downloader fails on some hosts with CURLE_URL_MALFORMED. Akku.manifest/
+# Akku.lock remain the consumer-facing declaration.
 #
 # chez-srfi ships Akku's percent-encoded filenames (%3a64.sls). Chez resolves
 # (srfi :64) only from the decoded spelling, so link both into a build tree and
 # leave the submodule's own working tree untouched.
-# The submodule pin and Akku.lock name the same chez-srfi commit, and nothing
-# else enforces that. They drifted within minutes of the rule being written: a
-# `git submodule update --init` (from `deps`, below) resets the working tree to
-# the RECORDED gitlink, silently undoing a manual detach that had not been
-# staged yet. So this is a check, not a comment.
+#
+# wak-sxml-tools's own repo root has no `wak/` directory -- `(wak sxml-tools
+# serializer)` is exported from sxml-tools/serializer.sls, so the symlink
+# below aliases that directory straight to build/scheme-libs/wak/sxml-tools.
+# Confirmed by `find vendor/wak-sxml-tools -name 'serializer*'`; a brief that
+# assumed a `wak/sxml-tools/` layout was wrong about this.
+#
+# wak-sxml-tools's serializer.sls is not self-contained: it imports
+# (wak private include), which lives in a SEPARATE package, wak-common --
+# discovered by actually importing (wak sxml-tools serializer) and watching
+# it fail with "library (wak private include) not found", then confirmed via
+# `akku lock`, which resolves wak-common (and wak-ssax, unused by this one
+# import chain and so not vendored) as transitive dependencies. wak-common is
+# therefore vendored the same way, pinned to the commit `akku lock` names.
+# Its (wak private include compat) library ships one file per Scheme
+# implementation (compat.chezscheme.sls, compat.guile.sls, ...), each
+# declaring the SAME library name; Akku's installer picks one and renames it
+# to compat.sls at install time. Bypassing that installer (same reason as
+# above) means this recipe must do the same rename -- the same kind of
+# filename massaging as chez-srfi's percent-encoding fix above, just for a
+# different naming convention.
+#
+# Every top-level private/*.sls file is linked, not just include.sls: the
+# package also ships private/define-values.sls and private/let-optionals.sls
+# beside it, unused by today's one import chain and so easy to miss by
+# naming only the file that IS used. Naming files individually is exactly
+# how include.sls ended up alone here the first time; a re-pin that made
+# (wak private include) reach either of the other two would fail at TEST
+# time with library-not-found, not at deps time where a missing link is far
+# easier to diagnose. Globbing costs nothing extra today and removes that
+# gap for any file this directory gains later, known about or not.
+#
+# The submodule pins and Akku.lock name the same commits, and nothing else
+# enforces that. chez-srfi's drifted within minutes of the rule being
+# written: a `git submodule update --init` (from `deps`, below) resets the
+# working tree to the RECORDED gitlink, silently undoing a manual detach that
+# had not been staged yet. So this is a check, not a comment.
+#
+# The lock= extraction below matches the URL line whose LAST PATH SEGMENT
+# starts with "name_" -- e.g. .../w/wak-common_0.1.0-akku.15.6d495fc_repack
+# .tar.xz -- rather than a bare /name/ search. An unanchored search matches
+# $$name as a substring ANYWHERE in the file, including inside an earlier
+# entry's own URL (a future package named, say, "common" would match inside
+# "wak-common"'s own line), and would then read that earlier entry's hash
+# instead of its own -- silently, since both are valid-looking hex. Every
+# entry names its own URL right after its own "(name ...)" line, which is
+# what let an earlier, unanchored version of this rule look correct for all
+# three packages checked today; that was luck, not the mechanism, and the
+# earlier version also relied on `head -1` to stop an "/$$name/,/^$$/" sed
+# range that never terminates -- Akku.lock has no blank lines, so that range
+# always ran to end of file. Anchoring on the tarball's own name_version
+# convention removes both: the pattern can only match the target package's
+# own line, so which line comes first no longer matters.
 check-pins:
-	@rec=$$(git ls-files -s $(SRFI_SRC) | awk '{print $$2}'); \
-	lock=$$(sed -n 's/.*akku\.[0-9]*\.\([a-f0-9]*\)_repack.*/\1/p' Akku.lock | head -1); \
-	if [ -z "$$rec" ] || [ -z "$$lock" ]; then \
-	  echo "check-pins: could not read both pins (submodule='$$rec' lock='$$lock')" >&2; \
-	  exit 1; \
-	fi; \
-	case "$$rec" in \
-	  "$$lock"*) echo "pins agree: chez-srfi $$lock" ;; \
-	  *) echo "PIN DRIFT: submodule $$rec but Akku.lock names $$lock." >&2; \
-	     echo "Consumers install what Akku.lock names; CI tests the submodule." >&2; \
-	     exit 1 ;; \
-	esac
+	@fail=0; \
+	for pair in "$(SRFI_SRC):chez-srfi" "$(SXMLT_SRC):wak-sxml-tools" "$(COMMON_SRC):wak-common"; do \
+	  src=$${pair%%:*}; name=$${pair##*:}; \
+	  rec=$$(git ls-files -s $$src | awk '{print $$2}'); \
+	  lock=$$(sed -n "s#.*/$${name}_[^\"]*-akku\.[0-9]*\.\([a-f0-9]*\)_repack.*#\1#p" Akku.lock | head -1); \
+	  if [ -z "$$rec" ] || [ -z "$$lock" ]; then \
+	    echo "check-pins: could not read both pins for $$name (submodule='$$rec' lock='$$lock')" >&2; \
+	    fail=1; continue; \
+	  fi; \
+	  case "$$rec" in \
+	    "$$lock"*) echo "pins agree: $$name $$lock" ;; \
+	    *) echo "PIN DRIFT: $$name submodule $$rec but Akku.lock names $$lock." >&2; \
+	       fail=1 ;; \
+	  esac; \
+	done; \
+	exit $$fail
 
 # options.sls and ast.sls must import no library that loads a shared object,
 # directly or transitively (each file's own header comment states this).
-# That purity is what makes every one of test-options.sps's 49 assertions
-# and test-ast.sps's 30 unable to pass by accident because of native
-# behaviour -- they exercise Scheme values only.
+# That purity is what makes every assertion in tests/test-options.sps,
+# tests/test-ast.sps, and tests/test-sxml.sps unable to pass by accident
+# because of native behaviour -- they exercise Scheme values only.
+#
 # Poisoning CHEZ_CMARK_GFM_SHIM with a path that looks absolute but does not
 # exist is a probe: if nothing in the suite's import chain ever reaches
 # (cmark gfm private native), the variable is never even read and the suite
@@ -165,7 +241,7 @@ check-pins:
 # what trips this.
 check-purity: build deps
 	@fail=0; \
-	for t in tests/test-options.sps tests/test-ast.sps; do \
+	for t in tests/test-options.sps tests/test-ast.sps tests/test-sxml.sps; do \
 	  echo "=== check-purity: $$t, CHEZ_CMARK_GFM_SHIM poisoned ==="; \
 	  if CHEZ_CMARK_GFM_SHIM=/nonexistent CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) \
 	      $(CHEZ) --program $$t; then \
@@ -183,7 +259,27 @@ check-purity: build deps
 # Always relinks rather than using a stamp file: a stamp keyed on nothing the
 # submodule pin touches would leave stale symlinks after a re-pin. `ln -sfn` is
 # idempotent and the whole loop is well under a second.
+#
+# cmark-gfm is initialised here too, and it is NOT a Scheme dependency: what
+# `deps` needs from it is `test/*.txt`, the 744-example corpus
+# tests/test-sxml-differential.sps reads. That suite is the only thing under
+# tests/ that reads the vendored WORKING TREE at all -- every other suite
+# reaches cmark through $(CMARK_CLI) or the shim, both of which the
+# pkg-config path satisfies without any submodule. So under HAVE_PKG=yes
+# nothing else initialised it: `$(SHIM): vendor` is guarded out, `vendor`
+# never runs, and `make test` on a fresh clone died inside the suite on an
+# uncaught &i/o-file-does-not-exist naming open-file-input-port -- pointing
+# at the reader, not at the missing checkout.
+#
+# CHECKOUT ONLY, deliberately: no cmake, no build. Under HAVE_PKG=no the
+# `vendor` target builds this same submodule for the shim to link against,
+# and building it twice from two targets would be the waste that rule exists
+# to avoid. `git submodule update --init` is idempotent and only ever resets
+# to the recorded gitlink, so running it from both paths disturbs neither --
+# and the corpus has to be at the pinned commit either way, since it is the
+# same revision the library links against.
 deps:
+	git submodule update --init $(VENDOR_DIR)
 	git submodule update --init $(SRFI_SRC)
 	mkdir -p $(SRFI_LIBS)/srfi
 	src=$(abspath $(SRFI_SRC)); dst=$(abspath $(SRFI_LIBS))/srfi; \
@@ -193,6 +289,17 @@ deps:
 	  d=$$(printf '%s' "$$b" | sed 's/%3a/:/g'); \
 	  [ "$$d" = "$$b" ] || ln -sfn "$$f" "$$dst/$$d"; \
 	done
+	git submodule update --init $(SXMLT_SRC)
+	mkdir -p $(SRFI_LIBS)/wak
+	ln -sfn $(abspath $(SXMLT_SRC))/sxml-tools $(abspath $(SRFI_LIBS))/wak/sxml-tools
+	git submodule update --init $(COMMON_SRC)
+	mkdir -p $(SRFI_LIBS)/wak/private/include
+	src=$(abspath $(COMMON_SRC))/private; dst=$(abspath $(SRFI_LIBS))/wak/private; \
+	for f in $$src/*.sls; do ln -sfn "$$f" "$$dst/$$(basename "$$f")"; done
+	src=$(abspath $(COMMON_SRC))/private/include; dst=$(abspath $(SRFI_LIBS))/wak/private/include; \
+	for f in $$src/*; do ln -sfn "$$f" "$$dst/$$(basename "$$f")"; done
+	ln -sfn $(abspath $(SRFI_LIBS))/wak/private/include/compat.chezscheme.sls \
+	        $(abspath $(SRFI_LIBS))/wak/private/include/compat.sls
 
 $(LIB_DIR):
 	mkdir -p $(LIB_DIR)

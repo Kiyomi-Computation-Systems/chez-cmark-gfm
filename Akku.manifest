@@ -1,8 +1,9 @@
 #!r6rs ; -*- scheme -*-
 (import (akku format manifest))
 
-(akku-package ("chez-cmark-gfm" "0.2.0")
+(akku-package ("chez-cmark-gfm" "0.3.0")
   (synopsis "CommonMark and GitHub Flavored Markdown for Chez Scheme")
   (authors "Kiyomi Computation Systems LLC")
   (license "BSD-3-Clause")
-  (depends ("chez-srfi" "^0.0.0-akku.181.7879b52")))
+  (depends/dev ("chez-srfi" "^0.0.0-akku.181.7879b52")
+               ("wak-sxml-tools" "^0.0.0-akku.1.5c14730")))

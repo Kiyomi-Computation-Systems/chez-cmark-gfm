@@ -21,9 +21,11 @@
   - If no mutation can break the assertion, the assertion is empty. Rewrite it, or
     write down in the mutation log that the property is uncovered and why. Leaving
     it silently is the exact failure this rule exists to prevent.
-  - Prefer comparing against an expected value over asserting truthiness. In Scheme
-    almost everything is true, so `test-assert` is where empty tests hide — see the
-    truthiness trap below.
+  - **Expect a value only success can produce.** Ask what *else* yields it.
+    Truthiness is the obvious trap — in Scheme almost everything is true, so
+    `test-assert` is where empty tests hide — but `#f` is worse: it is what a
+    missing key returns, what a defaulting accessor returns, and what a
+    swallowed exception returns. Prefer a sentinel no failure path produces.
 * **Prefer a check to a comment.** When you are about to write a comment stating
   an invariant — these two things must stay equal, this must run before that,
   never call X from here — ask first whether it can be a make target, a test, or
@@ -43,6 +45,12 @@
 * Project should be portable across amd64 and arm64
 * Plans live in `/.plans`, decision records in `/.plans/decisions`
 * Add entries to `CHANGELOG.md` for each release
+* **Closing Ritual:** squash merge PR, catch local `main` up, clean up
+  branches, reflect on the session. Run all four parts without asking which.
+  A squash merge leaves the branch unreachable by ancestry, so `git branch -d`
+  refuses it and `-D` is required — diff against `main` first to confirm
+  nothing unique is being dropped. The reflection is a retrospective, not a
+  summary of what was done.
 
 ## Traps this repo has already hit
 
@@ -69,3 +77,56 @@ None is obvious from reading the code.
   reasonable expectations here: see ADR-0005, and
   `cmark_parser_attach_syntax_extension`, which has a single unconditional
   `return 1` and cannot signal failure at all.
+* **SRFI-64 turns any exception in a test's *actual* expression into `#f`**
+  (`vendor/chez-srfi/%3a64/testing-impl.scm:568-571`: the R6RS
+  `%test-evaluate-with-catch` is `(guard (ex (else #F)) …)`). An assertion
+  expecting `#f` therefore passes when the code under test raises. Never make
+  `#f` the expected value of an assertion that can raise — use a sentinel the
+  failure path cannot produce: `'agree (or (compare …) 'agree)`. A whole
+  differential leg reported 79/79 green against a `cmark-gfm` that crashed on
+  every fixture, because the helper's raise on a non-zero exit was swallowed.
+* **Chez evaluates argument expressions right-to-left in compiled library code**,
+  left-to-right when interpreted. Never let an assertion's meaning depend on
+  which argument runs first: one named "rejected before anything is allocated"
+  was in fact satisfied by the *last* argument's accessor raising.
+* **A struct tag first named in a prototype's parameter list has prototype scope
+  only** (C99 6.2.1p7). Forward-declare it at file scope before the prototype.
+  `cmark-gfm-shim.h` is included before `<cmark-gfm.h>`, so
+  `int f(struct cmark_node *n);` without that line declares a different type
+  than the `.c` definition sees — conflicting types, unrelated to `-Werror`.
+* **An SXML serializer that does not know your attribute marker will not reject
+  the tree — it renders it wrong.** The specification marks an attribute list
+  `@`; both serializers reachable on this platform (`wak-sxml-tools`,
+  `wak-htmlprag`) mark it `^` and contain no `@` anywhere, so
+  `(a (@ (href "/x")) "l")` comes back as `<a><@><href>/x</href></@>l</a>` with
+  nothing raised. The first fix was worse than the bug: a test-only rewrite of
+  `@` to `^` applied before handing the tree over, which made the conformance
+  suite green while saying nothing about the tree the library actually emits —
+  one of its four assertions passed unconditionally for as long as that rewrite
+  existed. A conformance test that transforms its input tests the
+  transformation. See ADR-0013.
+* **Apply a mutation where the data flows, not where the name says it flows.** A
+  mutation escaping the adapter's `text` case, meant to prove that escaping is
+  the serializer's job, produced no failure at all — 4/4, exit 0 — because the
+  `<script>` in its fixture reaches the tree as an `html-inline` node through a
+  different function, and the three real `text` nodes it did touch held no
+  character worth escaping. The assertion had been *named* for the `text` case
+  too, so a real regression would have pointed a reader at the wrong function.
+  Dump the actual tree before choosing either the mutation site or the name.
+* **An assertion passes whenever some *other* rule can produce the value it
+  expects.** The abstract form of this is already above; here is what it looked
+  like four times in one stage, each one green and each one empty. A
+  `*COMMENT*`-in-`blockquote` fixture survived narrowing `block-comment-parents`
+  to `'(*TOP*)`, because `blockquote` is also in `cr-before-close` and
+  contributes the identical newline. An empty-URL assertion could not
+  distinguish "empty routes to encoding" from "empty routes to rejection",
+  because `percent-encode("")` and the rejection branch both yield `""`. A
+  `contains?` probe for `"  indented\n"` still matched after the serializer was
+  turned into a pretty-printer, because the injected indent lands immediately in
+  front of the content's own two spaces — the substring survived the corruption
+  it existed to detect. And a functional-update test cannot tell "carried from
+  the argument" from "rebuilt from the default" while its base record holds the
+  default for the field the update leaves alone; two of `sxml-options-with`'s
+  three fields were unpinned that way. Assert the whole rendering rather than a
+  substring, give the fixture a neighbour that cannot produce the same bytes by
+  another route, and build the base out of non-default values.

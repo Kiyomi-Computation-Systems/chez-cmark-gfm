@@ -291,6 +291,192 @@
           (cmark-options-max-nodes o)
           (cmark-options-max-depth o))))
 
+;; --- sxml options -------------------------------------------------------
+(test-equal "default raw-html policy is omit"
+  'omit (sxml-options-raw-html (default-sxml-options)))
+
+(test-equal "raw-html can be set to escape"
+  'escape (sxml-options-raw-html (make-sxml-options 'raw-html 'escape)))
+
+(test-equal "sxml-options-with returns a new record"
+  '(omit escape)
+  (let ((base (default-sxml-options)))
+    (list (sxml-options-raw-html base)
+          (sxml-options-raw-html (sxml-options-with base 'raw-html 'escape)))))
+
+(test-equal "an unknown sxml key is rejected"
+  '(raw-htlm unknown-key)
+  (guard (e ((cmark-invalid-option? e)
+             (list (cmark-invalid-option-key e) (cmark-invalid-option-reason e)))
+            (#t 'wrong-condition))
+    (make-sxml-options 'raw-htlm 'escape)
+    'no-raise))
+
+(test-equal "a duplicate sxml key is rejected"
+  '(raw-html duplicate-key)
+  (guard (e ((cmark-invalid-option? e)
+             (list (cmark-invalid-option-key e) (cmark-invalid-option-reason e)))
+            (#t 'wrong-condition))
+    (make-sxml-options 'raw-html 'omit 'raw-html 'escape)
+    'no-raise))
+
+(test-equal "an unknown raw-html value is rejected"
+  '(raw-html invalid-value)
+  (guard (e ((cmark-invalid-option? e)
+             (list (cmark-invalid-option-key e) (cmark-invalid-option-reason e)))
+            (#t 'wrong-condition))
+    (make-sxml-options 'raw-html 'trusted)
+    'no-raise))
+
+;; sxml-options-with runs the same validation as the constructor, so an
+;; invalid value cannot enter through the back door.
+(test-equal "sxml-options-with rejects a non-options first argument"
+  '(#f invalid-value)
+  (guard (e ((cmark-invalid-option? e)
+             (list (cmark-invalid-option-key e) (cmark-invalid-option-reason e)))
+            (#t 'wrong-condition))
+    (sxml-options-with (default-cmark-options) 'raw-html 'escape)
+    'no-raise))
+
+(test-equal "sxml-options-with validates too"
+  '(raw-html invalid-value)
+  (guard (e ((cmark-invalid-option? e)
+             (list (cmark-invalid-option-key e) (cmark-invalid-option-reason e)))
+            (#t 'wrong-condition))
+    (sxml-options-with (default-sxml-options) 'raw-html 'reject)
+    'no-raise))
+
+;; --- softbreak -----------------------------------------------------------
+;; Mirrors the seven raw-html assertions immediately above: default, valid
+;; values, an sxml-options-with round-trip, unknown key, duplicate key,
+;; invalid value, and that sxml-options-with validates too. Before this,
+;; softbreak had no test at all -- deleting options.sls's `(unless (memq
+;; (sxml-options-softbreak o) '(newline break space)) ...)` clause broke
+;; nothing.
+(test-equal "default softbreak policy is newline"
+  'newline (sxml-options-softbreak (default-sxml-options)))
+
+(test-equal "softbreak can be set to break or space"
+  '(break space)
+  (list (sxml-options-softbreak (make-sxml-options 'softbreak 'break))
+        (sxml-options-softbreak (make-sxml-options 'softbreak 'space))))
+
+(test-equal "sxml-options-with returns a new record with softbreak changed"
+  '(newline break)
+  (let ((base (default-sxml-options)))
+    (list (sxml-options-softbreak base)
+          (sxml-options-softbreak (sxml-options-with base 'softbreak 'break)))))
+
+(test-equal "an unknown softbreak-shaped key is rejected"
+  '(softbrek unknown-key)
+  (guard (e ((cmark-invalid-option? e)
+             (list (cmark-invalid-option-key e) (cmark-invalid-option-reason e)))
+            (#t 'wrong-condition))
+    (make-sxml-options 'softbrek 'break)
+    'no-raise))
+
+(test-equal "a duplicate softbreak key is rejected"
+  '(softbreak duplicate-key)
+  (guard (e ((cmark-invalid-option? e)
+             (list (cmark-invalid-option-key e) (cmark-invalid-option-reason e)))
+            (#t 'wrong-condition))
+    (make-sxml-options 'softbreak 'newline 'softbreak 'break)
+    'no-raise))
+
+(test-equal "an unknown softbreak value is rejected"
+  '(softbreak invalid-value)
+  (guard (e ((cmark-invalid-option? e)
+             (list (cmark-invalid-option-key e) (cmark-invalid-option-reason e)))
+            (#t 'wrong-condition))
+    (make-sxml-options 'softbreak 'tab)
+    'no-raise))
+
+(test-equal "sxml-options-with validates softbreak too"
+  '(softbreak invalid-value)
+  (guard (e ((cmark-invalid-option? e)
+             (list (cmark-invalid-option-key e) (cmark-invalid-option-reason e)))
+            (#t 'wrong-condition))
+    (sxml-options-with (default-sxml-options) 'softbreak 'tab)
+    'no-raise))
+
+
+;; --- attribute-marker (ADR-0013) ----------------------------------------
+;; The values NAME the marker rather than being it. `@` cannot be written as
+;; a symbol literal in #!r6rs source at all (Global Constraints), so an
+;; option whose value WERE the marker could not be spelled by a caller
+;; writing #!r6rs -- the very callers this library targets.
+(test-equal "the default attribute marker is caret"
+  'caret (sxml-options-attribute-marker (default-sxml-options)))
+
+;; Both names, in one assertion: a validator that accepted only the default
+;; would still pass a test that set nothing, and one that accepted anything
+;; is caught by the invalid-value test below.
+(test-equal "attribute-marker accepts both names"
+  '(caret at)
+  (list (sxml-options-attribute-marker (make-sxml-options 'attribute-marker 'caret))
+        (sxml-options-attribute-marker (make-sxml-options 'attribute-marker 'at))))
+
+;; Also pins that the update carries the OTHER field through. A functional
+;; update that rebuilt from defaults instead of from o would pass a
+;; single-field round-trip and silently reset raw-html.
+(test-equal "sxml-options-with sets the marker and carries raw-html through"
+  '(caret at escape)
+  (let* ((base    (make-sxml-options 'raw-html 'escape))
+         (updated (sxml-options-with base 'attribute-marker 'at)))
+    (list (sxml-options-attribute-marker base)
+          (sxml-options-attribute-marker updated)
+          (sxml-options-raw-html updated))))
+
+(test-equal "a misspelled attribute-marker key is rejected"
+  '(attribute-mraker unknown-key)
+  (guard (e ((cmark-invalid-option? e)
+             (list (cmark-invalid-option-key e) (cmark-invalid-option-reason e)))
+            (#t 'wrong-condition))
+    (make-sxml-options 'attribute-mraker 'at)
+    'no-raise))
+
+(test-equal "a duplicate attribute-marker key is rejected"
+  '(attribute-marker duplicate-key)
+  (guard (e ((cmark-invalid-option? e)
+             (list (cmark-invalid-option-key e) (cmark-invalid-option-reason e)))
+            (#t 'wrong-condition))
+    (make-sxml-options 'attribute-marker 'caret 'attribute-marker 'at)
+    'no-raise))
+
+;; The marker itself is not a legal value: the option names a dialect.
+(test-equal "an unknown attribute-marker value is rejected"
+  '(attribute-marker invalid-value)
+  (guard (e ((cmark-invalid-option? e)
+             (list (cmark-invalid-option-key e) (cmark-invalid-option-reason e)))
+            (#t 'wrong-condition))
+    (make-sxml-options 'attribute-marker '^)
+    'no-raise))
+
+(test-equal "sxml-options-with validates attribute-marker too"
+  '(attribute-marker invalid-value)
+  (guard (e ((cmark-invalid-option? e)
+             (list (cmark-invalid-option-key e) (cmark-invalid-option-reason e)))
+            (#t 'wrong-condition))
+    (sxml-options-with (default-sxml-options) 'attribute-marker 'at-sign)
+    'no-raise))
+
+;; The other two carry-through paths, found uncovered by the Task 12 Step 4
+;; audit. Replacing (lookup a 'softbreak (sxml-options-softbreak o)) or
+;; (lookup a 'attribute-marker (sxml-options-attribute-marker o)) in
+;; sxml-options-with with the constructor's hardcoded default broke NOTHING
+;; in this file: every base record a functional-update test started from held
+;; the default for the field it did not touch, so no assertion could tell
+;; "carried from o" apart from "rebuilt from the default." Only raw-html's
+;; carry-through was pinned, by the assertion above. This base sets both
+;; other fields to non-default values and the update changes neither.
+(test-equal "sxml-options-with carries softbreak and attribute-marker through"
+  '(space at escape)
+  (let* ((base    (make-sxml-options 'softbreak 'space 'attribute-marker 'at))
+         (updated (sxml-options-with base 'raw-html 'escape)))
+    (list (sxml-options-softbreak updated)
+          (sxml-options-attribute-marker updated)
+          (sxml-options-raw-html updated))))
+
 (test-end "options")
 
 (exit (if (zero? (test-runner-fail-count runner)) 0 1))

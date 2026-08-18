@@ -19,11 +19,20 @@
           cmark-options-max-input-bytes
           supported-extensions
 
+          ;; SXML options
+          make-sxml-options default-sxml-options sxml-options-with
+          sxml-options? sxml-options-raw-html sxml-options-softbreak
+          sxml-options-attribute-marker
+
           ;; renderers
           markdown->html markdown->commonmark markdown->plaintext markdown->xml
 
           ;; AST
           markdown->ast
+          ;; SXML convenience entry point and the pure adapter it wraps --
+          ;; design spec 2.2 lists both as public; without this re-export
+          ;; the adapter is reachable only via (cmark gfm sxml) directly.
+          markdown->sxml markdown-ast->sxml
           make-markdown-node markdown-node?
           markdown-node-type markdown-node-properties
           markdown-node-children markdown-node-source
@@ -57,14 +66,75 @@
 
           ;; new condition
           &cmark-resource-limit cmark-resource-limit?
-          cmark-resource-limit-value)
+          cmark-resource-limit-value
+
+          &cmark-unsupported-node cmark-unsupported-node?
+          cmark-unsupported-node-type
+
+          &cmark-malformed-tree cmark-malformed-tree?
+          cmark-malformed-tree-reason)
   (import (rnrs)
           (cmark gfm options)
           (cmark gfm render)
           (cmark gfm ast)
           (cmark gfm parse)
+          (cmark gfm sxml)
           (cmark gfm private conditions)
           (cmark gfm private native))
+
+  ;; Lives here rather than in sxml.sls because it parses: putting it there
+  ;; would pull (cmark gfm private native) into that library's import chain
+  ;; and forfeit `make check-purity`.
+  ;;
+  ;; Defaults to default-cmark-options, NOT default-ast-options: positions
+  ;; never reach SXML (ADR-0011), so turning CMARK_OPT_SOURCEPOS on would
+  ;; cost a flag in the parse for information the output discards. That is
+  ;; ADR-0009's per-entry-point principle pointing the other way from
+  ;; markdown->ast.
+  (define markdown->sxml
+    (case-lambda
+      ((md) (markdown->sxml md (default-cmark-options) (default-sxml-options)))
+      ((md o) (markdown->sxml md o (default-sxml-options)))
+      ((md o so)
+       (unless (cmark-options? o)
+         (raise (make-cmark-invalid-option #f 'invalid-value)))
+       ;; Checked before anything native is acquired, so a rejected call
+       ;; leaves no resource to clean up.
+       ;;
+       ;; All three are cmark RENDERER options. Verified: CMARK_OPT_UNSAFE,
+       ;; CMARK_OPT_HARDBREAKS, and CMARK_OPT_NOBREAKS appear only in
+       ;; cmark-gfm.h, main.c, and the five renderers -- never in blocks.c,
+       ;; inlines.c, or parser.h. So none of them can reach the AST, and SXML
+       ;; is a different renderer with its own policies: raw-html and
+       ;; softbreak on the sxml-options record. Accepting one silently would
+       ;; discard a setting the caller made explicitly.
+       (when (cmark-options-unsafe-html? o)
+         (raise (make-cmark-invalid-option 'unsafe-html? 'not-applicable)))
+       (when (cmark-options-hardbreaks? o)
+         (raise (make-cmark-invalid-option 'hardbreaks? 'not-applicable)))
+       (when (cmark-options-nobreaks? o)
+         (raise (make-cmark-invalid-option 'nobreaks? 'not-applicable)))
+       ;; One stated rule, one unstated exception: source-positions? is NOT
+       ;; refused, unlike the three renderer-only options just above, even
+       ;; though the guards' own comment reads as "a setting that cannot
+       ;; reach SXML is rejected." Positions are different in kind from
+       ;; unsafe-html?/hardbreaks?/nobreaks? -- those three are pure
+       ;; RENDERER policy and never reach markdown->ast at all, so silently
+       ;; accepting one would discard a security- or output-relevant setting
+       ;; the caller explicitly asked for. source-positions? DOES reach the
+       ;; AST -- markdown->ast md o below parses with it, at full cost, if o
+       ;; asks for it -- and it is markdown-ast->sxml, not this guard, that
+       ;; then drops the positions per ADR-0011 (the SXML tree carries HTML
+       ;; vocabulary only). Accepting it costs the caller wasted parse work
+       ;; for information that never surfaces, not a downgraded security
+       ;; posture, so this function lets it through rather than rejecting a
+       ;; setting that is merely useless here. This is why the differential
+       ;; suite's `opts` is built from default-cmark-options, not
+       ;; default-ast-options: source-positions? being on would not change
+       ;; the SXML output (pinned by "source-positions? does not change the
+       ;; SXML" in tests/test-sxml-differential.sps), so the sweep is
+       ;; entitled to run with it off, at the cheaper parse.
+       (markdown-ast->sxml (markdown->ast md o) so))))
 
   ;; Deliberately does NOT call ensure-native-loaded!. runtime-version-string
   ;; needs no initialisation: its foreign procedure is bound as soon as

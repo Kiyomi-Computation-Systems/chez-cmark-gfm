@@ -31,7 +31,13 @@
           cmark-invalid-option-reason
 
           &cmark-render-failed make-cmark-render-failed
-          cmark-render-failed? cmark-render-failed-format)
+          cmark-render-failed? cmark-render-failed-format
+
+          &cmark-unsupported-node make-cmark-unsupported-node
+          cmark-unsupported-node? cmark-unsupported-node-type
+
+          &cmark-malformed-tree make-cmark-malformed-tree
+          cmark-malformed-tree? cmark-malformed-tree-reason)
   (import (rnrs))
 
   (define-condition-type &cmark-error &error
@@ -93,4 +99,28 @@
   ;; 'html, 'xml, 'commonmark, 'plaintext.
   (define-condition-type &cmark-render-failed &cmark-error
     make-cmark-render-failed cmark-render-failed?
-    (format cmark-render-failed-format)))
+    (format cmark-render-failed-format))
+
+  ;; The SXML adapter has no HTML vocabulary for a node type it does not
+  ;; know. Derives from &cmark-error directly, NOT from
+  ;; &cmark-invalid-input: the document is well-formed, the adapter is
+  ;; incomplete, and a caller guarding bad input must not swallow a gap in
+  ;; our own coverage. Project plan 12 asked for this condition; Stage 3
+  ;; did not need it because it preserves unknown types as `extension`
+  ;; nodes rather than raising.
+  (define-condition-type &cmark-unsupported-node &cmark-error
+    make-cmark-unsupported-node cmark-unsupported-node?
+    (type cmark-unsupported-node-type))
+
+  ;; A tree handed to markdown-ast->sxml that the parser itself could never
+  ;; produce -- e.g. a table row order only a caller-built or -rewritten AST
+  ;; can create (design spec 3.4). Derives from &cmark-error directly, NOT
+  ;; from &cmark-invalid-input: conditions.sls:62-63 documents that type's
+  ;; reasons as a closed set about raw Markdown text and option values, and
+  ;; &cmark-unsupported-node was kept out of that family for the same
+  ;; reason above -- a caller guarding bad documents must not silently
+  ;; swallow a structurally ill-shaped tree, any more than it should swallow
+  ;; a coverage gap in the adapter. Neither is "the document was bad".
+  (define-condition-type &cmark-malformed-tree &cmark-error
+    make-cmark-malformed-tree cmark-malformed-tree?
+    (reason cmark-malformed-tree-reason)))

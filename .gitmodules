@@ -4,3 +4,9 @@
 [submodule "vendor/chez-srfi"]
 	path = vendor/chez-srfi
 	url = https://github.com/arcfide/chez-srfi.git
+[submodule "vendor/wak-sxml-tools"]
+	path = vendor/wak-sxml-tools
+	url = https://gitlab.com/wak/wak-sxml-tools.git
+[submodule "vendor/wak-common"]
+	path = vendor/wak-common
+	url = https://gitlab.com/wak/wak-common.git
