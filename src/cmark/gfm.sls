@@ -114,6 +114,26 @@
          (raise (make-cmark-invalid-option 'hardbreaks? 'not-applicable)))
        (when (cmark-options-nobreaks? o)
          (raise (make-cmark-invalid-option 'nobreaks? 'not-applicable)))
+       ;; One stated rule, one unstated exception: source-positions? is NOT
+       ;; refused, unlike the three renderer-only options just above, even
+       ;; though the guards' own comment reads as "a setting that cannot
+       ;; reach SXML is rejected." Positions are different in kind from
+       ;; unsafe-html?/hardbreaks?/nobreaks? -- those three are pure
+       ;; RENDERER policy and never reach markdown->ast at all, so silently
+       ;; accepting one would discard a security- or output-relevant setting
+       ;; the caller explicitly asked for. source-positions? DOES reach the
+       ;; AST -- markdown->ast md o below parses with it, at full cost, if o
+       ;; asks for it -- and it is markdown-ast->sxml, not this guard, that
+       ;; then drops the positions per ADR-0011 (the SXML tree carries HTML
+       ;; vocabulary only). Accepting it costs the caller wasted parse work
+       ;; for information that never surfaces, not a downgraded security
+       ;; posture, so this function lets it through rather than rejecting a
+       ;; setting that is merely useless here. This is why the differential
+       ;; suite's `opts` is built from default-cmark-options, not
+       ;; default-ast-options: source-positions? being on would not change
+       ;; the SXML output (pinned by "source-positions? does not change the
+       ;; SXML" in tests/test-sxml-differential.sps), so the sweep is
+       ;; entitled to run with it off, at the cheaper parse.
        (markdown-ast->sxml (markdown->ast md o) so))))
 
   ;; Deliberately does NOT call ensure-native-loaded!. runtime-version-string

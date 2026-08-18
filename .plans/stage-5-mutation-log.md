@@ -3821,3 +3821,48 @@ test-options            71   test-sxml               40
 test-sxml-serializer    19   test-sxml-portability     5
 test-sxml-differential  53
 ```
+`make test`: 14 suites, `ALL SUITES PASSED`. `make check-purity`: three
+"purity holds" lines. `make check-pins`: three "pins agree" lines.
+
+---
+
+### Item 5 — the deliberate exception, stated rather than fixed
+
+`markdown->sxml` (`src/cmark/gfm.sls`) silently discards `source-positions?`
+rather than rejecting it alongside `unsafe-html?`/`hardbreaks?`/`nobreaks?`.
+Per the dispatch instructions, this is explicitly "state, not fix" — no
+guard was added, only a comment explaining why the existing behaviour is
+correct: `source-positions?` is a PARSE-level option that genuinely reaches
+`markdown->ast` (unlike the three RENDERER-only options that are rejected
+because they cannot reach the AST at all), and it is `markdown-ast->sxml`,
+not this guard, that drops positions per ADR-0011. Accepting it costs
+wasted parse work, not a downgraded security posture, which is why it is
+let through rather than refused. The comment also records why the
+differential suite is entitled to build `opts` from `default-cmark-options`
+rather than `default-ast-options`: turning `source-positions?` on is
+already pinned not to change the SXML output ("source-positions? does not
+change the SXML", `tests/test-sxml-differential.sps`).
+
+No mutation applies — nothing here changes behaviour. Verified the suite
+this comment cites still exists and still passes:
+`tests/test-sxml-differential.sps`, 53/53, unchanged. Full re-verification:
+`make test` (14 suites, `ALL SUITES PASSED`), `make check-purity` (three
+"purity holds" lines), `make check-pins` (three "pins agree" lines).
+
+---
+
+## Task 12 Step 0 — final counts for the whole cleanup pass
+
+```
+test-options            71   test-sxml               40
+test-sxml-serializer    19   test-sxml-portability     5
+test-sxml-differential  53
+```
+Every other suite (`test-conditions`, `test-ast`, `test-ast-differential`,
+`test-convert`, `test-differential`, `test-lifecycle`, `test-native`,
+`test-render`, `test-shim-loading`) is untouched by this pass and holds its
+pre-existing count. `make test`: 14 suites, `ALL SUITES PASSED`. `make
+check-purity`: three "purity holds" lines (71 / 30 / 40). `make
+check-pins`: three "pins agree" lines. The 744-example corpus stayed
+byte-identical to cmark under both attribute-marker dialects throughout —
+nothing in this pass touches parse or render behaviour.
