@@ -23,6 +23,19 @@ CFLAGS_BASE := -std=c99 -Wall -Wextra -Werror -Wconversion -Wshadow -Wpointer-ar
 CFLAGS_DEV  := $(CFLAGS_BASE) -g -O0 -DCHEZ_CMARK_DEBUG_COUNTERS
 CFLAGS_PROD := $(CFLAGS_BASE) -O2
 
+# Which flags link the shim. dev is the default; `make prod` re-enters make
+# with FLAVOR=prod so the whole graph -- shim, config.sls, stamps -- agrees
+# on one flavor. Guarded because this variable's one failure mode is a typo
+# silently falling back to dev and shipping the wrong artifact.
+FLAVOR ?= dev
+ifeq ($(FLAVOR),dev)
+  CFLAGS_SHIM := $(CFLAGS_DEV)
+else ifeq ($(FLAVOR),prod)
+  CFLAGS_SHIM := $(CFLAGS_PROD)
+else
+  $(error FLAVOR must be dev or prod, got '$(FLAVOR)')
+endif
+
 # --- native dependency discovery (ADR-0001) --------------------------
 HAVE_PKG := $(shell pkg-config --exists libcmark-gfm && echo yes || echo no)
 
@@ -86,7 +99,7 @@ TESTS        := $(wildcard tests/test-*.sps)
 # no other suite provides (design spec 2026-08-17-stage-3-ast-design.md 9.1).
 MEMORY_TESTS := $(filter-out tests/test-differential.sps,$(TESTS))
 
-.PHONY: all build deps check-pins check-purity dev test test-memory vendor clean prod deps-info
+.PHONY: all build deps check-pins check-purity check-prod dev test test-memory vendor clean prod deps-info
 
 all: build
 
@@ -200,8 +213,19 @@ $(ACQ_STAMP): | $(LIB_DIR)
 	rm -f $(BUILD_DIR)/.acquisition-*
 	touch $@
 
-$(SHIM): src/cmark-gfm-shim.c src/cmark-gfm-shim.h $(ACQ_STAMP) | $(LIB_DIR)
-	$(CC) $(CFLAGS_DEV) $(CMARK_CFLAGS) $(SHLIB_LDFLAGS) \
+# Same mechanism for the build flavor: flipping FLAVOR changes this
+# prerequisite's identity and forces a relink. Without it, `make prod &&
+# make test` would run the dev suite against a counters-free prod shim
+# (its counter-movement discriminators would rightly fail), and `make
+# build` after `make prod` would hand dev callers a prod shim.
+FLAVOR_STAMP := $(BUILD_DIR)/.flavor-$(FLAVOR)
+
+$(FLAVOR_STAMP): | $(LIB_DIR)
+	rm -f $(BUILD_DIR)/.flavor-*
+	touch $@
+
+$(SHIM): src/cmark-gfm-shim.c src/cmark-gfm-shim.h $(ACQ_STAMP) $(FLAVOR_STAMP) | $(LIB_DIR)
+	$(CC) $(CFLAGS_SHIM) $(CMARK_CFLAGS) $(SHLIB_LDFLAGS) \
 	      -o $@ src/cmark-gfm-shim.c $(CMARK_LIBS)
 
 # config.sls carries the shim's ABSOLUTE path so the loader never searches.
@@ -271,18 +295,39 @@ else
 	  sh -c 'for t in $(MEMORY_TESTS); do $(CHEZ) --program $$t || exit 1; done'
 endif
 
-# prod compiles directly rather than reusing $(SHIM), so it needs the same
-# vendored-build gate that $(SHIM) gets above; without it `make prod` fails on
-# a machine where pkg-config cannot see cmark-gfm.
-ifeq ($(HAVE_PKG),no)
-prod: vendor
-endif
+# prod = the same graph as `build`, run at FLAVOR=prod after a clean. Each
+# step is an explicit recipe line because the old form -- `prod: clean` plus
+# a conditional `prod: vendor` and a trailing `$(MAKE) $(CONFIG_SLS)` -- hid
+# two defects behind implicit ordering:
+#   - the config sub-make re-entered the $(SHIM) rule, found the acquisition
+#     stamp freshly recreated (and, vendored, the phony `vendor` prereq
+#     always remade), and RELINKED the just-built -O2 shim with dev flags:
+#     `make prod` exited 0 having shipped a debug build;
+#   - clean and vendor as sibling prerequisites left their relative order to
+#     make's internals -- here both make 3.81 and 4.4.1 ran clean first and
+#     merely built vendor twice, but vendor-first turns the link into a
+#     library-not-found failure.
+# The vendored gate needs no prod-specific rule: $(SHIM) already depends on
+# vendor when HAVE_PKG=no, inside the sub-make, after clean has finished.
+prod:
+	$(MAKE) clean
+	$(MAKE) build FLAVOR=prod
+	$(MAKE) check-prod
 
-prod: clean
-	mkdir -p $(LIB_DIR)
-	$(CC) $(CFLAGS_PROD) $(CMARK_CFLAGS) $(SHLIB_LDFLAGS) \
-	      -o $(SHIM) src/cmark-gfm-shim.c $(CMARK_LIBS)
-	$(MAKE) $(CONFIG_SLS)
+# Proves the artifact that survived to the end of `make prod` is the prod
+# one (a check beats a comment): a shim carrying -DCHEZ_CMARK_DEBUG_COUNTERS
+# reports moving live-counts while a document is live, a prod shim's stay
+# frozen at zero (src/cmark-gfm-shim.c) -- the dev suite's discriminator
+# (tests/test-lifecycle.sps "live-counts moves during a scope") pointed the
+# other way. Deliberately NOT dependent on `build`: build at the default
+# flavor would relink the shim as dev, and the check would then judge the
+# artifact it itself just replaced. It probes what the last build left.
+# `env -u` so an exported CHEZ_CMARK_GFM_SHIM cannot point the probe away
+# from the shim config.sls names.
+check-prod: deps
+	@test -f $(SHIM) || { echo "check-prod: $(SHIM) is missing; run 'make prod' (or 'make build FLAVOR=prod') first" >&2; exit 1; }
+	@test -f $(CONFIG_SLS) || { echo "check-prod: $(CONFIG_SLS) is missing; run 'make prod' first" >&2; exit 1; }
+	env -u CHEZ_CMARK_GFM_SHIM CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) $(CHEZ) --program tests/check-prod.sps
 
 clean:
 	rm -rf $(BUILD_DIR) $(CONFIG_SLS)
