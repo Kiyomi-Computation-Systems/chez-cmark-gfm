@@ -181,3 +181,104 @@ command: `CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez --program
 tests/test-options.sps` → `# of expected passes 56`, exit 0. Also
 reconfirmed `make test` (10 suites, `ALL SUITES PASSED`) and `make
 check-purity` (holds) both before and after this exercise.
+
+---
+
+## Task 2 review fix — `sxml-options-with`'s first-argument guard
+
+Two review findings against Task 2's plan-mandated code, adjudicated in the
+reviewer's favour and folded into the plan by commit `1c17578`: (1)
+`sxml-plist->alist` was a structural copy of `plist->alist`, collapsed by
+giving `plist->alist` a `valid-keys` parameter; (2) `sxml-options-with` was
+missing the non-options guard `cmark-options-with` already has, so a swapped
+argument raised a bare R6RS `assertion-violation` instead of
+`&cmark-invalid-option`. Finding 1 is a pure refactor covered entirely by
+pre-existing assertions (both key sets are walked by the same tests as
+before, just through one shared function). Finding 2 adds exactly one new
+assertion, `"sxml-options-with rejects a non-options first argument"`, which
+is what this entry's mutation targets.
+
+**Baseline**, `CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez --program
+tests/test-options.sps`: 57/57 passes, exit 0 (56 pre-existing + this fix
+pass's one new assertion). `make test`: 10 suites, all `ALL SUITES PASSED`.
+`make check-purity`: holds.
+
+**Mutation**: in the scratch copy only, delete the `(unless (sxml-options?
+o) ...)` guard just added to `sxml-options-with`:
+
+```diff
+   (define (sxml-options-with o . plist)
+-    ;; Guards its first argument exactly as cmark-options-with does. Two
+-    ;; record types with matching APIs now coexist, so passing the wrong one
+-    ;; is a realistic caller error, and it must surface as this library's own
+-    ;; condition rather than as a bare R6RS assertion from the accessor.
+-    (unless (sxml-options? o)
+-      (raise (make-cmark-invalid-option #f 'invalid-value)))
+     (let ((a (plist->alist plist sxml-option-keys)))
+       (validate-sxml
+        (%make-sxml-options
+```
+
+`src/cmark/gfm/options.sls` in the repo was never touched — only
+`<scratch>/cmark/gfm/options.sls` was edited. Confirmed by `md5`, taken
+before the scratch copy was made and again after the exercise
+(`3ddd634662bf8c9f8ae5172dfe553716`, unchanged), and by `git diff --stat`
+(the same 16 insertions / 22 deletions as this fix pass's legitimate change,
+identical before and after).
+
+**Run:** `CHEZSCHEMELIBDIRS=<scratch>:src:tests:build/scheme-libs chez
+--program tests/test-options.sps`
+
+**Result: FAIL, 56/57 — exactly the assertion the fix brief names, nothing
+wider.**
+
+```
+%%%% Starting test options
+FAIL sxml-options-with rejects a non-options first argument
+# of expected passes      56
+# of unexpected failures  1
+```
+
+Only **"sxml-options-with rejects a non-options first argument"** fails;
+every other assertion stays green, including "cmark-options-with rejects a
+non-options first argument" (the pre-existing sibling test for the other
+record type, whose own guard was never touched by this mutation) and every
+other sxml-options assertion.
+
+**Root cause confirmed by direct probe, not merely inferred.** The fix
+brief's own text predicts the failure mode: with the guard gone,
+`sxml-options-with` calls `(sxml-options-raw-html o)` on `o`, and when `o` is
+actually a `cmark-options` record (as in the new test, which passes
+`(default-cmark-options)`), that accessor call is a record-type mismatch at
+the R6RS level, not a condition this library raises itself. A standalone
+probe (`probe-task2.sps`, scratch-only, against the mutated library) calls
+`(sxml-options-with (default-cmark-options) 'raw-html 'escape)` directly and
+inspects what is actually signalled:
+
+```
+condition-type: R6RS assertion-violation
+who: sxml-options-raw-html
+message: ~s is not of type ~s
+irritants: (#[cmark-options ...] #<record type sxml-options>)
+```
+
+Confirmed: a bare R6RS `assertion-violation` from the `sxml-options-raw-html`
+accessor, not `&cmark-invalid-option` — exactly Finding 2's description of
+the defect. In the test itself this is why the result is `'wrong-condition`
+rather than `'(#f invalid-value)`: the guard's `(#t 'wrong-condition)` clause
+catches any condition, the assertion-violation satisfies neither branch
+of `(cmark-invalid-option? e)`, and `test-equal` reports the resulting
+mismatch as the named failure. No second probe was needed: the observed
+failure, both which assertion falls and which stay green, matches
+prediction exactly.
+
+**Revert.** Nothing in the repo was ever edited during the mutation — only
+the external scratch copy was. Confirmed via `git diff --stat
+src/cmark/gfm/options.sls` (unchanged before and after) and via `md5`
+(`3ddd634662bf8c9f8ae5172dfe553716`, identical before the scratch copy was
+mutated and after). Re-ran the suite through the ordinary, non-scratch
+command: `CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez --program
+tests/test-options.sps` → `# of expected passes 57`, exit 0. Also
+reconfirmed `make test` (10 suites, `ALL SUITES PASSED`) and `make
+check-purity` (holds) both before and after this exercise. Scratch copy and
+probe script deleted afterward.

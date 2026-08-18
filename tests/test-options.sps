@@ -330,6 +330,14 @@
 
 ;; sxml-options-with runs the same validation as the constructor, so an
 ;; invalid value cannot enter through the back door.
+(test-equal "sxml-options-with rejects a non-options first argument"
+  '(#f invalid-value)
+  (guard (e ((cmark-invalid-option? e)
+             (list (cmark-invalid-option-key e) (cmark-invalid-option-reason e)))
+            (#t 'wrong-condition))
+    (sxml-options-with (default-cmark-options) 'raw-html 'escape)
+    'no-raise))
+
 (test-equal "sxml-options-with validates too"
   '(raw-html invalid-value)
   (guard (e ((cmark-invalid-option? e)

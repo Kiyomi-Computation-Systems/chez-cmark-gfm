@@ -72,7 +72,7 @@
   ;; A duplicate key is an error rather than last-wins: silently honouring one
   ;; of two conflicting instructions is the failure mode this library exists
   ;; to prevent.
-  (define (plist->alist plist)
+  (define (plist->alist plist valid-keys)
     (let loop ((p plist) (seen '()) (acc '()))
       (cond
         ((null? p) (reverse acc))
@@ -80,7 +80,7 @@
          (raise (make-cmark-invalid-option #f 'malformed-plist)))
         (else
          (let ((k (car p)) (v (cadr p)))
-           (unless (memq k option-keys)
+           (unless (memq k valid-keys)
              (raise (make-cmark-invalid-option k 'unknown-key)))
            (when (memq k seen)
              (raise (make-cmark-invalid-option k 'duplicate-key)))
@@ -173,7 +173,7 @@
     (cmark-options-with (make-cmark-options) 'source-positions? #t))
 
   (define (make-cmark-options . plist)
-    (build (plist->alist plist)
+    (build (plist->alist plist option-keys)
            default-extensions #t #f #f #f #f #f
            default-max-input-bytes default-max-nodes default-max-depth))
 
@@ -185,7 +185,7 @@
   (define (cmark-options-with o . plist)
     (unless (cmark-options? o)
       (raise (make-cmark-invalid-option #f 'invalid-value)))
-    (build (plist->alist plist)
+    (build (plist->alist plist option-keys)
            (cmark-options-extensions o)
            (cmark-options-validate-utf8? o)
            (cmark-options-source-positions? o)
@@ -207,22 +207,10 @@
 
   (define sxml-option-keys '(raw-html))
 
-  ;; Deliberately a separate walker from plist->alist rather than a
-  ;; parameterised one: sharing would mean threading the key list through,
-  ;; and the two key sets must not be able to accept each other's keys.
-  (define (sxml-plist->alist plist)
-    (let loop ((p plist) (seen '()) (acc '()))
-      (cond
-        ((null? p) (reverse acc))
-        ((null? (cdr p))
-         (raise (make-cmark-invalid-option #f 'malformed-plist)))
-        (else
-         (let ((k (car p)) (v (cadr p)))
-           (unless (memq k sxml-option-keys)
-             (raise (make-cmark-invalid-option k 'unknown-key)))
-           (when (memq k seen)
-             (raise (make-cmark-invalid-option k 'duplicate-key)))
-           (loop (cddr p) (cons k seen) (cons (cons k v) acc)))))))
+  ;; Reuses plist->alist, which takes its key list as a parameter. Each
+  ;; caller supplies only its own, so the two option families still cannot
+  ;; accept each other's keys -- and there is one copy of the walk to fix
+  ;; rather than two to keep in sync.
 
   ;; Runs on the RESULTING record so both constructors share one policy,
   ;; exactly as `validate` does for cmark-options.
@@ -232,13 +220,19 @@
     o)
 
   (define (make-sxml-options . plist)
-    (let ((a (sxml-plist->alist plist)))
+    (let ((a (plist->alist plist sxml-option-keys)))
       (validate-sxml (%make-sxml-options (lookup a 'raw-html 'omit)))))
 
   (define (default-sxml-options) (make-sxml-options))
 
   (define (sxml-options-with o . plist)
-    (let ((a (sxml-plist->alist plist)))
+    ;; Guards its first argument exactly as cmark-options-with does. Two
+    ;; record types with matching APIs now coexist, so passing the wrong one
+    ;; is a realistic caller error, and it must surface as this library's own
+    ;; condition rather than as a bare R6RS assertion from the accessor.
+    (unless (sxml-options? o)
+      (raise (make-cmark-invalid-option #f 'invalid-value)))
+    (let ((a (plist->alist plist sxml-option-keys)))
       (validate-sxml
        (%make-sxml-options
         (lookup a 'raw-html (sxml-options-raw-html o)))))))
