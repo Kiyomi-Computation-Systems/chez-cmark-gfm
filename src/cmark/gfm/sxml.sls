@@ -364,6 +364,37 @@
        (raise (make-cmark-unsupported-node
                (symbol->string (markdown-node-type n)))))))
 
+  ;; Public, and takes an ARBITRARY tree -- a caller can hand it something
+  ;; markdown->ast would never build. What is and is not checked is therefore
+  ;; part of the contract, so state it here rather than leave the one guard
+  ;; below looking like the first of a family that was never finished.
+  ;;
+  ;; Structural validation covers EXACTLY ONE case: a `table` whose header row
+  ;; is not first (table->sxml, &cmark-malformed-tree). It is not there because
+  ;; the shape is ill-typed -- it is there because it is the one caller-buildable
+  ;; shape whose silent normalisation would emit HTML CMARK CANNOT PRODUCE:
+  ;; either a merged thead that contradicts extensions/table.c:777-780,792-795,
+  ;; or cmark's own literal behaviour, a thead opened inside a still-open tbody.
+  ;; Output that no cmark run can match is output ADR-0012's oracle can never
+  ;; judge, which is what makes this one worth a condition.
+  ;;
+  ;; Everything else is caller responsibility, deliberately, and follows
+  ;; (cmark gfm ast)'s stated position: a wrong type in Scheme-only code is a
+  ;; programming error raising R6RS &assertion, not one of the native or option
+  ;; failures &cmark-error exists to describe. So the neighbouring ill-shaped
+  ;; trees behave differently from each other, and that is not an inconsistency
+  ;; to repair with type checks:
+  ;;
+  ;;   - a `table` child that is not a `table-row` silently becomes `(tr …)`,
+  ;;     because table->sxml maps over whatever children it is given;
+  ;;   - a `list` with no `tight?` property renders LOOSE, because a missing
+  ;;     property reads as #f;
+  ;;   - a `code-block` with no `fence-info` reaches `(string-length #f)` and
+  ;;     raises &assertion from first-token.
+  ;;
+  ;; Adding checks for those would mean this library validating a record type
+  ;; it does not own, at every node, on every document -- for inputs its own
+  ;; parser cannot produce.
   (define markdown-ast->sxml
     (case-lambda
       ((ast) (markdown-ast->sxml ast (default-sxml-options)))

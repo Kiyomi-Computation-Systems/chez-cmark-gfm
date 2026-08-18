@@ -86,6 +86,27 @@ TESTS        := $(wildcard tests/test-*.sps)
 # inside this very Chez process before the CLI leg ever runs. That is exactly
 # what Valgrind/ASan need to see, so excluding this suite would drop coverage
 # no other suite provides (design spec 2026-08-17-stage-3-ast-design.md 9.1).
+#
+# test-sxml-differential.sps is the THIRD differential suite and the heaviest
+# in-process, and it stays IN for the same reason test-ast-differential.sps
+# does, only more so. Its main leg parses all 744 corpus examples through
+# markdown->ast and then again through markdown->html, once per attribute
+# marker -- 744 x 2 sides x 2 markers is ~3000 parses before the option
+# matrix and the unsupported-node sweep add their own -- every one of them
+# allocating and freeing cmark objects inside this Chez process. Nothing
+# else in the suite puts that
+# volume or that variety of document through the native allocator, so this
+# is the single largest block of instrumented coverage the memory target
+# gets. The adapter itself allocates nothing native (it is pure Scheme, which
+# is what `make check-purity` gates), but the parse feeding it is not, and
+# that is what is under the tool here.
+#
+# Its own CLI leg is the four fixtures under two markers -- eight
+# subprocesses, uninstrumented like every other subprocess above, and far too
+# few to be worth excluding the suite over. That is the whole reason the
+# in/out judgement lands differently here than for test-differential.sps: the
+# question is never "does it spawn subprocesses" but "is there instrumented
+# work that would be lost".
 MEMORY_TESTS := $(filter-out tests/test-differential.sps,$(TESTS))
 
 .PHONY: all build deps check-pins check-purity dev test test-memory vendor clean prod deps-info
