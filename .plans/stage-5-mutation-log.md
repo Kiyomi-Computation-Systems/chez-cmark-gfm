@@ -2456,3 +2456,139 @@ exit 0.
 (`tests/test-options.sps` 57, `tests/test-ast.sps` 30, `tests/test-sxml.sps`
 28). `make check-pins`: pins agree. Scratch copies and probe scripts deleted
 afterward.
+
+---
+
+## Task 10 fix pass — refusing every renderer-only cmark option
+
+Closes a concern raised against Task 10: `markdown->sxml` silently ignored
+`hardbreaks?` and `nobreaks?`. Both are cmark RENDERER options -- verified,
+same basis as Task 8's `unsafe-html?` finding: `CMARK_OPT_HARDBREAKS`,
+`CMARK_OPT_NOBREAKS`, and `CMARK_OPT_UNSAFE` appear only in
+`vendor/cmark-gfm/src/cmark-gfm.h`, `src/main.c`, and the five renderer
+files, never in `blocks.c`, `inlines.c`, or `parser.h` -- so none of them can
+reach the AST `markdown->sxml` builds from. The decision: `markdown->sxml`
+refuses all three under one rule rather than three special cases. SXML is a
+different renderer with its own policies -- `raw-html` and `softbreak` on
+`sxml-options` -- so there is exactly one channel per setting; accepting a
+renderer flag silently would discard a setting the caller made explicitly.
+
+### Files touched
+- `src/cmark/gfm.sls` -- the guard already rejecting `unsafe-html? #t`
+  (Task 8) extended with two more `(when ... (raise (make-cmark-invalid-
+  option '<key> 'not-applicable)))` clauses, one each for `hardbreaks?` and
+  `nobreaks?`; the preceding comment rewritten to explain all three
+  together instead of `unsafe-html?` alone.
+- `tests/test-sxml-differential.sps` -- two new `test-equal` assertions,
+  `markdown->sxml rejects hardbreaks?` and `markdown->sxml rejects
+  nobreaks?`, matching the existing `markdown->sxml rejects unsafe-html?`
+  assertion's shape exactly (same `guard`, same condition-accessor pair),
+  placed immediately before it.
+
+### What must NOT change, and why it doesn't
+The option-matrix sweep (`every fixture agrees under every option
+configuration`) drives `ours`, which calls `markdown-ast->sxml` directly
+against an `sxml-opts-for`-derived record (lines 44-51) -- never
+`markdown->sxml`. The new guard lives entirely inside `markdown->sxml`'s
+`case-lambda` body, a path the sweep never calls, so the sweep is
+structurally unreachable from this change. Confirmed empirically below: it
+stays green both before and after, and, in the mutation, even while a guard
+it does not use is deliberately broken.
+
+### Baseline and verification
+
+**Baseline, at HEAD before this fix pass's edits.** Confirmed by stashing
+this fix pass's two files and re-running, then restoring -- not assumed
+from the task brief's stated number:
+```
+git stash push -u -m "task10-fixpass-verify-baseline" -- src/cmark/gfm.sls tests/test-sxml-differential.sps
+CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs CMARK_CLI=cmark-gfm chez --program tests/test-sxml-differential.sps
+%%%% Starting test sxml-differential
+# of expected passes      47
+git stash pop
+```
+47/47, exit 0 -- matches the concern's stated baseline. Edits restored
+afterward; `git diff --stat` showed the same two files, same shape, as
+before the stash.
+
+**After this fix pass's edits:**
+```
+CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs CMARK_CLI=cmark-gfm chez --program tests/test-sxml-differential.sps
+%%%% Starting test sxml-differential
+# of expected passes      49
+```
+49/49, exit 0 -- 47 + 2 new assertions, matches the concern's prediction
+exactly; no reconciliation needed.
+
+`make check-purity`: three "purity holds" lines (`tests/test-options.sps`
+57, `tests/test-ast.sps` 30, `tests/test-sxml.sps` 28) -- unaffected, since
+neither touched file is in the purity loop. `make test`: 13 suites, all
+`ALL SUITES PASSED`, `tests/test-sxml-differential.sps` at 49. `make
+check-pins`: pins agree.
+
+### Mutation
+
+**Method:** matches Task 8's own mutation of this same file: `gfm.sls` is a
+top-level facade no `src/` library imports, so shadowing only it via a
+prepended `CHEZSCHEMELIBDIRS` entry cannot desync any other library's
+version. Scratch copy outside the repo, mirroring only the one file
+(`<scratch>/mutation-task10fix/cmark/gfm.sls`). `md5` of the tracked file
+before the copy was made: `1318444a8e5446b1d641286aa172829e`.
+
+**Control run**, scratch copy UNMUTATED, prepended to `CHEZSCHEMELIBDIRS`:
+```
+CHEZSCHEMELIBDIRS=<scratch>/mutation-task10fix:src:tests:build/scheme-libs CMARK_CLI=cmark-gfm chez --program tests/test-sxml-differential.sps
+# of expected passes      49
+```
+49/49, identical to the repo file -- proves the shadowing rig reproduces
+baseline before trusting the mutated run.
+
+**Mutation** (brief's instruction: delete the `hardbreaks?` guard only):
+```diff
+        (when (cmark-options-unsafe-html? o)
+          (raise (make-cmark-invalid-option 'unsafe-html? 'not-applicable)))
+-       (when (cmark-options-hardbreaks? o)
+-         (raise (make-cmark-invalid-option 'hardbreaks? 'not-applicable)))
+        (when (cmark-options-nobreaks? o)
+          (raise (make-cmark-invalid-option 'nobreaks? 'not-applicable)))
+```
+Applied only to `<scratch>/mutation-task10fix/cmark/gfm.sls`; the tracked
+`src/cmark/gfm.sls` was never edited.
+
+**Run:**
+```
+CHEZSCHEMELIBDIRS=<scratch>/mutation-task10fix:src:tests:build/scheme-libs CMARK_CLI=cmark-gfm chez --program tests/test-sxml-differential.sps
+```
+
+**Result: FAIL, 48/49 -- exactly the named assertion, nothing wider.**
+```
+%%%% Starting test sxml-differential
+FAIL markdown->sxml rejects hardbreaks?
+# of expected passes      48
+# of unexpected failures  1
+```
+No other assertion is named in the FAIL output, and the count is exactly
+one short of 49, so both **"markdown->sxml rejects nobreaks?"** (the guard
+this mutation left untouched still raises on `nobreaks? #t`) and **"every
+fixture agrees under every option configuration"** (the option-matrix
+sweep, which never calls `markdown->sxml` -- see above) stayed green,
+exactly as predicted. The failure matched the predicted property on the
+first run; no second, reason-isolating probe was needed.
+
+**Revert.** The repo file was never edited, so revert is confirmed by `md5
+src/cmark/gfm.sls` (`1318444a8e5446b1d641286aa172829e`, identical
+throughout) and by `git diff --stat` showing only this fix pass's own two
+intended files (`src/cmark/gfm.sls`, `tests/test-sxml-differential.sps`),
+unchanged in shape, throughout the exercise. Re-ran the ordinary,
+non-scratch command:
+```
+CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs CMARK_CLI=cmark-gfm chez --program tests/test-sxml-differential.sps
+# of expected passes      49
+```
+exit 0. Scratch copy deleted afterward.
+
+**Final reconfirmation for the task.** `git status --short` showed only
+this fix pass's two intended files modified. `make check-pins`: pins agree.
+`make check-purity`: three "purity holds" lines (57/30/28). `make test`: 13
+suites, all `ALL SUITES PASSED`, `tests/test-sxml-differential.sps` at 49.
+Scratch copy deleted afterward; no probe scripts left behind.

@@ -191,6 +191,22 @@
 ;; unsafe-html? is a cmark RENDERER policy. It cannot reach SXML -- the
 ;; adapter takes only the AST, which does not carry it -- so accepting it
 ;; silently would discard a security option the caller set explicitly.
+(test-equal "markdown->sxml rejects hardbreaks?"
+  '(hardbreaks? not-applicable)
+  (guard (e ((cmark-invalid-option? e)
+             (list (cmark-invalid-option-key e) (cmark-invalid-option-reason e)))
+            (#t 'wrong-condition))
+    (markdown->sxml "a\nb\n" (make-cmark-options 'hardbreaks? #t))
+    'no-raise))
+
+(test-equal "markdown->sxml rejects nobreaks?"
+  '(nobreaks? not-applicable)
+  (guard (e ((cmark-invalid-option? e)
+             (list (cmark-invalid-option-key e) (cmark-invalid-option-reason e)))
+            (#t 'wrong-condition))
+    (markdown->sxml "a\nb\n" (make-cmark-options 'nobreaks? #t))
+    'no-raise))
+
 (test-equal "markdown->sxml rejects unsafe-html?"
   '(unsafe-html? not-applicable)
   (guard (e ((cmark-invalid-option? e)
