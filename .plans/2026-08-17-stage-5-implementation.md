@@ -17,6 +17,12 @@
 - **`0` is truthy in Scheme.** Never use `test-assert` where a value comparison will do.
 - **Never let an assertion's meaning depend on argument evaluation order.** Chez evaluates arguments right-to-left in compiled library code, left-to-right when interpreted.
 - **Read cmark semantics from `vendor/cmark-gfm/`, never from recall.**
+- **SXML's `@` attribute marker must be written `\x40;` in source.** Chez's
+  `#!r6rs` reader rejects a bare `@` token ("@ symbol syntax is not allowed in
+  #!r6rs mode") and also rejects `|@|`, which is not R6RS syntax. R6RS's inline
+  hex escape is the portable spelling: `'\x40;` reads as the symbol `@`, is
+  `eq?` to `(string->symbol "@")`, and prints as `@`. This applies to quoted
+  test expectations and to constructing code alike. Discovered in Task 3.
 - **A test is finished when you have watched it fail.** Before marking any task done: break the specific decision the assertion guards, run the suite, confirm that assertion fails *by name*, revert, confirm it passes. Record it in `.plans/stage-5-mutation-log.md`.
 - **Run from the repo root**, with `make build` already run (it generates the gitignored `src/cmark/gfm/private/config.sls`).
 - Single test suite run: `CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez --program tests/<suite>.sps`
@@ -393,18 +399,18 @@ Create `tests/test-sxml-serializer.sps`:
 ;; --- attributes ---------------------------------------------------------
 (test-equal "attributes render in list order"
   "<p><a href=\"/x\" title=\"t\">l</a></p>\n"
-  (sxml->html '(*TOP* (p (a (@ (href "/x") (title "t")) "l")))))
+  (sxml->html '(*TOP* (p (a (\x40; (href "/x") (title "t")) "l")))))
 
 ;; href and src take the entity half of houdini_escape_href
 ;; (src/houdini_href_e.c:64-76): & and ' become entities. Everything else
 ;; takes escape_html, where ' survives.
 (test-equal "href escapes ampersand and apostrophe as entities"
   "<p><a href=\"/a&amp;b&#x27;c\">l</a></p>\n"
-  (sxml->html '(*TOP* (p (a (@ (href "/a&b'c")) "l")))))
+  (sxml->html '(*TOP* (p (a (\x40; (href "/a&b'c")) "l")))))
 
 (test-equal "a non-href attribute leaves apostrophe alone"
   "<p><a href=\"/x\" title=\"it's\">l</a></p>\n"
-  (sxml->html '(*TOP* (p (a (@ (href "/x") (title "it's")) "l")))))
+  (sxml->html '(*TOP* (p (a (\x40; (href "/x") (title "it's")) "l")))))
 
 ;; --- childless elements -------------------------------------------------
 (test-equal "hr and br close XHTML-style with a trailing newline"
@@ -413,8 +419,8 @@ Create `tests/test-sxml-serializer.sps`:
 
 (test-equal "img and input close XHTML-style with no newline"
   "<p><img src=\"/i\" alt=\"a\" /><input type=\"checkbox\" disabled=\"\" /></p>\n"
-  (sxml->html '(*TOP* (p (img (@ (src "/i") (alt "a")))
-                         (input (@ (type "checkbox") (disabled "")))))))
+  (sxml->html '(*TOP* (p (img (\x40; (src "/i") (alt "a")))
+                         (input (\x40; (type "checkbox") (disabled "")))))))
 
 ;; --- block newline placement -------------------------------------------
 (test-equal "blockquote and list open tags are followed by a newline"
@@ -427,11 +433,11 @@ Create `tests/test-sxml-serializer.sps`:
 
 (test-equal "ol start renders as an attribute"
   "<ol start=\"3\">\n<li>a</li>\n</ol>\n"
-  (sxml->html '(*TOP* (ol (@ (start "3")) (li "a")))))
+  (sxml->html '(*TOP* (ol (\x40; (start "3")) (li "a")))))
 
 (test-equal "pre and code nest with no injected whitespace"
   "<pre><code class=\"language-c\">int x;\n</code></pre>\n"
-  (sxml->html '(*TOP* (pre (code (@ (class "language-c")) "int x;\n")))))
+  (sxml->html '(*TOP* (pre (code (\x40; (class "language-c")) "int x;\n")))))
 
 ;; The load-bearing one. cmark_html_render_cr (src/html.h:8-11) emits a
 ;; newline only when the buffer does not already end in one. A serializer
@@ -447,7 +453,7 @@ Create `tests/test-sxml-serializer.sps`:
   (string-append "<table>\n<thead>\n<tr>\n<th align=\"left\">h</th>\n"
                  "</tr>\n</thead>\n<tbody>\n<tr>\n<td>b</td>\n"
                  "</tr>\n</tbody>\n</table>\n")
-  (sxml->html '(*TOP* (table (thead (tr (th (@ (align "left")) "h")))
+  (sxml->html '(*TOP* (table (thead (tr (th (\x40; (align "left")) "h")))
                              (tbody (tr (td "b")))))))
 
 ;; --- comments -----------------------------------------------------------
@@ -565,7 +571,7 @@ Create `tests/sxml-html-serializer.sls`:
 
   ;; --- output ------------------------------------------------------------
   (define (attributes? x)
-    (and (pair? x) (eq? '@ (car x))))
+    (and (pair? x) (eq? '\x40; (car x))))
 
   (define (write-attributes attrs port)
     (for-each
@@ -756,7 +762,7 @@ Create `tests/test-sxml.sps`:
 ;; remainder is reachable only through CMARK_OPT_FULL_INFO_STRING, which
 ;; this library does not expose.
 (test-equal "only the first token of the fence info becomes the class"
-  '(*TOP* (pre (code (@ (class "language-scheme")) "x\n")))
+  '(*TOP* (pre (code (\x40; (class "language-scheme")) "x\n")))
   (->sxml (doc (node 'code-block
                      '((literal . "x\n") (fence-info . "scheme linenos=3"))
                      '()))))
@@ -855,7 +861,7 @@ Create `src/cmark/gfm/sxml.sls`:
             (if (string=? "" info)
                 (list 'code literal)
                 (list 'code
-                      (list '@ (list 'class (string-append "language-" info)))
+                      (list '\x40; (list 'class (string-append "language-" info)))
                       literal)))))
 
   ;; html.c:259,337 -- the SAME comment for a block and an inline. Which one
@@ -1047,7 +1053,7 @@ Append to `tests/test-sxml.sps`, before `(test-end "sxml")`:
 ;; html.c:392 writes the title attribute only when title.len is non-zero.
 ;; An empty title="" is a byte difference, not a harmless extra.
 (test-equal "an empty title is omitted, a present one is kept"
-  '(*TOP* (p (a (@ (href "/x")) "l") (a (@ (href "/y") (title "t")) "m")))
+  '(*TOP* (p (a (\x40; (href "/x")) "l") (a (\x40; (href "/y") (title "t")) "m")))
   (->sxml (doc (node 'paragraph '()
                      (list (link "/x" "" (text "l"))
                            (link "/y" "t" (text "m")))))))
@@ -1057,7 +1063,7 @@ Append to `tests/test-sxml.sps`, before `(test-end "sxml")`:
 ;; serializer's half of the split, and encoding them here would produce
 ;; &amp;amp; on output.
 (test-equal "a URL is percent-encoded but ampersand and apostrophe pass through"
-  '(*TOP* (p (a (@ (href "/a%20b?x=1&y='z'%C3%A9")) "l")))
+  '(*TOP* (p (a (\x40; (href "/a%20b?x=1&y='z'%C3%A9")) "l")))
   (->sxml (doc (node 'paragraph '()
                      (list (link "/a b?x=1&y='z'é" "" (text "l")))))))
 
@@ -1065,8 +1071,8 @@ Append to `tests/test-sxml.sps`, before `(test-end "sxml")`:
 ;; case-insensitive, so mixed case is caught. A rejected URL yields an EMPTY
 ;; attribute (html.c:387-391), not a raise and not a removed attribute.
 (test-equal "dangerous schemes yield an empty href, in any case"
-  '(*TOP* (p (a (@ (href "")) "a") (a (@ (href "")) "b")
-             (a (@ (href "")) "c") (a (@ (href "")) "d")))
+  '(*TOP* (p (a (\x40; (href "")) "a") (a (\x40; (href "")) "b")
+             (a (\x40; (href "")) "c") (a (\x40; (href "")) "d")))
   (->sxml (doc (node 'paragraph '()
                      (list (link "javascript:alert(1)" "" (text "a"))
                            (link "JaVaScRiPt:alert(1)" "" (text "b"))
@@ -1074,9 +1080,9 @@ Append to `tests/test-sxml.sps`, before `(test-end "sxml")`:
                            (link "file:///etc/passwd" "" (text "d")))))))
 
 (test-equal "data: is rejected except for the four image subtypes"
-  '(*TOP* (p (a (@ (href "")) "html")
-             (a (@ (href "data:image/png;base64,AA")) "png")
-             (a (@ (href "data:image/webp,x")) "webp")))
+  '(*TOP* (p (a (\x40; (href "")) "html")
+             (a (\x40; (href "data:image/png;base64,AA")) "png")
+             (a (\x40; (href "data:image/webp,x")) "webp")))
   (->sxml (doc (node 'paragraph '()
                      (list (link "data:text/html,<b>" "" (text "html"))
                            (link "data:image/png;base64,AA" "" (text "png"))
@@ -1087,7 +1093,7 @@ Append to `tests/test-sxml.sps`, before `(test-end "sxml")`:
 ;; html-inline contribute literals; breaks contribute a single space;
 ;; everything else contributes nothing but is still descended into.
 (test-equal "image alt is the flattened plaintext of its children"
-  '(*TOP* (p (img (@ (src "/i") (alt "a b c d e")))))
+  '(*TOP* (p (img (\x40; (src "/i") (alt "a b c d e")))))
   (->sxml (doc (node 'paragraph '()
                      (list (node 'image '((url . "/i") (title . ""))
                                  (list (text "a ")
@@ -1099,14 +1105,14 @@ Append to `tests/test-sxml.sps`, before `(test-end "sxml")`:
                                        (text " e"))))))))
 
 (test-equal "an image title is omitted when empty and kept when present"
-  '(*TOP* (p (img (@ (src "/i") (alt "")))
-             (img (@ (src "/j") (alt "") (title "t")))))
+  '(*TOP* (p (img (\x40; (src "/i") (alt "")))
+             (img (\x40; (src "/j") (alt "") (title "t")))))
   (->sxml (doc (node 'paragraph '()
                      (list (node 'image '((url . "/i") (title . "")) '())
                            (node 'image '((url . "/j") (title . "t")) '()))))))
 
 (test-equal "an image src takes the same dangerous-URL policy"
-  '(*TOP* (p (img (@ (src "") (alt "")))))
+  '(*TOP* (p (img (\x40; (src "") (alt "")))))
   (->sxml (doc (node 'paragraph '()
                      (list (node 'image '((url . "javascript:x") (title . ""))
                                  '()))))))
@@ -1221,12 +1227,12 @@ and add these cases to `node->sxml`, before the `(extension)` case:
 ```scheme
       ((link)
        (cons 'a
-             (cons (cons '@ (cons (list 'href (safe-url (prop n 'url)))
+             (cons (cons '\x40; (cons (list 'href (safe-url (prop n 'url)))
                                   (maybe-title (prop n 'title))))
                    (children->sxml n raw-html))))
       ((image)
        (list 'img
-             (cons '@ (cons (list 'src (safe-url (prop n 'url)))
+             (cons '\x40; (cons (list 'src (safe-url (prop n 'url)))
                             (cons (list 'alt (alt-text n))
                                   (maybe-title (prop n 'title)))))))
 ```
@@ -1321,7 +1327,7 @@ Append to `tests/test-sxml.sps`, before `(test-end "sxml")`:
 
 ;; html.c:174-183 -- start is written only when it is not 1.
 (test-equal "ol start is emitted only when it is not one"
-  '(*TOP* (ol (li (p "a"))) (ol (@ (start "3")) (li (p "a"))))
+  '(*TOP* (ol (li (p "a"))) (ol (\x40; (start "3")) (li (p "a"))))
   (->sxml (doc (ordered 1 #f (li (para (text "a"))))
                (ordered 3 #f (li (para (text "a")))))))
 
@@ -1344,8 +1350,8 @@ Append to `tests/test-sxml.sps`, before `(test-end "sxml")`:
 ;; unchecked box has no checked attribute at all. The trailing space cmark
 ;; writes after "/>" is a text node here.
 (test-equal "task items get a disabled checkbox, checked ones get the attribute"
-  '(*TOP* (ul (li (input (@ (type "checkbox") (checked "") (disabled ""))) " " "a")
-              (li (input (@ (type "checkbox") (disabled ""))) " " "b")))
+  '(*TOP* (ul (li (input (\x40; (type "checkbox") (checked "") (disabled ""))) " " "a")
+              (li (input (\x40; (type "checkbox") (disabled ""))) " " "b")))
   (->sxml (doc (bullet #t
                        (node 'item '((index . 1) (task? . #t) (checked? . #t))
                              (list (para (text "a"))))
@@ -1385,7 +1391,7 @@ Update the existing cases to pass `tight?` through unchanged, then add:
          (if (eq? 'ordered (prop n 'kind))
              (if (= 1 start)
                  (cons 'ol kids)
-                 (cons 'ol (cons (list '@ (list 'start (number->string start)))
+                 (cons 'ol (cons (list '\x40; (list 'start (number->string start)))
                                  kids)))
              (cons 'ul kids))))
       ((item)
@@ -1393,7 +1399,7 @@ Update the existing cases to pass `tight?` through unchanged, then add:
          (cons 'li
                (if (prop n 'task?)
                    (cons (list 'input
-                               (cons '@
+                               (cons '\x40;
                                      (cons '(type "checkbox")
                                            (append
                                             (if (prop n 'checked?)
@@ -1475,7 +1481,7 @@ Expected: PASS, `# of expected passes 22`.
    and **"nested lists agree"** both fail.
 2. Emit `(checked "")` unconditionally in the item case. Confirm **"task
    items get a disabled checkbox…"** and **"task lists agree"** both fail.
-3. Emit `(@ (start "1"))` for every ordered list. Confirm **"ol start is
+3. Emit `(\x40; (start "1"))` for every ordered list. Confirm **"ol start is
    emitted only when it is not one"** and **"ordered lists agree"** fail.
 
 Revert each; confirm green. Record all three.
@@ -1535,10 +1541,10 @@ Append to `tests/test-sxml.sps`, before `(test-end "sxml")`:
 ;; otherwise -- and unlike the XML renderer, it emits align on BODY cells
 ;; too. That is the one ADR-0010 blind spot this oracle closes.
 (test-equal "alignment renders on header and body cells alike, omitted when none"
-  '(*TOP* (table (thead (tr (th (@ (align "left")) "h")
-                            (th (@ (align "center")) "i")
+  '(*TOP* (table (thead (tr (th (\x40; (align "left")) "h")
+                            (th (\x40; (align "center")) "i")
                             (th "j")))
-                 (tbody (tr (td (@ (align "right")) "a")
+                 (tbody (tr (td (\x40; (align "right")) "a")
                             (td "b")
                             (td "c")))))
   (->sxml (doc (table (row #t (cell 'left (text "h"))
@@ -1591,7 +1597,7 @@ Add to `src/cmark/gfm/sxml.sls`, before `node->sxml`:
           ;; A cell holds inlines only, so tightness cannot reach here.
           (kids  (children->sxml c raw-html #f)))
       (if (memq align '(left center right))
-          (cons tag (cons (list '@ (list 'align (symbol->string align)))
+          (cons tag (cons (list '\x40; (list 'align (symbol->string align)))
                           kids))
           (cons tag kids))))
 ```
