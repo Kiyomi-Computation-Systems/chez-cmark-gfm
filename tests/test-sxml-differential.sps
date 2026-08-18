@@ -114,6 +114,29 @@
         (md      "<title>x</title>\n\npara <iframe>y</iframe> end\n"))
     (string=? (ours md with) (ours md without))))
 
+;; markdown->sxml (Task 8's entry point) belongs here rather than in
+;; tests/test-options.sps: that suite is a PURE SUITE, and reaching
+;; markdown->sxml needs (cmark gfm), which loads native code on import
+;; alone, before any assertion runs. This file already imports (cmark gfm)
+;; for markdown->ast, so no new import is needed.
+;;
+;; unsafe-html? is a cmark RENDERER policy. It cannot reach SXML -- the
+;; adapter takes only the AST, which does not carry it -- so accepting it
+;; silently would discard a security option the caller set explicitly.
+(test-equal "markdown->sxml rejects unsafe-html?"
+  '(unsafe-html? not-applicable)
+  (guard (e ((cmark-invalid-option? e)
+             (list (cmark-invalid-option-key e) (cmark-invalid-option-reason e)))
+            (#t 'wrong-condition))
+    (markdown->sxml "# hi\n" (make-cmark-options 'unsafe-html? #t))
+    'no-raise))
+
+;; The check is on the VALUE, not the key's presence: an explicit #f is the
+;; default and must pass.
+(test-equal "markdown->sxml accepts an explicit unsafe-html? #f"
+  '(*TOP* (h1 "hi"))
+  (markdown->sxml "# hi\n" (make-cmark-options 'unsafe-html? #f)))
+
 (test-end "sxml-differential")
 
 (exit (if (zero? (test-runner-fail-count runner)) 0 1))

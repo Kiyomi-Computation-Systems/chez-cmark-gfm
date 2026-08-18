@@ -1971,3 +1971,197 @@ sxml-differential.sps` at 30. `make check-purity`: two "purity holds"
 lines (`tests/test-ast.sps` 30, `tests/test-sxml.sps` 28) — see Deviation 2
 above for why the count is two rather than three. `make check-pins`: pins
 agree. All scratch copies and probe scripts deleted afterward.
+
+---
+
+## Task 8 fix pass — restoring the purity gate
+
+Corrects the resolution taken at the end of Task 8's entry above, per a
+follow-up review. Task 8's brief claimed `tests/test-options.sps` already
+imported `(cmark gfm)` -- false. It was a `PURE SUITE`, and `make
+check-purity`'s original three-item loop (`test-options.sps`,
+`test-ast.sps`, `test-sxml.sps`) is exactly what proved that. Following
+the brief literally (Deviation 2 above) forced `(cmark gfm)` into the
+suite to reach `markdown->sxml`, which broke the gate, and the fix taken
+-- dropping `tests/test-options.sps` from the loop -- kept everything
+green by removing the thing the gate was watching, not by fixing the
+misplacement. The two assertions were the thing in the wrong place, not
+the gate. This entry corrects that: the assertions move to
+`tests/test-sxml-differential.sps` (already impure, already importing
+`(cmark gfm)` for `markdown->ast`), `tests/test-options.sps` goes back to
+pure, and the Makefile's three-item loop is restored.
+
+### Files touched
+- `tests/test-options.sps` -- `(cmark gfm)` dropped from the import list;
+  the two `markdown->sxml` assertions and their section comment removed;
+  header comment restored to its pre-Task-8 wording. Confirmed exactly
+  restored, not just similar: `diff <(git show d83fefd~1:tests/test-options.sps)
+  tests/test-options.sps` produces no output at all -- the working file is
+  now byte-for-byte identical to the commit immediately before Task 8
+  touched it.
+- `tests/test-sxml-differential.sps` -- the same two assertions added,
+  verbatim, with a new leading comment (matching this file's existing habit
+  of explaining non-obvious placement, e.g. its own header on `(cmark gfm
+  sxml)` alongside `(cmark gfm)`) explaining why they live here rather than
+  in `tests/test-options.sps`; placed immediately before `(test-end
+  "sxml-differential")`.
+- `Makefile` -- `check-purity`'s loop restored to `tests/test-options.sps
+  tests/test-ast.sps tests/test-sxml.sps`; the paragraph explaining why
+  `test-options.sps` had dropped out (no longer true) removed; the sentence
+  above it once again names all three suites instead of two.
+
+### Verification
+
+```
+CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez --program tests/test-options.sps
+%%%% Starting test options
+# of expected passes      57
+```
+Exit 0. (57 = Task 8's 59 minus the 2 assertions moved out -- matches this
+fix's own prediction.)
+
+```
+CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez --program tests/test-sxml-differential.sps
+%%%% Starting test sxml-differential
+# of expected passes      32
+```
+Exit 0. (32 = Task 8's 30 plus the 2 assertions moved in -- matches.)
+
+```
+make check-purity
+=== check-purity: tests/test-options.sps, CHEZ_CMARK_GFM_SHIM poisoned ===
+# of expected passes      57
+purity holds: tests/test-options.sps pulled in no native code
+=== check-purity: tests/test-ast.sps, CHEZ_CMARK_GFM_SHIM poisoned ===
+# of expected passes      30
+purity holds: tests/test-ast.sps pulled in no native code
+=== check-purity: tests/test-sxml.sps, CHEZ_CMARK_GFM_SHIM poisoned ===
+# of expected passes      28
+purity holds: tests/test-sxml.sps pulled in no native code
+```
+Three "purity holds" lines -- the count the Makefile's original loop, and
+Task 8's own Step 4, expected all along. `make test`: 13 suites, all `ALL
+SUITES PASSED`, `test-options.sps` at 57, `test-sxml-differential.sps` at
+32. `make check-pins`: pins agree.
+
+### Proving the gate is real again -- two probes, not one
+
+The fix brief asked to add `(cmark gfm)` back to `tests/test-options.sps`'s
+imports and watch `make check-purity` fail. Doing exactly that -- only the
+import, nothing else -- was tried first, and is recorded here because it
+did NOT reproduce a failure. That negative result is more informative than
+a second attempt at a positive one, per this project's own rule that a
+check proves nothing until you have watched it both hold and fail for the
+reason you expect.
+
+**Probe 1 -- import only, nothing that calls a `(cmark gfm)`-exclusive
+binding.** `md5` of the fixed, working-tree file before this probe:
+`b40854d8456705a0c8ecc3ee29f828a0`. Edited in place (working tree, not a
+scratch copy -- see Method note below) to add back only the import:
+```diff
+ (import (rnrs)
+         (srfi :64)
++        (cmark gfm)
+         (cmark gfm options)
+         (cmark gfm private conditions))
+```
+No other line touched.
+
+```
+make check-purity
+=== check-purity: tests/test-options.sps, CHEZ_CMARK_GFM_SHIM poisoned ===
+%%%% Starting test options
+# of expected passes      57
+purity holds: tests/test-options.sps pulled in no native code
+```
+**Gate held. No failure, contrary to what a literal reading of the fix
+brief's step would predict.** Root cause: every binding this file actually
+calls (`cmark-options-extensions`, `make-cmark-options`,
+`cmark-invalid-option?`, `sxml-options-with`, etc.) is DEFINED in `(cmark
+gfm options)` or `(cmark gfm private conditions)` and merely re-exported by
+`(cmark gfm)` -- `src/cmark/gfm.sls`'s `export` clause names them, its
+`library` body does not define them. Nothing in the file references a
+binding `(cmark gfm)` itself defines, such as `markdown->sxml`. Per the
+Makefile's own "Caveat proven while wiring this up" paragraph
+(`Makefile:147-152`, untouched by this fix pass and written about
+`options.sls`/`ast.sls` gaining an inert import): Chez instantiates an
+imported library's body only when something actually references a binding
+that library's own body defines -- not merely because the library appears
+in an `import` form. A reference satisfied entirely through a re-export
+never forces the re-exporting library's body to run, so `(cmark gfm
+private native)`'s unconditional top-level shim load
+(`src/cmark/gfm/private/native.sls:100`) never ran, and the poisoned
+`CHEZ_CMARK_GFM_SHIM` was never read. Same mechanism the Makefile already
+documents for a library gaining an inert import; this is the identical
+effect one level up, in a `.sps` program's own import list, discovered
+because probe 1 was tried before assuming the brief's literal step would
+work.
+
+Reverted immediately: copied the pre-probe backup back over
+`tests/test-options.sps`; `md5` afterward: `b40854d8456705a0c8ecc3ee29f828a0`,
+matching. `git diff --stat` at that point showed only this fix pass's
+three intended files.
+
+**Probe 2 -- import plus a call to a `(cmark gfm)`-exclusive binding,
+reproducing Task 8's actual committed state.** `markdown->sxml` is defined
+in `(cmark gfm)`'s own body, so restoring the two assertions that call it,
+not just the import, should force instantiation. Rather than hand-retype
+Deviation 2's mutation, the exact commit this fix pass is correcting was
+restored verbatim: `git show HEAD:tests/test-options.sps >
+tests/test-options.sps` (`HEAD` at the time of this fix pass is `f17407f`,
+Task 8's own commit). `md5` after: `f5dfbd50aebbcf6f84ee469c9c4b92d2`; a
+`diff` against the backup confirmed the only differences were the header
+comment, the `(cmark gfm)` import, and the two `markdown->sxml` assertions
+-- nothing else.
+
+```
+make check-purity
+=== check-purity: tests/test-options.sps, CHEZ_CMARK_GFM_SHIM poisoned ===
+Exception occurred with condition components:
+  0. &cmark-shim-unavailable: "/nonexistent"
+PURITY VIOLATED: tests/test-options.sps failed with CHEZ_CMARK_GFM_SHIM poisoned
+to a nonexistent path. Its import chain now reaches
+(cmark gfm private native), which loads a shared object -- check
+what it (or something it imports) just started pulling in.
+=== check-purity: tests/test-ast.sps, CHEZ_CMARK_GFM_SHIM poisoned ===
+# of expected passes      30
+purity holds: tests/test-ast.sps pulled in no native code
+=== check-purity: tests/test-sxml.sps, CHEZ_CMARK_GFM_SHIM poisoned ===
+# of expected passes      28
+purity holds: tests/test-sxml.sps pulled in no native code
+make: *** [check-purity] Error 1
+```
+**PURITY VIOLATED -- exactly the exception Task 8's own Deviation 2 first
+recorded** (same condition, same message, same exit path), and specific to
+`tests/test-options.sps`: `tests/test-ast.sps` and `tests/test-sxml.sps`
+both still hold in the same run, confirming the failure tracks that one
+suite's import chain rather than some global effect of the poisoned
+environment variable.
+
+**Revert.** Copied the backup back over `tests/test-options.sps`; `md5`
+`b40854d8456705a0c8ecc3ee29f828a0`, matching the pre-probe value exactly.
+`git diff --stat` afterward: only `Makefile`, `tests/test-options.sps`, and
+`tests/test-sxml-differential.sps` -- this fix pass's three intended files,
+nothing left over from either probe. Re-ran `make check-purity`: three
+"purity holds" lines again. Re-ran `make test`: 13 suites, `ALL SUITES
+PASSED`. `make check-pins`: pins agree.
+
+### Method note -- deviates from this file's default
+
+This file's intro states the default method: copy the target library to a
+scratch directory outside the repo and prepend it to `CHEZSCHEMELIBDIRS` so
+only the mutated copy resolves, leaving the tracked file untouched
+throughout. That method does not apply to either probe above: the thing
+under test is `tests/test-options.sps` itself, passed directly as `chez
+--program`'s argument inside `check-purity`'s loop -- `CHEZSCHEMELIBDIRS`
+shadows *library* resolution, not a `--program` file's own path, so a
+scratch copy placed anywhere on that variable would never be the file
+`make check-purity` actually runs. A full clone of the repository outside
+it, so that `make check-purity` could run there unmodified, would work but
+costs re-running `deps`/`build` against a second checkout to verify a
+two-line import change; editing the tracked file directly, under a
+recorded `md5` before and after and an immediate revert, was judged the
+more reliable option for this repository's small size and is the fallback
+the fix brief itself names. Both probes were reverted before touching any
+other file, confirmed by `md5` and `git diff --stat`, and neither left a
+trace once complete.
