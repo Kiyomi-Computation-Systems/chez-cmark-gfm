@@ -68,6 +68,8 @@ else
 endif
 
 SRFI_SRC     := vendor/chez-srfi
+SXMLT_SRC    := vendor/wak-sxml-tools
+COMMON_SRC   := vendor/wak-common
 SRFI_LIBS    := $(BUILD_DIR)/scheme-libs
 CHEZ_LIBDIRS := src:tests:$(SRFI_LIBS)
 TESTS        := $(wildcard tests/test-*.sps)
@@ -97,35 +99,61 @@ deps-info:
 
 build: $(SHIM) $(CONFIG_SLS)
 
-# Scheme dependencies. chez-srfi is vendored as a submodule pinned to the SAME
-# commit Akku.lock names (7879b52). Keep them equal: bumping the Akku dependency
-# without re-pinning the submodule means consumers and CI test different code,
-# and nothing here would notice. Akku itself is
-# deliberately NOT on this path: it has no prebuilt binary, and its downloader
-# fails on some hosts with CURLE_URL_MALFORMED. Akku.manifest/Akku.lock remain
-# the consumer-facing declaration.
+# Scheme dependencies. chez-srfi, wak-sxml-tools, and wak-common are each
+# vendored as a submodule pinned to the SAME commit Akku.lock names. Keep them
+# equal: bumping the Akku dependency without re-pinning the submodule means
+# consumers and CI test different code, and nothing here would notice. Akku
+# itself is deliberately NOT on this path: it has no prebuilt binary, and its
+# downloader fails on some hosts with CURLE_URL_MALFORMED. Akku.manifest/
+# Akku.lock remain the consumer-facing declaration.
 #
 # chez-srfi ships Akku's percent-encoded filenames (%3a64.sls). Chez resolves
 # (srfi :64) only from the decoded spelling, so link both into a build tree and
 # leave the submodule's own working tree untouched.
-# The submodule pin and Akku.lock name the same chez-srfi commit, and nothing
-# else enforces that. They drifted within minutes of the rule being written: a
-# `git submodule update --init` (from `deps`, below) resets the working tree to
-# the RECORDED gitlink, silently undoing a manual detach that had not been
-# staged yet. So this is a check, not a comment.
+#
+# wak-sxml-tools's own repo root has no `wak/` directory -- `(wak sxml-tools
+# serializer)` is exported from sxml-tools/serializer.sls, so the symlink
+# below aliases that directory straight to build/scheme-libs/wak/sxml-tools.
+# Confirmed by `find vendor/wak-sxml-tools -name 'serializer*'`; a brief that
+# assumed a `wak/sxml-tools/` layout was wrong about this.
+#
+# wak-sxml-tools's serializer.sls is not self-contained: it imports
+# (wak private include), which lives in a SEPARATE package, wak-common --
+# discovered by actually importing (wak sxml-tools serializer) and watching
+# it fail with "library (wak private include) not found", then confirmed via
+# `akku lock`, which resolves wak-common (and wak-ssax, unused by this one
+# import chain and so not vendored) as transitive dependencies. wak-common is
+# therefore vendored the same way, pinned to the commit `akku lock` names.
+# Its (wak private include compat) library ships one file per Scheme
+# implementation (compat.chezscheme.sls, compat.guile.sls, ...), each
+# declaring the SAME library name; Akku's installer picks one and renames it
+# to compat.sls at install time. Bypassing that installer (same reason as
+# above) means this recipe must do the same rename -- the same kind of
+# filename massaging as chez-srfi's percent-encoding fix above, just for a
+# different naming convention.
+#
+# The submodule pins and Akku.lock name the same commits, and nothing else
+# enforces that. chez-srfi's drifted within minutes of the rule being
+# written: a `git submodule update --init` (from `deps`, below) resets the
+# working tree to the RECORDED gitlink, silently undoing a manual detach that
+# had not been staged yet. So this is a check, not a comment.
 check-pins:
-	@rec=$$(git ls-files -s $(SRFI_SRC) | awk '{print $$2}'); \
-	lock=$$(sed -n 's/.*akku\.[0-9]*\.\([a-f0-9]*\)_repack.*/\1/p' Akku.lock | head -1); \
-	if [ -z "$$rec" ] || [ -z "$$lock" ]; then \
-	  echo "check-pins: could not read both pins (submodule='$$rec' lock='$$lock')" >&2; \
-	  exit 1; \
-	fi; \
-	case "$$rec" in \
-	  "$$lock"*) echo "pins agree: chez-srfi $$lock" ;; \
-	  *) echo "PIN DRIFT: submodule $$rec but Akku.lock names $$lock." >&2; \
-	     echo "Consumers install what Akku.lock names; CI tests the submodule." >&2; \
-	     exit 1 ;; \
-	esac
+	@fail=0; \
+	for pair in "$(SRFI_SRC):chez-srfi" "$(SXMLT_SRC):wak-sxml-tools" "$(COMMON_SRC):wak-common"; do \
+	  src=$${pair%%:*}; name=$${pair##*:}; \
+	  rec=$$(git ls-files -s $$src | awk '{print $$2}'); \
+	  lock=$$(sed -n "/$$name/,/^$$/s/.*akku\.[0-9]*\.\([a-f0-9]*\)_repack.*/\1/p" Akku.lock | head -1); \
+	  if [ -z "$$rec" ] || [ -z "$$lock" ]; then \
+	    echo "check-pins: could not read both pins for $$name (submodule='$$rec' lock='$$lock')" >&2; \
+	    fail=1; continue; \
+	  fi; \
+	  case "$$rec" in \
+	    "$$lock"*) echo "pins agree: $$name $$lock" ;; \
+	    *) echo "PIN DRIFT: $$name submodule $$rec but Akku.lock names $$lock." >&2; \
+	       fail=1 ;; \
+	  esac; \
+	done; \
+	exit $$fail
 
 # options.sls and ast.sls must import no library that loads a shared object,
 # directly or transitively (each file's own header comment states this).
@@ -181,6 +209,16 @@ deps:
 	  d=$$(printf '%s' "$$b" | sed 's/%3a/:/g'); \
 	  [ "$$d" = "$$b" ] || ln -sfn "$$f" "$$dst/$$d"; \
 	done
+	git submodule update --init $(SXMLT_SRC)
+	mkdir -p $(SRFI_LIBS)/wak
+	ln -sfn $(abspath $(SXMLT_SRC))/sxml-tools $(abspath $(SRFI_LIBS))/wak/sxml-tools
+	git submodule update --init $(COMMON_SRC)
+	mkdir -p $(SRFI_LIBS)/wak/private/include
+	ln -sfn $(abspath $(COMMON_SRC))/private/include.sls $(abspath $(SRFI_LIBS))/wak/private/include.sls
+	src=$(abspath $(COMMON_SRC))/private/include; dst=$(abspath $(SRFI_LIBS))/wak/private/include; \
+	for f in $$src/*; do ln -sfn "$$f" "$$dst/$$(basename "$$f")"; done
+	ln -sfn $(abspath $(SRFI_LIBS))/wak/private/include/compat.chezscheme.sls \
+	        $(abspath $(SRFI_LIBS))/wak/private/include/compat.sls
 
 $(LIB_DIR):
 	mkdir -p $(LIB_DIR)
