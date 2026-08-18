@@ -40,7 +40,13 @@
 ;; record and markdown-ast->sxml nothing would leave our renderer running the
 ;; default while cmark's ran the flag, and the two would differ for a reason
 ;; that is ours, not cmark's. This is the in-process counterpart of the CLI
-;; leg's -e flags -- one options record, each renderer told what it says.
+;; leg's -e flags.
+;;
+;; Derives softbreak only, not the whole record: unsafe-html? has no
+;; sxml-options equivalent to derive raw-html into (see the comment above
+;; cli-flags below), so this function cannot and does not attempt to tell
+;; the sxml renderer everything the cmark-options record says -- only the
+;; one field that has somewhere to go.
 (define (sxml-opts-for o m)
   (make-sxml-options
    'attribute-marker m
@@ -210,10 +216,15 @@
     (string=? (ours md with) (ours md without))))
 
 ;; markdown->sxml (Task 8's entry point) belongs here rather than in
-;; tests/test-options.sps: that suite is a PURE SUITE, and reaching
-;; markdown->sxml needs (cmark gfm), which loads native code on import
-;; alone, before any assertion runs. This file already imports (cmark gfm)
-;; for markdown->ast, so no new import is needed.
+;; tests/test-options.sps: that suite is a PURE SUITE, and CALLING
+;; markdown->sxml runs (cmark gfm)'s native code, parsing through the shim.
+;; Not because importing (cmark gfm) alone would do that -- it would not:
+;; Chez instantiates a library's body only when a binding it defines is
+;; actually referenced, so an import with no reference to what it exports is
+;; invisible to check-purity, same as the caveat check-purity's own Makefile
+;; comment records. What disqualifies this file from the pure suite is that
+;; the assertions below actually CALL markdown->sxml. This file already
+;; imports (cmark gfm) for markdown->ast, so no new import is needed.
 ;;
 ;; unsafe-html? is a cmark RENDERER policy. It cannot reach SXML -- the
 ;; adapter takes only the AST, which does not carry it -- so accepting it

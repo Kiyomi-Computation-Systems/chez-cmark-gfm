@@ -1,6 +1,9 @@
 #!r6rs
 ;;; Parses cmark's own spec files into their Markdown examples. TEST ONLY.
 ;;;
+;;; Not under src/: this ships with the tests, and the library is reachable
+;;; because the Makefile puts tests/ on CHEZ_LIBDIRS.
+;;;
 ;;; Transcribed from vendor/cmark-gfm/test/spec_tests.py:89-120. Five
 ;;; details, each of which corrupts the corpus silently if missed:
 ;;;
@@ -62,6 +65,19 @@
                 (rest (cdr lines)))
            (cond
              ((prefix? open-prefix l) (loop rest 'markdown '() out))
+             ;; The (eq? state 'text) guard has no counterpart in
+             ;; spec_tests.py, which appends unconditionally on every closing
+             ;; fence line (guarded only by 'disabled' not in extensions, a
+             ;; different axis). Without it, a bare 32-backtick line found
+             ;; OUTSIDE any open example -- state already 'text -- would
+             ;; append a spurious empty entry here, since `cur` is '() at
+             ;; that point; spec_tests.py would do the same (an empty
+             ;; "markdown_lines" joins to ""). This guard is stricter than
+             ;; the Python and produces fewer entries than it would in that
+             ;; situation. It is inert for all four corpus files this project
+             ;; parses -- none contains a stray closing-fence-shaped line
+             ;; outside a real example -- so the counts still match
+             ;; spec_tests.py's; it is a defensive divergence, not a bug.
              ((string=? fence l)
               (loop rest 'text '()
                     (if (eq? state 'text)

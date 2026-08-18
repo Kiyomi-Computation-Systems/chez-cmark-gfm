@@ -3521,3 +3521,69 @@ suites unchanged from Group 1's final counts. `make test`: 14 suites, `ALL
 SUITES PASSED`. `make check-purity` and `make check-pins` hold. The
 744-example corpus stayed byte-identical to cmark under both markers
 throughout.
+
+---
+
+### Group 3 — stale or wrong comments
+
+No mutation applies to this group: nothing here changes behaviour, so there
+is no decision for a mutation to break. Each item was verified against the
+actual source it cites (per the Global Constraint "read cmark semantics from
+vendor/cmark-gfm/, never from recall") before being fixed, not merely
+re-read and trusted.
+
+- `src/cmark/gfm/private/conditions.sls:118` cited `conditions.sls:59-60`
+  for the reason-symbol enumeration comment; it now lives at `:62-63`.
+  Corrected the citation.
+- `tests/test-sxml-differential.sps` claimed importing `(cmark gfm)` alone
+  loads native code. Verified against `check-purity`'s own Makefile comment
+  ("Chez only instantiates an imported library's body when something
+  actually REFERENCES one of its bindings"): the claim is backwards for the
+  import itself. What actually disqualifies this file from the pure suite
+  is that its assertions CALL `markdown->sxml`, which runs the shim.
+  Rewritten to say so; the conclusion (this file cannot be the pure suite)
+  is unchanged.
+- `sxml-opts-for`'s closing comment claimed "each renderer told what it
+  says," but the function derives `softbreak` only -- `raw-html` is never
+  set from `unsafe-html?`, because there is nowhere for it to go (see Group
+  2's `cli-flags` finding: no sxml-options field corresponds to cmark's
+  unsafe/raw passthrough at all). Rewritten to say what it actually derives
+  and why it stops there.
+- `sxml.sls`'s `dangerous-url?` comment attributed the data:image-checked-
+  first ordering to re2c. Checked `vendor/cmark-gfm/src/scanners.re:345-354`
+  directly: re2c's rules there are `'data:image/' (...)` then the bare
+  `'data:'` alternation, and re2c compiles `_scan_dangerous_url` to a DFA
+  resolved by **longest match**, not source order -- `data:image/png`
+  wins because it is the longer match, not because it is listed first. The
+  Scheme `cond` here really is first-match, so its own ordering
+  requirement is real, just not for the reason stated. Rewritten to
+  attribute each mechanism correctly; both still agree on this input.
+- `sxml.sls`'s `list` case emits `start` only when it is not 1, with no
+  citation, unlike every other requirement in the file. Added
+  `html.c:173-183` (verified with line numbers via `grep -n`), matching the
+  citation `tests/test-sxml.sps`'s own comment for the same rule already
+  carries.
+- `tests/spec-corpus.sls`'s header lacked the "not under src/, reachable via
+  CHEZ_LIBDIRS" note both `tests/sxml-html-serializer.sls` and
+  `tests/cmark-testing.sls` carry. Added it, matching their wording.
+- `tests/spec-corpus.sls`'s closing-fence branch guards on `(eq? state
+  'text)` before appending, which `vendor/cmark-gfm/test/spec_tests.py:104-
+  114` does not do -- it appends unconditionally on every closing-fence
+  line, guarded only by `'disabled' not in extensions`, a different axis.
+  Without our guard, a bare 32-backtick line found outside any open example
+  would append a spurious empty entry (Python would too, for the same
+  reason: `cur`/`markdown_lines` are both `'()`/`[]` at that point). This
+  makes the Scheme parser strictly more defensive than the Python and, in
+  that one situation, produce fewer entries than a literal port would --
+  inert for all four corpus files (none contains such a line, which is why
+  the example counts still match Python's), but previously undocumented.
+  Added a comment recording the divergence and why it does not show up in
+  the counts.
+
+**Verification.** `CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez
+--program tests/test-sxml.sps`: 39/39 (unchanged). `tests/test-conditions.sps`:
+29/29 (unchanged). `tests/test-sxml-differential.sps`: 52/52 (unchanged).
+`tests/test-ast-differential.sps`: 80/80 (unchanged, confirms
+`spec-corpus.sls`'s new comment did not disturb its parsing).
+`tests/test-differential.sps`: 28/28 (unchanged). Every count is identical
+to its pre-Group-3 value, as a comment-only change requires.

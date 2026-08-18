@@ -150,9 +150,17 @@
     (and (>= (string-length s) (string-length p))
          (string=? p (substring s 0 (string-length p)))))
 
-  ;; src/scanners.re:345-354. The data:image allowlist is checked FIRST,
-  ;; exactly as re2c orders the rules, so data:image/png survives the
-  ;; data: rejection that follows it.
+  ;; src/scanners.re:345-354. The data:image allowlist is checked FIRST here
+  ;; because this `cond` is first-match -- not because re2c's rules are, in
+  ;; the source they were transcribed from. re2c compiles _scan_dangerous_url
+  ;; to a DFA resolved by longest-match-with-backtracking, so "data:image/"
+  ;; ('png'|'gif'|'jpeg'|'webp') wins over the bare 'data:' rule regardless
+  ;; of which is listed first in the .re source -- it is simply the longer
+  ;; match. The two mechanisms agree on this input, which is what makes the
+  ;; transcription correct, but for different reasons: re2c because longest
+  ;; match prefers the more specific rule, this `cond` because it is
+  ;; ordered and would return the wrong answer if data:image were checked
+  ;; second.
   (define (dangerous-url? url)
     (let ((u (ascii-downcase url)))
       (cond
@@ -323,6 +331,7 @@
        (let ((kids (children->sxml n opts mark (prop n 'tight?)))
              (start (prop n 'start)))
          (if (eq? 'ordered (prop n 'kind))
+             ;; html.c:173-183 -- start is written only when it is not 1.
              (if (= 1 start)
                  (cons 'ol kids)
                  (cons 'ol (cons (list mark (list 'start (number->string start)))
