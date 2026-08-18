@@ -16,7 +16,9 @@
         (srfi :64)
         (cmark gfm)
         (cmark gfm sxml)
-        (sxml-html-serializer))
+        (sxml-html-serializer)
+        (spec-corpus)
+        (only (chezscheme) getenv))
 
 (define runner (test-runner-simple))
 (test-runner-current runner)
@@ -136,6 +138,29 @@
 (test-equal "markdown->sxml accepts an explicit unsafe-html? #f"
   '(*TOP* (h1 "hi"))
   (markdown->sxml "# hi\n" (make-cmark-options 'unsafe-html? #f)))
+
+;; --- the corpus ---------------------------------------------------------
+(define corpus-dir "vendor/cmark-gfm/test/")
+
+(define (corpus name) (spec-examples (string-append corpus-dir name)))
+
+;; A parser that silently matched nothing would make every corpus assertion
+;; below pass against no work at all. These counts come from
+;; `grep -c '^`\{32\} example'` on the pinned submodule.
+(test-equal "the corpus parser finds every example"
+  '(672 30 16 26)
+  (map (lambda (n) (length (corpus n)))
+       '("spec.txt" "extensions.txt" "smart_punct.txt" "regression.txt")))
+
+;; spec_tests.py:109 replaces U+2192 with a tab in both sides. Without it,
+;; every tab-significant example parses as a right-arrow character and the
+;; differential still passes -- both sides get the same wrong input.
+(test-equal "tab arrows are translated to tabs"
+  #t
+  (let ((all (apply string-append (corpus "spec.txt"))))
+    (and (not (memv #\x2192 (string->list all)))
+         (memv #\tab (string->list all))
+         #t)))
 
 (test-end "sxml-differential")
 

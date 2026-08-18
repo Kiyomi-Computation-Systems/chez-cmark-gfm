@@ -2165,3 +2165,175 @@ more reliable option for this repository's small size and is the fallback
 the fix brief itself names. Both probes were reverted before touching any
 other file, confirmed by `md5` and `git diff --stat`, and neither left a
 trace once complete.
+
+---
+
+## Task 9 — the corpus parser
+
+One file under test, `tests/spec-corpus.sls` (brief Step 5, two mutations).
+Method as stated above: scratch copy outside the repo, `CHEZSCHEMELIBDIRS`
+prepended with the scratch directory so the mutated copy resolves first,
+tracked file never touched.
+
+**Baseline**, `CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez --program
+tests/test-sxml-differential.sps`: 34/34 passes, exit 0. `make test`: 13
+suites, all `ALL SUITES PASSED`. `make check-purity`: three "purity holds"
+lines (unaffected — `tests/spec-corpus.sls` is reached only from
+`tests/test-sxml-differential.sps`, which was never in that gate's list).
+`md5` of the tracked file at baseline and throughout both mutations below:
+`52aadbced3ae6465875019eebaa04be8`, confirmed unchanged after every run.
+
+### Note on Step 4's expected count
+
+Step 4 predicts `# of expected passes 32` after this task's additions. The
+actual, correct result is 34, confirmed two independent ways: counting
+assertion names by hand, and mechanically —
+`grep -c '^(agrees ' tests/test-sxml-differential.sps` → 27,
+`grep -c '^(test-equal ' tests/test-sxml-differential.sps` → 7 (anchored at
+column 0 to exclude the `agrees` helper's own internal `(test-equal name
+…)` call, which a plain substring grep also matches), 27 + 7 = 34. The same
+count against `git show HEAD:tests/test-sxml-differential.sps` (the file as
+it stood before this task touched it) gives 27 + 5 = 32 — Step 4's number
+describes the *pre-existing* file, before Step 1's two new assertions are
+added, not the post-Step-1 result. Step 1's own code block is unambiguous
+(exactly two new `test-equal` forms, no alternate placement offered the way
+Task 8's Step 1/Step 5 genuinely conflicted), so there is no input choice
+that both matches Step 1 literally and also lands on 32 — reaching 32 would
+require dropping one of the two prescribed assertions or deleting two of
+the file's 32 pre-existing ones, either of which is a worse and unjustified
+deviation from the brief than leaving a stale summary number uncorrected.
+Per this file's own precedent for self-inconsistent briefs (Task 4's "Note
+on the differential test's import list"; Task 8's Deviation 1): the input
+(Step 1's code, used verbatim) was kept; Step 4's prose expectation is
+recorded here as stale documentation, not acted on. `# of expected passes
+34` is confirmed by every run in this entry, including the un-mutated
+baseline above.
+
+### Mutation 1 — fence narrowed to 31 backticks
+
+**Mutation** (brief Step 5.1): in a scratch copy only, narrow `fence` from
+32 backticks to 31:
+
+```diff
+-  (define fence (make-string 32 #\`))
++  (define fence (make-string 31 #\`))
+```
+
+`tests/spec-corpus.sls` in the repo was never touched — only
+`<scratch>/task9-mutation1/spec-corpus.sls` was edited.
+
+**Run:** `CHEZSCHEMELIBDIRS=<scratch>/task9-mutation1:src:tests:build/scheme-libs
+chez --program tests/test-sxml-differential.sps`
+
+**Result: FAIL, 32/34 — wider than the brief's Step 5.1 text predicts.**
+Step 5.1 names only "the corpus parser finds every example"; both new
+assertions fail:
+
+```
+FAIL the corpus parser finds every example
+FAIL tab arrows are translated to tabs
+# of expected passes      32
+# of unexpected failures  2
+```
+
+**Root cause confirmed by direct probe, not merely inferred**
+(`probe-mutation1.sps` and `probe-mutation1-counts.sps`, scratch-only).
+`open-prefix` is derived from `fence` (`(string-append fence " example")`),
+so narrowing `fence` to 31 backticks narrows `open-prefix` to 31 backticks
+followed immediately by a space. A real opening-fence line has 32
+backticks before its space, so `open-prefix`'s 32nd character (a space)
+never matches the real line's 32nd character (still a backtick) — `prefix?`
+rejects every real example header, `state` never becomes `'markdown`, and
+`spec-examples` returns `'()` for all four files:
+
+```
+(0 0 0 0)
+```
+
+— "counts other than `(672 30 16 26)`", exactly as Step 5.1 predicts, and
+the direct cause of "the corpus parser finds every example" failing. The
+second failure is a downstream consequence of the same corruption, not an
+independent signal about tab handling: with zero examples parsed, `(corpus
+"spec.txt")` is `'()`, so `(apply string-append '())` is `""`, and
+`(memv #\tab (string->list ""))` is `#f` — the "tab arrows are translated to
+tabs" assertion's second conjunct fails not because a translation step
+misbehaved, but because there is no corpus content left for it to observe
+one way or the other. Confirmed directly:
+
+```scheme
+(spec-examples "vendor/cmark-gfm/test/spec.txt")  ; => ()
+```
+
+**Revert.** Confirmed via `md5 tests/spec-corpus.sls`
+(`52aadbced3ae6465875019eebaa04be8`, unchanged) and `git status --short`
+(file shown only as `??`, i.e. still untracked and unedited by the
+mutation). Re-ran the suite through the ordinary, non-scratch command:
+`CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez --program
+tests/test-sxml-differential.sps` → `# of expected passes 34`, exit 0.
+
+### Mutation 2 — the `arrows->tabs` call deleted
+
+**Mutation** (brief Step 5.2): in a fresh scratch copy, stop translating
+U+2192 to tab at the point a completed example is folded into `out`, while
+leaving the `arrows->tabs` definition itself in place (nothing else calls
+it):
+
+```diff
+             ((string=? fence l)
+              (loop rest 'text '()
+                    (if (eq? state 'text)
+                        out
+-                       (cons (arrows->tabs (apply string-append (reverse cur)))
++                       (cons (apply string-append (reverse cur))
+                              out))))
+```
+
+`tests/spec-corpus.sls` in the repo was never touched — only
+`<scratch>/task9-mutation2/spec-corpus.sls` was edited.
+
+**Run:** `CHEZSCHEMELIBDIRS=<scratch>/task9-mutation2:src:tests:build/scheme-libs
+chez --program tests/test-sxml-differential.sps`
+
+**Result: FAIL, 33/34 — exactly the assertion the brief names, nothing
+wider. This is the assertion that proves the differential is structurally
+blind to a uniformly-mistranslated corpus.**
+
+```
+FAIL tab arrows are translated to tabs
+# of expected passes      33
+# of unexpected failures  1
+```
+
+**"the corpus parser finds every example" stays green** (not in the
+failure list; 33 of 34 passed, only the tab assertion failed) — the example
+*count* is untouched by this mutation, since `arrows->tabs` only rewrites
+characters inside an already-delimited example, never the delimiters
+themselves. **No `agrees` (differential) assertion failed either** —
+confirmed by the single-line failure list above, and independently by
+`grep -rln "spec-corpus" tests/ src/`, which shows only
+`tests/test-sxml-differential.sps` and `tests/spec-corpus.sls` itself
+reference the library at all: no `agrees` fixture in this file is built
+from corpus content, so none of them could observe this mutation even in
+principle. That is exactly the property Step 5.2 exists to demonstrate:
+with the translation deleted, a tab-significant example's Markdown source
+still contains a literal U+2192 character instead of a tab, `ours` and
+`theirs` are handed that identical (wrong) input, and would agree with each
+other regardless of what cmark does with a real tab — the differential is
+structurally incapable of catching this class of corruption, which is why
+`tests/spec-corpus.sls` needs an assertion that inspects the corpus's own
+characters directly rather than relying on downstream agreement.
+
+**Revert.** Confirmed via `md5 tests/spec-corpus.sls`
+(`52aadbced3ae6465875019eebaa04be8`, unchanged) and `git status --short`
+(`??` only, still untracked and unedited). Re-ran the suite through the
+ordinary, non-scratch command: `CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs
+chez --program tests/test-sxml-differential.sps` → `# of expected passes
+34`, exit 0.
+
+**Final reconfirmation for the task.** `git status --short` throughout both
+mutations showed only this task's two intended files
+(`tests/spec-corpus.sls` untracked, `tests/test-sxml-differential.sps`
+modified) — never touched by either mutation or probe run. `make test`: 13
+suites, all `ALL SUITES PASSED`. `make check-purity`: three "purity holds"
+lines. `make check-pins`: pins agree. Scratch copies and probe scripts
+deleted afterward.
