@@ -45,6 +45,12 @@
 * Project should be portable across amd64 and arm64
 * Plans live in `/.plans`, decision records in `/.plans/decisions`
 * Add entries to `CHANGELOG.md` for each release
+* **Closing Ritual:** squash merge PR, catch local `main` up, clean up
+  branches, reflect on the session. Run all four parts without asking which.
+  A squash merge leaves the branch unreachable by ancestry, so `git branch -d`
+  refuses it and `-D` is required — diff against `main` first to confirm
+  nothing unique is being dropped. The reflection is a retrospective, not a
+  summary of what was done.
 
 ## Traps this repo has already hit
 
