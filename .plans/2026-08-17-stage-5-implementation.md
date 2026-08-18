@@ -151,7 +151,7 @@ In `src/cmark/gfm.sls`, add to the `(export …)` list under the conditions bloc
 CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez --program tests/test-conditions.sps
 ```
 
-Expected: PASS, `# of expected passes 26`.
+Expected: PASS, `# of expected passes 28`.
 
 - [ ] **Step 6: Mutation — watch it fail**
 
@@ -1564,6 +1564,27 @@ Append to `tests/test-sxml.sps`, before `(test-end "sxml")`:
 ;; extensions/table.c:806-811 switches on 'l'/'c'/'r' and writes nothing
 ;; otherwise -- and unlike the XML renderer, it emits align on BODY cells
 ;; too. That is the one ADR-0010 blind spot this oracle closes.
+;; A header row anywhere but first is a tree the parser cannot produce, so
+;; the adapter refuses it rather than silently normalising it into output
+;; cmark would not generate. Reachable only through markdown-ast->sxml on a
+;; caller-built or caller-transformed AST.
+(test-equal "a header row after the first row is refused"
+  'malformed-table
+  (guard (e ((cmark-invalid-input? e) (cmark-invalid-input-reason e))
+            (#t 'wrong-condition))
+    (->sxml (doc (table (row #t (cell 'none (text "h")))
+                        (row #f (cell 'none (text "a")))
+                        (row #t (cell 'none (text "h2"))))))
+    'no-raise))
+
+(test-equal "two leading header rows are refused"
+  'malformed-table
+  (guard (e ((cmark-invalid-input? e) (cmark-invalid-input-reason e))
+            (#t 'wrong-condition))
+    (->sxml (doc (table (row #t (cell 'none (text "h")))
+                        (row #t (cell 'none (text "h2"))))))
+    'no-raise))
+
 (test-equal "alignment renders on header and body cells alike, omitted when none"
   '(*TOP* (table (thead (tr (th (\x40; (align "left")) "h")
                             (th (\x40; (align "center")) "i")
@@ -1599,7 +1620,7 @@ Add to `src/cmark/gfm/sxml.sls`, before `node->sxml`:
   ;; first non-header row opens <tbody>, which stays open until the table
   ;; ends. Either section is absent when it has no rows.
   (define (table->sxml n raw-html)
-    (let loop ((rows (markdown-node-children n)) (head '()) (body '()))
+    (let loop ((rows (markdown-node-children n)) (i 0) (head '()) (body '()))
       (cond
         ((null? rows)
          (cons 'table
@@ -1611,9 +1632,25 @@ Add to `src/cmark/gfm/sxml.sls`, before `node->sxml`:
                 (header? (markdown-node-property r 'header?))
                 (tr (cons 'tr (map (lambda (c) (cell->sxml c header? raw-html))
                                    (markdown-node-children r)))))
+           ;; The parser cannot produce a header row anywhere but first:
+           ;; extensions/table.c:402-403 sets is_header exactly once, on the
+           ;; row synthesised when the table block opens, and every later row
+           ;; is calloc'd false (table.c:447). markdown-ast->sxml is public
+           ;; and takes an arbitrary tree, though, so a caller who built or
+           ;; rewrote one can hand us an order the parser never makes.
+           ;;
+           ;; Raising beats both alternatives. Bucketing every header row into
+           ;; one merged thead is silently NOT what cmark does -- table.c
+           ;; :777-780,792-795 opens and closes a thead around each header row,
+           ;; with no accumulation guard like tbody's need_closing_table_body.
+           ;; And reproducing cmark exactly is worse still: its header-after-
+           ;; body output opens a thead while a tbody is still open, which is
+           ;; not well-formed HTML.
+           (when (and header? (positive? i))
+             (raise (make-cmark-invalid-input 'malformed-table)))
            (if header?
-               (loop (cdr rows) (cons tr head) body)
-               (loop (cdr rows) head (cons tr body))))))))
+               (loop (cdr rows) (+ i 1) (cons tr head) body)
+               (loop (cdr rows) (+ i 1) head (cons tr body))))))))
 
   (define (cell->sxml c header? raw-html)
     (let ((tag   (if header? 'th 'td))
@@ -1643,7 +1680,7 @@ CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez --program tests/test-sxml.sps
 make check-purity
 ```
 
-Expected: PASS, `# of expected passes 26`.
+Expected: PASS, `# of expected passes 28`.
 
 - [ ] **Step 5: Extend the differential**
 
