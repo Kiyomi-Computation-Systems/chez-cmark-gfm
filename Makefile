@@ -452,3 +452,38 @@ clean:
 # compare against until the generated file exists.
 check-config: build
 	$(CHEZ) --program tests/check-config.sps
+
+EXAMPLES := $(wildcard examples/*.sps)
+
+# CHEZSCHEMELIBDIRS is src:fallback and NOTHING ELSE, deliberately. No
+# build/scheme-libs, no chez-srfi, no wak-*. The 0.3.0 CHANGELOG claims a
+# consumer of this package acquires no dev dependency; an example that
+# reached one would break this target, which is the only way that claim
+# stays true rather than merely written down.
+#
+# Each examples/NN-name.sps pairs with examples/expected/NN.out. Keeps going
+# after a failure so one stale example cannot hide the others.
+examples: build
+	@mkdir -p tests/tmp; \
+	fail=0; \
+	for e in $(EXAMPLES); do \
+	  base=$$(basename $$e .sps); \
+	  exp=examples/expected/$$(echo $$base | cut -d- -f1).out; \
+	  echo "=== $$e ==="; \
+	  if [ ! -f $$exp ]; then \
+	    echo "MISSING expected output: $$exp" >&2; fail=1; continue; \
+	  fi; \
+	  if CHEZSCHEMELIBDIRS=src:fallback $(CHEZ) --program $$e > tests/tmp/$$base.out 2>&1; then \
+	    if diff -u $$exp tests/tmp/$$base.out; then \
+	      echo "ok"; \
+	    else \
+	      echo "OUTPUT CHANGED: $$e" >&2; fail=1; \
+	    fi; \
+	  else \
+	    echo "EXAMPLE FAILED TO RUN: $$e" >&2; \
+	    cat tests/tmp/$$base.out >&2; fail=1; \
+	  fi; \
+	done; \
+	if [ $$fail -eq 0 ]; then echo "ALL EXAMPLES PASSED"; \
+	else echo "EXAMPLES FAILED"; fi; \
+	exit $$fail
