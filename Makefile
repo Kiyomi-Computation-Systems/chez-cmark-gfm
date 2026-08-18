@@ -128,7 +128,7 @@ TESTS        := $(wildcard tests/test-*.sps)
 # work that would be lost".
 MEMORY_TESTS := $(filter-out tests/test-differential.sps,$(TESTS))
 
-.PHONY: all build deps check-pins check-purity check-prod dev test test-memory vendor clean prod deps-info
+.PHONY: all build deps check-pins check-purity check-prod check-config examples dev test test-memory vendor clean prod deps-info
 
 all: build
 
@@ -444,3 +444,11 @@ check-prod: deps
 
 clean:
 	rm -rf $(BUILD_DIR) $(CONFIG_SLS)
+
+# The fallback config (fallback/) and the generated one (src/) both declare
+# (cmark gfm private config). Nothing else would notice them diverging, and a
+# divergence is invisible until a consumer imports an unbuilt tree -- so this
+# is a check, not a comment. Depends on `build` because it has nothing to
+# compare against until the generated file exists.
+check-config: build
+	$(CHEZ) --program tests/check-config.sps

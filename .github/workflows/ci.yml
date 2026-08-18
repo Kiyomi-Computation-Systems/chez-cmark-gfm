@@ -71,6 +71,12 @@ jobs:
       - name: Build (vendored path)
         run: make HAVE_PKG=no build
 
+      # Two files declare (cmark gfm private config): the generated one and
+      # fallback/'s checked-in sentinel. They must stay substitutable, and
+      # only a built tree has both to compare.
+      - name: Check the fallback config agrees with the generated one
+        run: make HAVE_PKG=no check-config
+
       # options.sls and ast.sls must import no library that loads a shared
       # object, directly or transitively -- that purity is what makes every
       # assertion in test-options.sps and test-ast.sps unable to pass by
@@ -138,6 +144,7 @@ jobs:
       - name: Build and test (pkg-config path)
         run: |
           make build
+          make check-config
           make test
 
       - name: Build and test (vendored path)
