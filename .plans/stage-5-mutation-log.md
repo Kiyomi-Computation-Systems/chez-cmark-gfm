@@ -282,3 +282,167 @@ tests/test-options.sps` → `# of expected passes 57`, exit 0. Also
 reconfirmed `make test` (10 suites, `ALL SUITES PASSED`) and `make
 check-purity` (holds) both before and after this exercise. Scratch copy and
 probe script deleted afterward.
+
+---
+
+## Task 3 — the test-only SXML→HTML serializer
+
+Two mutations, both against `tests/sxml-html-serializer.sls` (brief Step 5).
+Method as stated above: scratch copy outside the repo, `CHEZSCHEMELIBDIRS`
+prepended with the scratch directory so the mutated copy resolves first,
+tracked file never touched.
+
+**Baseline**, `CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez --program
+tests/test-sxml-serializer.sps`: 16/16 passes, exit 0. `make test`: 11
+suites (10 pre-existing + this task's own), all `ALL SUITES PASSED`. `make
+check-purity`: holds. `make check-pins`: holds. `md5` of the tracked file at
+baseline: `64887ab18335f5bab16c05a3bc519ee6`.
+
+### Mutation 1 — `emit-cr` unconditional
+
+**Mutation** (brief Step 5, literal reading): in a scratch copy only,
+change `emit-cr` to emit `"\n"` unconditionally:
+
+```diff
+   (define (emit-cr)
+-    (when (and (pair? chunks) (not last-newline?)) (emit "\n")))
++    (emit "\n"))
+```
+
+**Run:** `CHEZSCHEMELIBDIRS=<scratch>/mutation1:src:tests:build/scheme-libs
+chez --program tests/test-sxml-serializer.sps`
+
+**Result: FAIL, 0/16 — every assertion fails, far wider than the brief's
+Step 5 text predicts** ("Confirm... fails and the others stay green").
+
+```
+# of unexpected failures  16
+```
+
+**Root cause confirmed by direct probe, not merely inferred.** A
+standalone probe (`probe-mutation1.sps`, scratch-only) calls `(sxml->html
+'(*TOP* (p "a & b")))` against the mutated library and prints the result:
+`"\n<p>a &amp; b</p>\n"` — a spurious **leading** newline, before anything
+at all has been written. The literal reading of "emit `\n`
+unconditionally" collapses two independent guards into one deletion:
+`(pair? chunks)` (html.c's own `html->size &&` — never emit a newline
+before the first byte of output) and `(not last-newline?)` (the
+collapse-on-repeat rule the named assertion actually targets). Removing
+both at once means almost every test's tree — nearly all of them open with
+a `cr-before-open` tag such as `p`, `blockquote`, `ul`, or `table` as their
+very first node — now gets an unwanted leading `\n`, which fails the
+assertion regardless of whether the collapse rule itself is exercised.
+This is a different reason than the one named assertion is meant to
+isolate, so per the plan's instruction not to accept "it failed, therefore
+covered," a second, surgical mutation isolates the collapse rule alone.
+
+**Isolated mutation 1b**, scratch-only, drops only the collapse-on-repeat
+check and leaves the empty-buffer guard intact:
+
+```diff
+   (define (emit-cr)
+-    (when (and (pair? chunks) (not last-newline?)) (emit "\n")))
++    (when (pair? chunks) (emit "\n")))
+```
+
+**Run:** same command against `<scratch>/mutation1b`.
+
+**Result: FAIL, 9/16 — still wider than "one assertion fails, the others
+stay green," but for a reason directly and verifiably tied to the named
+property, not a side effect.**
+
+```
+FAIL hr and br close XHTML-style with a trailing newline
+FAIL blockquote and list open tags are followed by a newline
+FAIL list items close with a newline, open without
+FAIL ol start renders as an attribute
+FAIL newlines at block boundaries collapse, they do not stack
+FAIL table sections and cells place newlines like table.c
+FAIL a block-level comment gets newlines on both sides
+# of unexpected failures  7
+```
+
+Confirmed by direct probe (`probe-mutation1b.sps`, scratch-only), comparing
+baseline vs. mutated output side by side for four of the seven:
+
+| tree | baseline (correct) | mutation 1b |
+|---|---|---|
+| `(blockquote (p "a"))` | `<blockquote>\n<p>a</p>\n</blockquote>\n` | `<blockquote>\n\n<p>a</p>\n\n</blockquote>\n` |
+| `(ul (li "a") (li "b"))` | `<ul>\n<li>a</li>\n<li>b</li>\n</ul>\n` | `<ul>\n\n<li>a</li>\n\n<li>b</li>\n</ul>\n` |
+| `(p "a") (*COMMENT* " x ") (p "b")` | `<p>a</p>\n<!-- x -->\n<p>b</p>\n` | `<p>a</p>\n\n<!-- x -->\n\n<p>b</p>\n` |
+| `(blockquote (p "a")) (p "b")` (the named test) | `<blockquote>\n<p>a</p>\n</blockquote>\n<p>b</p>\n` | `<blockquote>\n\n<p>a</p>\n\n</blockquote>\n\n<p>b</p>\n` |
+
+Every one of the seven shows the identical signature: a doubled `\n\n`
+appearing exactly at a boundary where the buffer already ended in a
+newline and the correct code collapses to one. None are spurious or
+unrelated — `blockquote`'s own `cr-after-open` followed immediately by its
+child `p`'s `cr-before-open`, `ul`'s `cr-after-open` followed by `li`'s
+`cr-before-open`, the block-comment's `emit-cr` immediately after `p`'s own
+unconditional trailing newline, and the table's dense chain of adjacent
+`thead`/`tr`/`th` boundaries, are all independently-occurring instances of
+exactly the same collapse-on-repeat rule the named assertion exercises —
+they are just additional, real trigger points the brief's Step 5 text did
+not enumerate. So: the brief's prediction that "the others stay green" is
+factually inaccurate (6 further assertions beyond the named one also
+correctly fail), but the property Step 5 exists to establish is not merely
+covered — it is covered more redundantly than the brief states, by seven
+independent assertions rather than one, all for the single, correctly
+isolated reason.
+
+**Revert.** Nothing in the repo was ever edited by either variant — only
+`<scratch>/mutation1` and `<scratch>/mutation1b` were. Confirmed via `md5
+tests/sxml-html-serializer.sls` (`64887ab18335f5bab16c05a3bc519ee6`,
+unchanged throughout both mutation attempts). Re-ran the suite through the
+ordinary, non-scratch command: `CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs
+chez --program tests/test-sxml-serializer.sps` → `# of expected passes 16`,
+exit 0.
+
+### Mutation 2 — `href` dropped from `href-attribute?`
+
+**Mutation** (brief Step 5): in a fresh scratch copy, remove `href` from
+`href-attribute?`, leaving only `src`:
+
+```diff
+-  (define (href-attribute? name) (memq name '(href src)))
++  (define (href-attribute? name) (memq name '(src)))
+```
+
+`tests/sxml-html-serializer.sls` in the repo was never touched — only
+`<scratch>/mutation2/sxml-html-serializer.sls` was edited.
+
+**Run:** `CHEZSCHEMELIBDIRS=<scratch>/mutation2:src:tests:build/scheme-libs
+chez --program tests/test-sxml-serializer.sps`
+
+**Result: FAIL, 15/16 — exactly the assertion the brief names, nothing
+wider.**
+
+```
+FAIL href escapes ampersand and apostrophe as entities
+# of expected passes      15
+# of unexpected failures  1
+```
+
+**"a non-href attribute leaves apostrophe alone" stays green**, exactly as
+predicted — that test never calls `href-attribute?` on `href` in the first
+place (it uses `title`), so its code path is untouched by this mutation.
+No second probe was needed to isolate anything, but one was run anyway to
+record the exact mechanism: `probe-mutation2.sps` (scratch-only) calls
+`(sxml->html '(*TOP* (p (a (\x40; (href "/a&b'c")) "l")))))` against the
+mutated library and gets `"<p><a href=\"/a&amp;b'c\">l</a></p>\n"` — the
+`&` is still escaped (via `escape-html`'s own `&` rule, a different code
+path that still fires) but the `'` now survives unescaped, because `href`
+no longer routes through `escape-href` at all. That is precisely the
+property this mutation is meant to isolate: without `href` in
+`href-attribute?`, an href value's apostrophe is no longer entity-escaped,
+silently producing HTML that would break the attribute boundary were the
+character actually `"` instead of `'`.
+
+**Revert.** Confirmed via `md5 tests/sxml-html-serializer.sls` →
+`64887ab18335f5bab16c05a3bc519ee6`, unchanged. Re-ran the suite through the
+ordinary, non-scratch command: `CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs
+chez --program tests/test-sxml-serializer.sps` → `# of expected passes 16`,
+exit 0.
+
+**Final reconfirmation for the task.** `make test`: 11 suites, all `ALL
+SUITES PASSED`. `make check-purity`: holds. `make check-pins`: holds.
+Scratch copies and probe scripts deleted afterward.
