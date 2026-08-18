@@ -2557,6 +2557,39 @@ what this repo's mutation rule exists to prevent:**
   close-fence branch guards on state where the Python does not — inert for all
   four files, but undocumented.
 
+**From the Task 11/11a review:**
+
+- `tests/test-sxml-portability.sps`'s escaping assertion is named "a script tag
+  in a **text node** comes out escaped", but that content arrives as
+  `html-inline` — the implementer's own mutation log says so. Rename it to name
+  `raw-html: escape`, so a failure points at `sxml.sls`'s `raw-html->sxml`
+  rather than its `text` case.
+- No portability assertion covers an ordinary `text`-node literal. A fixture
+  like `"a < b\n"` costs two lines and pins that property *through third-party
+  code*, which is the only thing this suite exists to do. The 744-example
+  differential already catches a double-escape in the `text` case, but not
+  through a serializer we do not control.
+- The differential's per-marker non-vacuity probe catches `markers` being empty
+  or `'(caret)`, but a `markers` of `'(at)` alone would still pass — leaving the
+  corpus covering one dialect while the comment claims it guards against
+  exactly that. Assert the driver's length or visit order.
+- `check-pins`' `sed` range `/$name/,/^$/` never terminates, because `Akku.lock`
+  contains no blank lines; correctness rests on `head -1`. The name match is
+  also unanchored, so a future package whose name is a substring of an earlier
+  entry's URL would read the wrong hash and could report false agreement. It is
+  correct for all three pairs today — make the mechanism match that.
+- `make deps` links `wak-common`'s `private/include.sls` and `private/include/*`
+  but not the `define-values.sls` and `let-optionals.sls` beside them. A re-pin
+  that makes `(wak private include)` reach either fails at test time with
+  library-not-found rather than at `deps` time.
+- `tests/test-sxml-portability.sps`'s last assertion involves no third-party
+  code and duplicates one in `tests/test-sxml.sps`. Its one distinct property —
+  building the marker from `(string->symbol "@")` rather than the `\x40;`
+  escape — is worth keeping, in `test-sxml.sps`.
+- The differential defines `default-marker` as a literal duplicating
+  `options.sls`'s default. If the library default changed, the non-sweep legs
+  would silently stop exercising what a caller who sets nothing gets.
+
 **One deliberate exception to state, not fix:** `markdown->sxml` silently
 discards `source-positions?`. Unlike the three renderer-only options it
 refuses, positions *do* reach the AST — the adapter simply drops them per
