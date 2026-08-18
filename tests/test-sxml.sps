@@ -258,8 +258,8 @@
 ;; cmark would not generate. Reachable only through markdown-ast->sxml on a
 ;; caller-built or caller-transformed AST.
 (test-equal "a header row after the first row is refused"
-  'malformed-table
-  (guard (e ((cmark-invalid-input? e) (cmark-invalid-input-reason e))
+  'header-row-not-first
+  (guard (e ((cmark-malformed-tree? e) (cmark-malformed-tree-reason e))
             (#t 'wrong-condition))
     (->sxml (doc (table (row #t (cell 'none (text "h")))
                         (row #f (cell 'none (text "a")))
@@ -267,8 +267,8 @@
     'no-raise))
 
 (test-equal "two leading header rows are refused"
-  'malformed-table
-  (guard (e ((cmark-invalid-input? e) (cmark-invalid-input-reason e))
+  'header-row-not-first
+  (guard (e ((cmark-malformed-tree? e) (cmark-malformed-tree-reason e))
             (#t 'wrong-condition))
     (->sxml (doc (table (row #t (cell 'none (text "h")))
                         (row #t (cell 'none (text "h2"))))))

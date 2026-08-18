@@ -182,9 +182,7 @@
                 (if (null? body) '() (list (cons 'tbody (reverse body)))))))
         (else
          (let* ((r (car rows))
-                (header? (markdown-node-property r 'header?))
-                (tr (cons 'tr (map (lambda (c) (cell->sxml c header? raw-html))
-                                   (markdown-node-children r)))))
+                (header? (markdown-node-property r 'header?)))
            ;; The parser cannot produce a header row anywhere but first:
            ;; extensions/table.c:402-403 sets is_header exactly once, on the
            ;; row synthesised when the table block opens, and every later row
@@ -200,10 +198,15 @@
            ;; body output opens a thead while a tbody is still open, which is
            ;; not well-formed HTML.
            (when (and header? (positive? i))
-             (raise (make-cmark-invalid-input 'malformed-table)))
-           (if header?
-               (loop (cdr rows) (+ i 1) (cons tr head) body)
-               (loop (cdr rows) (+ i 1) head (cons tr body))))))))
+             (raise (make-cmark-malformed-tree 'header-row-not-first)))
+           ;; Bound after the guard, not before it: rendering a row we are
+           ;; about to reject wastes the work, and an unsupported node inside
+           ;; that row would raise first and mask the more specific diagnosis.
+           (let ((tr (cons 'tr (map (lambda (c) (cell->sxml c header? raw-html))
+                                    (markdown-node-children r)))))
+             (if header?
+                 (loop (cdr rows) (+ i 1) (cons tr head) body)
+                 (loop (cdr rows) (+ i 1) head (cons tr body)))))))))
 
   (define (cell->sxml c header? raw-html)
     (let ((tag   (if header? 'th 'td))

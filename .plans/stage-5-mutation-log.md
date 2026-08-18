@@ -1488,3 +1488,256 @@ intended asymmetry, not a gap.
 modified, both this fix pass's own legitimate changes. Re-ran
 `tests/test-sxml.sps` through the ordinary, non-scratch command → 28/28,
 exit 0. Scratch copy deleted afterward.
+
+---
+
+## Task 7 review fix 2 — condition taxonomy and guard placement
+
+Two further review findings against Task 7's `table->sxml`, both
+adjudicated by the project owner and folded into the plan by commit
+`52eb6c9`.
+
+**Finding 1 (Important).** The previous fix pass's guard raised
+`&cmark-invalid-input` with reason `'malformed-table`. But
+`conditions.sls:59-60`(then-numbering) documents `&cmark-invalid-input`'s
+reasons as a closed set — `'embedded-nul`, `'too-large`, `'not-a-string`,
+`'extension-name-not-a-string` — all checks on raw Markdown text or option
+values, and `&cmark-unsupported-node` was deliberately kept *out* of that
+family (design spec 3.4) so a caller guarding bad documents cannot silently
+swallow adapter-side problems. A malformed AST handed to the public
+`markdown-ast->sxml` is neither a bad document nor an adapter gap, so it
+gets its own condition, `&cmark-malformed-tree`, deriving from
+`&cmark-error` directly — the same derivation `&cmark-unsupported-node`
+uses, for the same reason. The reason symbol also changed from
+`'malformed-table` (names the container) to `'header-row-not-first` (names
+the check).
+
+**Finding 2 (Minor).** `tr` was bound in the same `let*` as `header?`, so a
+row about to be rejected was fully rendered — including any unsupported
+node inside it — before the guard ran; such a node would raise
+`&cmark-unsupported-node` and mask the more specific `&cmark-malformed-tree`
+diagnosis. Fixed by moving `tr`'s binding into its own `let`, below the
+guard.
+
+### Files touched
+- `src/cmark/gfm/private/conditions.sls` — new `&cmark-malformed-tree`
+  condition type, deriving from `&cmark-error`; its four names (including
+  the constructor) exported from this library, next to
+  `&cmark-unsupported-node`.
+- `src/cmark/gfm.sls` — re-exports `&cmark-malformed-tree`,
+  `cmark-malformed-tree?`, `cmark-malformed-tree-reason` (constructor
+  withheld — matching how every other condition type is re-exported from
+  this library; the public API never lets a caller construct one).
+- `src/cmark/gfm/sxml.sls` — `table->sxml` now raises
+  `(make-cmark-malformed-tree 'header-row-not-first)`; `tr`'s binding moved
+  into a nested `let`, below the guard.
+- `tests/test-sxml.sps` — the two existing table-row-order assertions now
+  guard on `cmark-malformed-tree?`/`cmark-malformed-tree-reason` and expect
+  `'header-row-not-first` (the `'wrong-condition`/`'no-raise` sentinels
+  unchanged).
+- `tests/test-conditions.sps` — three new assertions mirroring
+  `&cmark-unsupported-node`'s own coverage: the reason is carried, the
+  condition is a `cmark-error?`, and — the load-bearing one — it is **not**
+  a `cmark-invalid-input?`.
+
+**Baseline**, at HEAD before this fix pass's edits:
+`CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez --program
+tests/test-conditions.sps`: 26/26 passes, exit 0.
+`tests/test-sxml.sps`: 28/28, exit 0.
+
+**Post-fix.** `tests/test-conditions.sps`: **29/29** (26 pre-existing + 3
+new). `tests/test-sxml.sps`: **28/28** (unchanged count — the two
+table-row-order assertions were edited in place, not added to).
+`tests/test-sxml-differential.sps`: **28/28**, unchanged, confirming the
+guard is still never exercised by parser output — every differential
+fixture parses, so it can never fire. `make check-purity`: holds, all
+three pure suites including `test-sxml.sps` at 28/28. `make test`: 13
+suites, all `ALL SUITES PASSED`.
+
+---
+
+### Mutation 1 — reparent `&cmark-malformed-tree` onto `&cmark-invalid-input`
+
+In a scratch copy at `<scratch>/mutation1/cmark/gfm/private/conditions.sls`
+(outside the repo; the tracked file was never edited), change the new
+condition type's parent:
+
+```diff
+@@ -122,5 +122,5 @@
+   ;; swallow a structurally ill-shaped tree, any more than it should swallow
+   ;; a coverage gap in the adapter. Neither is "the document was bad".
+-  (define-condition-type &cmark-malformed-tree &cmark-error
++  (define-condition-type &cmark-malformed-tree &cmark-invalid-input
+     make-cmark-malformed-tree cmark-malformed-tree?
+     (reason cmark-malformed-tree-reason)))
+```
+
+`src/cmark/gfm/private/conditions.sls` in the repo was never touched.
+Confirmed by `md5` (`d57557d57ac763329ea880671ae11841`, identical before
+the scratch copy was made and after the exercise) and by `git status
+--short` (only this fix pass's five legitimate files modified, unchanged
+before and after).
+
+**Run:** `CHEZSCHEMELIBDIRS=<scratch>/mutation1:src:tests:build/scheme-libs
+chez --program tests/test-conditions.sps`
+
+**Result: FAIL, 26/29 — all three of this fix pass's new assertions fail,
+wider than a literal reading of Finding 1's one-line diff suggests, in
+exactly the shape Task 1's entry predicted for this same kind of mutation.**
+
+```
+%%%% Starting test conditions
+FAIL malformed-tree carries its reason
+FAIL malformed-tree is a cmark-error
+FAIL malformed-tree is not invalid-input
+# of expected passes      26
+# of unexpected failures  3
+```
+
+**Root cause confirmed by direct probe, not merely inferred**, following
+Task 1's method exactly (it hit the identical shape of confound, reparenting
+`&cmark-unsupported-node` the same way). R6RS `define-condition-type` gives
+the generated constructor one argument per field of the whole ancestor
+chain, parent fields first. `&cmark-invalid-input` already carries one field
+(`reason`), so reparenting `&cmark-malformed-tree` onto it silently turns
+`make-cmark-malformed-tree` into a **2-argument** constructor (inherited
+`reason`, then the type's own `reason`) — but every call site (the three new
+tests, and `table->sxml` itself) calls it with exactly **one** argument.
+`probe.sps` (scratch-only) calls the mutated constructor the way the suite
+does and shows the 1-argument call itself raises Chez's own
+wrong-number-of-arguments violation before any condition object is ever
+built:
+
+```
+(assertion-violation? #t who n/a
+ message "incorrect number of arguments ~s to ~s"
+ irritants (1 #<procedure make-cmark-malformed-tree>)
+ cmark-error? #f cmark-invalid-input? #f cmark-malformed-tree? #f)
+```
+
+Neither `cmark-error?`, `cmark-invalid-input?`, nor `cmark-malformed-tree?`
+is true of it, so in all three tests `e` falls to each guard's own `(#t
+'wrong-condition)` clause — the mechanism behind all three failures above,
+not only the named "is not invalid-input" one.
+
+**The semantic half of the mutation is confirmed separately, isolated from
+the arity side effect.** `probe2.sps` calls the mutated, now-2-argument
+constructor correctly — `(make-cmark-malformed-tree 'dummy
+'header-row-not-first)` — and re-runs just the "is not invalid-input"
+test's guard logic against the resulting condition:
+
+```
+(guard-result wrongly-invalid-input cmark-invalid-input-reason-of-e n/a)
+(cmark-invalid-input-reason dummy cmark-malformed-tree-reason header-row-not-first)
+```
+
+`cmark-invalid-input?` answers `#t` and the guard evaluates to
+`'wrongly-invalid-input` — exactly the failure Finding 1's separation
+exists to catch: reparenting really does make every `&cmark-malformed-tree`
+an `&cmark-invalid-input`, precisely as the derivation change states. The
+second line also confirms R6RS's field order directly:
+`cmark-invalid-input-reason` reads the first (inherited) argument,
+`cmark-malformed-tree-reason` reads the second (own) argument.
+
+**Either way, the property Finding 1 exists to establish holds.** "malformed-
+tree is not invalid-input" is not vacuous: it is directly sensitive to the
+exact derivation Finding 1 names and fails immediately the moment that
+derivation is wrong — whether observed through the arity violation (the
+real, literal outcome of this one-line mutation) or, isolated from that
+side effect, through the predicted semantic path. Recorded here explicitly
+per this file's Task 1 precedent, rather than silently reconciling the
+discrepancy with a one-assertion-only prediction.
+
+**Revert.** `src/cmark/gfm/private/conditions.sls` in the repo was never
+edited — only the external scratch copy was. Confirmed via `md5`
+(`d57557d57ac763329ea880671ae11841`, unchanged) and `git status --short`
+(same five files as this fix pass's own change, unchanged before and
+after). Re-ran `tests/test-conditions.sps` through the ordinary,
+non-scratch command → 29/29, exit 0. Also reconfirmed `make check-purity`
+and `make test` (13 suites, `ALL SUITES PASSED`) both before and after this
+exercise. Scratch copy deleted afterward.
+
+---
+
+### Mutation 2 — move the guard back below the `tr` binding
+
+Finding 2 is about diagnosis priority between two conditions, not a
+boolean an existing suite assertion checks — no suite assertion constructs
+an unsupported node inside an already-malformed row, so per the brief this
+mutation needed a scratch probe rather than a suite run.
+
+In a scratch copy at `<scratch>/mutation2/cmark/gfm/sxml.sls` (outside the
+repo; the tracked file was never edited), move `tr`'s binding back into the
+same `let*` as `header?`, ahead of the guard — reinstating the shape Finding
+2 flags:
+
+```diff
+@@ -184,27 +184,13 @@
+          (let* ((r (car rows))
+-                (header? (markdown-node-property r 'header?)))
+-           ;; [explanatory comment, unchanged, elided here]
++                (header? (markdown-node-property r 'header?))
++                (tr (cons 'tr (map (lambda (c) (cell->sxml c header? raw-html))
++                                   (markdown-node-children r)))))
++           ;; MUTATION 2 (probe only): tr is bound above, before the guard,
++           ;; reverting Finding 2's fix so a row about to be rejected is
++           ;; fully rendered first.
+            (when (and header? (positive? i))
+              (raise (make-cmark-malformed-tree 'header-row-not-first)))
+-           ;; [explanatory comment, unchanged, elided here]
+-           (let ((tr (cons 'tr (map (lambda (c) (cell->sxml c header? raw-html))
+-                                    (markdown-node-children r)))))
+-             (if header?
+-                 (loop (cdr rows) (+ i 1) (cons tr head) body)
+-                 (loop (cdr rows) (+ i 1) head (cons tr body)))))))))
++           (if header?
++               (loop (cdr rows) (+ i 1) (cons tr head) body)
++               (loop (cdr rows) (+ i 1) head (cons tr body))))))))
+```
+
+`src/cmark/gfm/sxml.sls` in the repo was never touched. Confirmed by `md5`
+(`90989438eb2b53581e10cae5beed4de1`, identical before the scratch copy was
+made and after the exercise) and by `git status --short` (unchanged).
+
+**Probe** (`probe-mutation2.sps`, scratch-only, no suite assertion covers
+this): build a table whose third row is a second header row (`i = 2`,
+positive — the row the guard exists to refuse) and give that row's one cell
+an `extension` node, the shape `node->sxml`'s `(extension)` case raises
+`&cmark-unsupported-node` on (`sxml.sls:296-297`), in place of plain text.
+Call `markdown-ast->sxml` on the whole tree and report which condition
+comes out.
+
+**Run:** `CHEZSCHEMELIBDIRS=<scratch>/mutation2:src:tests:build/scheme-libs
+chez --program <scratch>/mutation2/probe-mutation2.sps`
+
+**Result:**
+```
+(raised &cmark-unsupported-node type footnote_definition)
+```
+
+With `tr` bound before the guard, `cell->sxml` renders the offending row's
+cells — including the `extension` node — before the `when` ever runs, so
+`&cmark-unsupported-node` fires first and the more specific
+`&cmark-malformed-tree` never gets the chance. This is exactly the
+behaviour Finding 2's fix removes.
+
+**Contrast: the identical probe input against the real, fixed library**
+(ordinary `CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs`, no scratch
+prefix, same `probe-mutation2.sps`):
+```
+(raised &cmark-malformed-tree reason header-row-not-first)
+```
+With the guard checked before `tr` is bound, the row is refused before any
+of its cells are rendered, so the specific diagnosis wins and the extension
+node inside the doomed row is never reached at all. The two runs against
+identical input, differing only in which `sxml.sls` answers, is the
+property Finding 2 exists to establish.
+
+**Revert.** `src/cmark/gfm/sxml.sls` in the repo was never edited — only
+the external scratch copy was. Confirmed via `md5`
+(`90989438eb2b53581e10cae5beed4de1`, unchanged throughout) and `git status
+--short` (same five files as this fix pass's own change, unchanged before
+and after). Re-ran `tests/test-sxml.sps` and `tests/test-sxml-
+differential.sps` through the ordinary, non-scratch command → 28/28 each,
+exit 0. Also reconfirmed `make check-purity` and `make test` (13 suites,
+`ALL SUITES PASSED`) after this exercise. Scratch copies deleted afterward.

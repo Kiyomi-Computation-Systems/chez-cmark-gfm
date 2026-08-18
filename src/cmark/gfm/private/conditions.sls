@@ -34,7 +34,10 @@
           cmark-render-failed? cmark-render-failed-format
 
           &cmark-unsupported-node make-cmark-unsupported-node
-          cmark-unsupported-node? cmark-unsupported-node-type)
+          cmark-unsupported-node? cmark-unsupported-node-type
+
+          &cmark-malformed-tree make-cmark-malformed-tree
+          cmark-malformed-tree? cmark-malformed-tree-reason)
   (import (rnrs))
 
   (define-condition-type &cmark-error &error
@@ -107,4 +110,17 @@
   ;; nodes rather than raising.
   (define-condition-type &cmark-unsupported-node &cmark-error
     make-cmark-unsupported-node cmark-unsupported-node?
-    (type cmark-unsupported-node-type)))
+    (type cmark-unsupported-node-type))
+
+  ;; A tree handed to markdown-ast->sxml that the parser itself could never
+  ;; produce -- e.g. a table row order only a caller-built or -rewritten AST
+  ;; can create (design spec 3.4). Derives from &cmark-error directly, NOT
+  ;; from &cmark-invalid-input: conditions.sls:59-60 documents that type's
+  ;; reasons as a closed set about raw Markdown text and option values, and
+  ;; &cmark-unsupported-node was kept out of that family for the same
+  ;; reason above -- a caller guarding bad documents must not silently
+  ;; swallow a structurally ill-shaped tree, any more than it should swallow
+  ;; a coverage gap in the adapter. Neither is "the document was bad".
+  (define-condition-type &cmark-malformed-tree &cmark-error
+    make-cmark-malformed-tree cmark-malformed-tree?
+    (reason cmark-malformed-tree-reason)))

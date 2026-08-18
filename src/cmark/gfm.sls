@@ -64,7 +64,10 @@
           cmark-resource-limit-value
 
           &cmark-unsupported-node cmark-unsupported-node?
-          cmark-unsupported-node-type)
+          cmark-unsupported-node-type
+
+          &cmark-malformed-tree cmark-malformed-tree?
+          cmark-malformed-tree-reason)
   (import (rnrs)
           (cmark gfm options)
           (cmark gfm render)

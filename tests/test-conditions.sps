@@ -175,6 +175,36 @@
     (raise (make-cmark-unsupported-node "x"))
     'no-raise))
 
+;; --- &cmark-malformed-tree -----------------------------------------------
+;; Compared against the carried value, not asserted truthy: the accessor
+;; returning the wrong reason, or a different condition being raised, must
+;; both fail. 'no-raise is a sentinel no success path produces.
+(test-equal "malformed-tree carries its reason"
+  'header-row-not-first
+  (guard (e ((cmark-malformed-tree? e) (cmark-malformed-tree-reason e))
+            (#t 'wrong-condition))
+    (raise (make-cmark-malformed-tree 'header-row-not-first))
+    'no-raise))
+
+(test-equal "malformed-tree is a cmark-error"
+  #t
+  (guard (e ((cmark-error? e) #t) (#t 'wrong-condition))
+    (raise (make-cmark-malformed-tree 'header-row-not-first))
+    'no-raise))
+
+;; It must NOT derive from &cmark-invalid-input: a malformed AST is neither
+;; a bad document (that family's whole reason for existing) nor an adapter
+;; gap, and a caller guarding bad input must not swallow it either. This is
+;; the load-bearing assertion -- the separation is the entire point of
+;; giving the tree its own condition rather than reusing invalid-input.
+(test-equal "malformed-tree is not invalid-input"
+  'not-invalid-input
+  (guard (e ((cmark-invalid-input? e) 'wrongly-invalid-input)
+            ((cmark-malformed-tree? e) 'not-invalid-input)
+            (#t 'wrong-condition))
+    (raise (make-cmark-malformed-tree 'header-row-not-first))
+    'no-raise))
+
 (test-end "conditions")
 
 (exit (if (zero? (test-runner-fail-count runner)) 0 1))
