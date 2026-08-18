@@ -88,3 +88,39 @@ None is obvious from reading the code.
   `cmark-gfm-shim.h` is included before `<cmark-gfm.h>`, so
   `int f(struct cmark_node *n);` without that line declares a different type
   than the `.c` definition sees — conflicting types, unrelated to `-Werror`.
+* **An SXML serializer that does not know your attribute marker will not reject
+  the tree — it renders it wrong.** The specification marks an attribute list
+  `@`; both serializers reachable on this platform (`wak-sxml-tools`,
+  `wak-htmlprag`) mark it `^` and contain no `@` anywhere, so
+  `(a (@ (href "/x")) "l")` comes back as `<a><@><href>/x</href></@>l</a>` with
+  nothing raised. The first fix was worse than the bug: a test-only rewrite of
+  `@` to `^` applied before handing the tree over, which made the conformance
+  suite green while saying nothing about the tree the library actually emits —
+  one of its four assertions passed unconditionally for as long as that rewrite
+  existed. A conformance test that transforms its input tests the
+  transformation. See ADR-0013.
+* **Apply a mutation where the data flows, not where the name says it flows.** A
+  mutation escaping the adapter's `text` case, meant to prove that escaping is
+  the serializer's job, produced no failure at all — 4/4, exit 0 — because the
+  `<script>` in its fixture reaches the tree as an `html-inline` node through a
+  different function, and the three real `text` nodes it did touch held no
+  character worth escaping. The assertion had been *named* for the `text` case
+  too, so a real regression would have pointed a reader at the wrong function.
+  Dump the actual tree before choosing either the mutation site or the name.
+* **An assertion passes whenever some *other* rule can produce the value it
+  expects.** The abstract form of this is already above; here is what it looked
+  like four times in one stage, each one green and each one empty. A
+  `*COMMENT*`-in-`blockquote` fixture survived narrowing `block-comment-parents`
+  to `'(*TOP*)`, because `blockquote` is also in `cr-before-close` and
+  contributes the identical newline. An empty-URL assertion could not
+  distinguish "empty routes to encoding" from "empty routes to rejection",
+  because `percent-encode("")` and the rejection branch both yield `""`. A
+  `contains?` probe for `"  indented\n"` still matched after the serializer was
+  turned into a pretty-printer, because the injected indent lands immediately in
+  front of the content's own two spaces — the substring survived the corruption
+  it existed to detect. And a functional-update test cannot tell "carried from
+  the argument" from "rebuilt from the default" while its base record holds the
+  default for the field the update leaves alone; two of `sxml-options-with`'s
+  three fields were unpinned that way. Assert the whole rendering rather than a
+  substring, give the fixture a neighbour that cannot produce the same bytes by
+  another route, and build the base out of non-default values.

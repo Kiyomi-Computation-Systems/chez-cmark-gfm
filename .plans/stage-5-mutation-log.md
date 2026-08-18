@@ -3866,3 +3866,381 @@ check-purity`: three "purity holds" lines (71 / 30 / 40). `make
 check-pins`: three "pins agree" lines. The 744-example corpus stayed
 byte-identical to cmark under both attribute-marker dialects throughout —
 nothing in this pass touches parse or render behaviour.
+
+---
+
+## Task 12 Step 4 — the completeness audit
+
+Step 4 is the audit this file exists to make possible: every assertion added
+across Tasks 1–12 cross-checked against the entries above and against design
+spec §8.3's mutation table, with any assertion that has no recorded mutation
+either given one or written down here as uncovered and why.
+
+**Method for the cross-check.** The log is hard-wrapped, so a line-oriented
+`grep` for an assertion name gives false negatives — the phrase is split
+across lines in most entries. Whitespace was normalised across the whole file
+first, then every `(test-equal …)`/`(test-assert …)` name in the five Stage 5
+suites was matched against it, and each hit classified by context as a
+recorded *failure* (`FAIL <name>` in a run transcript, or `**Result: FAIL …
+exactly "<name>"**` in prose) or a mere "stays green" mention. A green mention
+is not coverage.
+
+**Method for the mutations below.** As stated at the top of this file: the
+target file is copied to a scratch directory outside the repo, mirroring the
+library path (`<scratch>/mut/cmark/gfm/sxml.sls`, `…/options.sls`,
+`…/cmark/gfm.sls`, `<scratch>/mut/sxml-html-serializer.sls`), mutated only
+there, and the suite run with that directory prepended to `CHEZSCHEMELIBDIRS`.
+For the three `.sps` files and for the vendored third-party serializer the
+whole file is copied to scratch and run directly, matching Task 10's and Group
+4's method for the same reason (a program, not a library). The tracked files
+were never edited: `git status --short` after the whole exercise showed only
+this task's two intended test edits, and `md5` of every mutated source was
+unchanged throughout — `src/cmark/gfm/sxml.sls`
+`47dafb7c709a7e5917bfd836d93b531a`, `src/cmark/gfm/options.sls`
+`cb84dab86111612ff7ccaebe62f5b97a`, `src/cmark/gfm.sls`
+`2e4bfbb0dd3a9205f2bd2890f8516ca0`, `tests/sxml-html-serializer.sls`
+`6aaa92e67120d5e1988919acd85609a6`. Baseline before every mutation, through
+the unmutated scratch copies, so the harness itself is proved inert:
+`test-sxml` 40, `test-sxml-serializer` 19, `test-options` 71,
+`test-sxml-differential` 53, `test-sxml-portability` 5.
+
+### What the audit found
+
+Thirty-eight assertions were carrying no recorded mutation. Thirty-six of them
+had one available and it was run; the remaining two were **vacuous** and were
+rewritten. Nothing was recorded as legitimately uncovered — every property in
+Stage 5 now has a mutation that breaks its assertion by name.
+
+Two of the three findings the dispatch note flagged as *candidates* turned out
+not to be gaps at all: the entries for them exist, just under names the plain
+grep could not see across a line wrap. The third — the serializer suite — was
+a real gap: Task 3's Mutation 1 took all 16 assertions down at once for a
+reason its own entry rejects as too wide, and Mutation 1b named seven; the
+other eight had never been watched to fail.
+
+### Group A — `tests/test-sxml.sps` (`src/cmark/gfm/sxml.sls`)
+
+Each row is one mutation, run alone, against the pure suite. Baseline 40.
+
+| # | Mutation | FAIL, by name | Count |
+|---|---|---|---|
+| A1 | `heading`'s computed tag hardcoded to `'h1` | heading level picks the tag | 39/1 |
+| A2 | `text` case pre-escapes `<` to `&lt;` | a text literal is carried unescaped | 39/1 |
+| A3 | `emph` mapped to `i` | inline containers map to their HTML tags | 39/1 |
+| A4 | `blockquote` mapped to `div` | blockquote wraps its blocks | 39/1 |
+| A5 | `linebreak` renders `" "` instead of `(br)` | softbreak is a newline string, linebreak is a br element | 39/1 |
+| A6 | `thematic-break` given an empty-string child | thematic break is a childless hr | 39/1 |
+| A7 | `code-block`'s empty-info branch made unreachable | a code block with no info has a bare code element | 39/1 |
+| A8 | `omit`'s comment text changed to `" raw html omitted "` | omit replaces raw HTML with cmark's comment | 39/1 |
+| A9 | `raw-html->sxml`'s `escape` branch made unreachable | escape carries the literal through as text | 39/1 |
+| A12 | `extension` raises with the literal `"unknown"` instead of the node's type | an extension node raises, carrying its native type | 39/1 |
+| A14 | `ascii-downcase` replaced by the identity | dangerous schemes yield an empty href, in any case | 39/1 |
+| A15 | `safe-url` entity-escapes `&` on top of percent-encoding | a URL is percent-encoded but ampersand and apostrophe pass through | 39/1 |
+
+A14 and A15 also moved the differential — A14: `unsafe links agree`, the
+option matrix, and the CLI leg; A15: `links agree`, `autolinks agree`, and the
+in-process corpus sweep. Both are design spec §8.3 rows ("compare URL schemes
+case-sensitively", "escape `&` in the adapter *and* the serializer") that had
+no entry above.
+
+**A10 / A11 — the document root, wide and narrow.** `(cons '*TOP* …)` →
+`(cons 'body …)` fails **35 of 40** assertions, because every fixture in the
+file is rooted at `*TOP*`. That is redundancy through one property, not
+isolation, so a second, narrow mutation pins the half `"a document becomes
+*TOP*"` uniquely owns — the empty document. `children->sxml`'s base case made
+to yield `'("")` when it produced no children at all:
+
+```
+FAIL a document becomes *TOP*
+# of expected passes      39
+```
+Nothing else moves: no other fixture in the suite routes a childless container
+through `children->sxml`.
+
+**A13 — `title=""` when the title is empty** (design spec §8.3 row 4).
+`maybe-title` made unconditional. Wide for the same structural reason as A10 —
+12 failures in the pure suite and 10 in the differential — because every link
+and image fixture carries a title through the one shared helper. The named
+assertion, `"an empty title is omitted, a present one is kept"`, fails first
+and through exactly its own property; the rest fail through theirs (a byte
+difference against cmark, in every URL, alt, and marker assertion whose
+expected tree now carries an extra attribute).
+
+**A16 — paragraphs keep their `p` inside a tight list** (design spec §8.3 row
+1; Task 6's own mutation ran the *opposite* direction, leaking tightness
+inward). The `paragraph` case's splice branch deleted:
+```
+test-sxml               34 passes, 6 failures  (a tight list has no p elements, a loose one does; tightness does not leak into a nested list; task items…; the three marker assertions)
+test-sxml-differential  44 passes, 9 failures  (tight lists agree; ordered lists agree; ol start agrees; nested lists agree; task lists agree; a blockquote in a tight item keeps its own <p>; and all three sweeps)
+```
+
+### Group S — `tests/test-sxml-serializer.sps` (`tests/sxml-html-serializer.sls`)
+
+The real gap. Baseline 19.
+
+| # | Mutation | FAIL, by name | Count |
+|---|---|---|---|
+| S1 | `escape-html` loses its `"` rule | a text child is escaped like escape_html | 18/1 |
+| S2 | `escape-html` gains a `'` rule (houdini's secure mode) | apostrophe and slash survive unescaped in text; a non-href attribute leaves apostrophe alone | 17/2 |
+| S3 | `em` added to `cr-before-open` | inline elements nest without whitespace | 18/1 |
+| S4 | `write-attributes` reverses the attribute list | attributes render in list order; a non-href attribute leaves apostrophe alone; img and input close XHTML-style with no newline | 16/3 |
+| S5 | `attributes?` narrowed to `'(\x40;)` | either attribute marker opens an attribute list | 18/1 |
+| S6 | `img`/`input` added to `void-tags-with-newline` | img and input close XHTML-style with no newline | 18/1 |
+| S7 | `pre` added to `cr-after-open` | pre and code nest with no injected whitespace | 18/1 |
+| S8 | `p` added to `block-comment-parents` | an inline comment gets none | 18/1 |
+
+S2's and S4's second and third failures are through their own properties, not
+side effects: `"a non-href attribute leaves apostrophe alone"` is precisely
+about `escape-html` not touching `'`, and its fixture is the only other one
+pinning attribute order. S5 narrows to `at` rather than to `caret` on purpose —
+narrowing to `caret` breaks seven assertions (most fixtures in the file are
+`\x40;`-marked), while narrowing to `at` breaks only the one assertion that
+renders a `^`-marked tree, which is the isolating direction. Task 11a's
+Mutation 2 recorded the wide direction (`test-sxml-serializer exit=1 9 passes,
+8 failures`) without naming the eight.
+
+### Group O — `tests/test-options.sps` (`src/cmark/gfm/options.sls`)
+
+Baseline 71 before this step's new assertion, 72 after.
+
+| # | Mutation | FAIL, by name |
+|---|---|---|
+| O1 | `raw-html`'s constructor default → `'escape` | default raw-html policy is omit; sxml-options-with returns a new record |
+| O2 | `make-sxml-options` ignores a supplied `raw-html` | raw-html can be set to escape; an unknown raw-html value is rejected; sxml-options-with sets the marker and carries raw-html through |
+| O3 | `plist->alist`'s unknown-key check deleted | an unknown key is rejected; an unknown key is named in the condition; cmark-options-with rejects an unknown key; an unknown sxml key is rejected; an unknown softbreak-shaped key is rejected; a misspelled attribute-marker key is rejected |
+| O4 | `validate-sxml`'s `raw-html` clause deleted | an unknown raw-html value is rejected; sxml-options-with validates too |
+| O5 | `attribute-marker`'s constructor default → `'at` | the default attribute marker is caret; sxml-options-with sets the marker and carries raw-html through |
+| O6 | `make-sxml-options` ignores a supplied `attribute-marker` | attribute-marker accepts both names; an unknown attribute-marker value is rejected |
+| O7 | `validate-sxml`'s `attribute-marker` clause deleted | an unknown attribute-marker value is rejected; sxml-options-with validates attribute-marker too |
+
+Each secondary failure is through the named property, not a side effect: O1's
+and O5's second failure reads the shared default as its own baseline, O2's and
+O6's second failure is the invalid value never reaching the record to be
+rejected. O3 is the generic mechanism both option records share, which is why
+it takes every unknown-key assertion in the file down at once and why Group 1
+above could reach only the duplicate-key half.
+
+#### The one real hole: `sxml-options-with`'s carry-through
+
+**O8 / O10** — replacing `(lookup a 'attribute-marker (sxml-options-attribute-marker o))`,
+and separately `(lookup a 'softbreak (sxml-options-softbreak o))`, with the
+constructor's hardcoded default:
+
+```
+# of expected passes      71     (both mutations, no failures at all)
+```
+
+**Nothing noticed.** `sxml-options-with` could have rebuilt two of its three
+fields from the defaults instead of from its argument and the suite stayed
+green, because every base record any functional-update assertion started from
+already held the default for whatever field the update did not name — so no
+assertion could tell "carried from `o`" apart from "rebuilt from the default."
+Only `raw-html`'s carry-through was pinned, by `"sxml-options-with sets the
+marker and carries raw-html through"` (**O9**, the same mutation applied to
+`raw-html`, fails it 70/71).
+
+Rewritten rather than recorded as uncovered. One assertion added to
+`tests/test-options.sps`, whose base sets *both* other fields to non-default
+values and whose update names neither:
+
+```scheme
+(test-equal "sxml-options-with carries softbreak and attribute-marker through"
+  '(space at escape)
+  (let* ((base    (make-sxml-options 'softbreak 'space 'attribute-marker 'at))
+         (updated (sxml-options-with base 'raw-html 'escape)))
+    (list (sxml-options-softbreak updated)
+          (sxml-options-attribute-marker updated)
+          (sxml-options-raw-html updated))))
+```
+
+Re-run of O8 and of O10 against it, each alone:
+```
+FAIL sxml-options-with carries softbreak and attribute-marker through
+# of expected passes      71
+# of unexpected failures  1
+```
+Exactly the new assertion, in both directions, nothing wider. Unmutated: 72.
+
+### Group D — `tests/test-sxml-differential.sps`
+
+Baseline 53. `CMARK_CLI` from `make -s deps-info`.
+
+| # | Mutation | Where | FAIL, by name |
+|---|---|---|---|
+| D1 | the `strikethrough` case deleted, so it falls to the `else` raise | `sxml.sls` | no corpus example raises unsupported-node (+ emphasis agrees, tables with inline content agree, and all three sweeps) |
+| D2 | the `unsafe-html?` guard deleted | `gfm.sls` | markdown->sxml rejects unsafe-html? |
+| D3 | the `nobreaks?` guard deleted | `gfm.sls` | markdown->sxml rejects nobreaks? |
+| D4 | the `hardbreaks?` guard deleted | `gfm.sls` | markdown->sxml rejects hardbreaks? |
+| D5 | the `heading` case emits `data-sourcepos` when the node carries a position | `sxml.sls` | source-positions? does not change the SXML |
+| D6 | `sxml-opts-for` derives `raw-html` from the `tagfilter` extension | the `.sps` | tagfilter does not change the SXML (+ paragraphs agree, raw html agrees, all three sweeps) |
+| D7 | `per-marker` drops the marker from its report | the `.sps` | the per-marker driver runs both markers and names the failing one |
+
+D2 closes design spec §8.3's "let `markdown->sxml` accept `'unsafe-html? #t`",
+which Task 8's entry did **not** cover: its mutation made the guard raise
+*unconditionally*, which fails the sibling `"accepts an explicit unsafe-html?
+#f"` and leaves `"rejects unsafe-html?"` green, as its own text says.
+
+D5 and D6 close §8.3's two no-effect rows, which Task 8 addressed with probes
+rather than mutations. Two false starts are worth recording, because both look
+like the obvious mutation and neither works:
+
+- Emitting `data-sourcepos` from `element` rather than from `heading` changes
+  nothing: the fixture is `"# h\n\n| a |\n| --- |\n| 1 |\n\n- [x] t\n"`, whose
+  heading, table, list, and tight-list item all bypass `element` entirely.
+- Deriving the SXML policy from the extension list inside `markdown->sxml`
+  changes nothing either: the differential's `ours` calls `markdown-ast->sxml`
+  with `sxml-opts-for`'s record directly and never goes through
+  `markdown->sxml`. `sxml-opts-for` is where the realistic regression lives —
+  its own comment exists to explain why it derives `softbreak` and stops — and
+  mutating it there is what the assertion notices.
+
+### Group P — `tests/test-sxml-portability.sps`
+
+**P1 — an attribute value left as a symbol** (`(list 'align align)` in place of
+`(list 'align (symbol->string align))`), which is the shape `srl:sxml->html`
+rejects rather than merely renders differently:
+```
+FAIL a document exercising every mapped node type is accepted
+# of expected passes      4
+```
+
+#### The second vacuous assertion: `pre` content
+
+`"pre content survives with no injected indentation"` was
+`(contains? (render "```\n  indented\n\tтаb\n```\n") "  indented\n")`.
+
+Three mutations were needed to find out that it could not fail, and the third
+proves it:
+
+- **P2** — `code-block->sxml` emits `div` instead of `pre`: **5/5, no
+  failure.** `srl:sxml->html` suppresses indentation for any element with a
+  bare-text child, independently of the tag.
+- **P3** — the literal wrapped in a `span`, so `code` has no bare-text child:
+  **5/5, no failure.** `pre` is in the serializer's own whitespace-sensitivity
+  list, which still applies.
+- **P4** — the vendored third-party serializer itself, copied to scratch
+  (`<scratch>/mut/wak/sxml-tools/{serializer.sls,upstream/serializer.scm}`,
+  confirmed live by first substituting a sentinel into the list and watching
+  the copy take effect), turned into an *unconditional pretty-printer*: the
+  `'("pre" "script" "style" "textarea")` exemption replaced, **and** the
+  bare-text-child rule neutered. Neither edit alone is enough — this is design
+  spec §11's "pretty-printing serializer" made real. **Still 5/5, no failure.**
+
+Probed directly, mutated against unmutated:
+```
+mutated   "<pre>\n  <code>\n      indented\n\tтаb\n\n  </code>\n</pre>"
+unmutated "<pre><code>  indented\n\tтаb\n</code></pre>"
+```
+The `<pre>` content is thoroughly corrupted — and `"  indented\n"` is *still a
+substring of it*, because the injected indent is four spaces landing
+immediately in front of the content's own two. The probe matched the exact
+corruption it existed to detect. Design spec §11 leans on this assertion
+("`test-sxml-portability.sps` asserts our chosen serializer does not do it"),
+and the assertion was empty.
+
+Rewritten to equality against the whole rendering, which cannot be satisfied
+by a prefix:
+```scheme
+(test-equal "pre content survives with no injected indentation"
+  "<pre><code>  indented\n\tтаb\n</code></pre>"
+  (render "```\n  indented\n\tтаb\n```\n"))
+```
+Re-run under P4:
+```
+FAIL pre content survives with no injected indentation
+# of expected passes      4
+# of unexpected failures  1
+```
+Unmutated: 5/5. The scratch copy of the third-party tree was deleted
+afterwards; `vendor/wak-sxml-tools` was never touched (`git status --short`
+and `git submodule status` both clean).
+
+### Assertions covered under an older name, not uncovered
+
+Two look absent from this file until the rename is followed through, and both
+are recorded above under the name they actually failed under:
+
+- `"raw-html: escape"` (portability) — Task 11's isolating second probe records
+  `FAIL a script tag in a text node comes out escaped`; Group 4 renamed it.
+- `"attribute-marker at agrees with the specification's own (string->symbol
+  \"@\")"` (`test-sxml.sps`) — Task 11a's Mutation 1 records
+  `FAIL the at dialect carries the specification's own marker`; Group 4 moved
+  it from the portability suite to the pure suite unchanged.
+
+### Design spec §8.3, row by row
+
+| Planned mutation | Recorded where |
+|---|---|
+| Emit `(p …)` inside tight lists | **A16** (Task 6's own is the inverse direction) |
+| Open `<tbody>` for every body row | Task 7, Mutation 1 |
+| Omit `align` on body cells | Task 7, Mutation 2 |
+| Emit `title=""` when the title is empty | **A13** |
+| Percent-encode `&` in the adapter | Task 5, Mutation 1 |
+| Escape `&` in the adapter *and* the serializer | **A15** |
+| Use the whole fence info as the class | Task 4, Mutation 2 |
+| Flatten image `alt` without descending | Task 5, Mutation 3 |
+| Drop the `data:image/*` carve-out | Task 5 Mutation 2; Step 0 Group 1 Mutation 1 |
+| Compare URL schemes case-sensitively | **A14** |
+| Append newlines unconditionally in the serializer | Task 3, Mutations 1 and 1b |
+| Make the corpus parser match zero examples | Task 9, Mutation 1 |
+| Make the differential comparator always return equal | Task 10, Mutations 1 and 2 |
+| Let `markdown->sxml` accept `'unsafe-html? #t` | **D2** (Task 8's mutation is the inverse) |
+| Give `tagfilter` an effect on the tree | **D6** |
+
+All fifteen rows are now covered; six of them by this step.
+
+### Final counts
+
+```
+test-options            72   test-sxml               40
+test-sxml-serializer    19   test-sxml-portability     5
+test-sxml-differential  53
+```
+`test-options` is +1 (the carry-through assertion); `test-sxml-portability`
+holds at 5 (the `pre` assertion was rewritten, not added to). Every other
+suite is unchanged from Step 0's final counts. `make test`, `make
+check-purity`, `make check-pins`, and `make test-memory` are recorded in
+Step 5's entry below.
+
+---
+
+## Task 12 Step 5 — the release gate
+
+`CMARK_CLI` from `make -s deps-info | sed -n 's/^cmark-gfm CLI *: //p'` →
+`cmark-gfm`. Platform: macOS (Darwin 25.5.0), arm64; Chez Scheme 10.4.1;
+`cmark-gfm` 0.29.0.gfm.13 via pkg-config.
+
+```
+$ make test
+… 14 suites …
+test-ast-differential  80   test-ast               30   test-conditions   29
+test-convert           66   test-differential      28   test-lifecycle    22
+test-native            54   test-options           72   test-render       35
+test-shim-loading      10   test-sxml-differential 53   test-sxml-portability 5
+test-sxml-serializer   19   test-sxml              40
+ALL SUITES PASSED
+
+$ make check-purity
+purity holds: tests/test-options.sps pulled in no native code   (72)
+purity holds: tests/test-ast.sps pulled in no native code       (30)
+purity holds: tests/test-sxml.sps pulled in no native code      (40)
+exit 0
+
+$ make check-pins
+pins agree: chez-srfi 7879b52
+pins agree: wak-sxml-tools 5c14730
+pins agree: wak-common 6d495fc
+exit 0
+
+$ make test-memory
+macOS: ASan preload only; LeakSanitizer is unsupported on arm64.
+Leak claims must come from Linux CI (ADR-0003).
+… all 13 instrumented suites, same counts as above minus test-differential …
+exit 0
+```
+
+`make test-memory` runs every suite except `tests/test-differential.sps`
+under the AddressSanitizer preload, `tests/test-sxml-differential.sps`
+included — `markdown->sxml` parses, so that path is instrumented here even
+though the adapter itself allocates nothing native. No ASan report on any
+suite.
