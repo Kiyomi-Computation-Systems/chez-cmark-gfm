@@ -28,15 +28,22 @@
   ;; paragraph two levels down. A spliced paragraph (see the `paragraph`
   ;; case below) returns a `splice` marker instead of a value; this is the
   ;; one place that must flatten it back into the surrounding child list.
+  ;;
+  ;; The parent's TYPE is supplied here rather than threaded by each case,
+  ;; because html.c:367 tests node->parent->type directly. Computing it at
+  ;; the recursion point makes it structurally impossible for a container to
+  ;; forget to reset it -- the mistake a threaded boolean invites, and the
+  ;; one that would splice a <strong> out of the wrong place.
   (define (children->sxml n raw-html tight?)
-    (let loop ((cs (markdown-node-children n)) (acc '()))
-      (if (null? cs)
-          (reverse acc)
-          (let ((s (node->sxml (car cs) raw-html tight?)))
-            (loop (cdr cs)
-                  (if (and (pair? s) (eq? 'splice (car s)))
-                      (append (reverse (cdr s)) acc)
-                      (cons s acc)))))))
+    (let ((parent-type (markdown-node-type n)))
+      (let loop ((cs (markdown-node-children n)) (acc '()))
+        (if (null? cs)
+            (reverse acc)
+            (let ((s (node->sxml (car cs) raw-html tight? parent-type)))
+              (loop (cdr cs)
+                    (if (and (pair? s) (eq? 'splice (car s)))
+                        (append (reverse (cdr s)) acc)
+                        (cons s acc))))))))
 
   (define (element tag n raw-html tight?)
     (cons tag (children->sxml n raw-html tight?)))
@@ -220,7 +227,10 @@
 
   ;; tight? is #f at every call except the one the `list` and `item` cases
   ;; make for their own children -- see the comment on children->sxml.
-  (define (node->sxml n raw-html tight?)
+  ;; parent-type is the type symbol of the node whose child n is, or #f at
+  ;; the root: html.c:367's `node->parent == NULL` and its type test are the
+  ;; same branch, and #f satisfies neither arm of the eq? below.
+  (define (node->sxml n raw-html tight? parent-type)
     (case (markdown-node-type n)
       ((document)   (cons '*TOP* (children->sxml n raw-html tight?)))
       ((paragraph)
@@ -242,7 +252,21 @@
       ;; would splice that paragraph and disagree with cmark.
       ((blockquote) (element 'blockquote n raw-html #f))
       ((emph)       (element 'em n raw-html tight?))
-      ((strong)     (element 'strong n raw-html tight?))
+      ;; html.c:366-374: a STRONG whose DIRECT PARENT is also a STRONG emits
+      ;; NEITHER tag -- the whole `if` wraps both the entering and the
+      ;; exiting puts -- so its children render straight into the enclosing
+      ;; <strong>. The test is on the parent alone; the inner node's
+      ;; siblings and child count do not enter into it, so "__foo, __bar__,
+      ;; baz__" collapses exactly as "****foo****" does. Reuses the paragraph
+      ;; splice marker rather than inventing a second mechanism.
+      ;;
+      ;; EMPH has no such rule (html.c:376-382), so "*_foo_*" keeps both
+      ;; <em> tags. Mirroring the strong case there would be a byte
+      ;; difference.
+      ((strong)
+       (if (eq? 'strong parent-type)
+           (cons 'splice (children->sxml n raw-html tight?))
+           (element 'strong n raw-html tight?)))
       ((strikethrough) (element 'del n raw-html tight?))
       ((heading)
        (cons (string->symbol
@@ -310,4 +334,4 @@
       ((ast o)
        (unless (sxml-options? o)
          (raise (make-cmark-invalid-option #f 'invalid-value)))
-       (node->sxml ast (sxml-options-raw-html o) #f)))))
+       (node->sxml ast (sxml-options-raw-html o) #f #f)))))

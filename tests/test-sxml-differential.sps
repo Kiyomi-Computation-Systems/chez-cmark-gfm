@@ -53,6 +53,19 @@
 (agrees "headings agree"      "# one\n\n###### six\n")
 (agrees "paragraphs agree"    "a & b <c> \"d\" it's\n")
 (agrees "emphasis agrees"     "*e* **s** ~~d~~ `c`\n")
+
+;; html.c:366-374 -- a STRONG whose DIRECT PARENT is also a STRONG emits NO
+;; tags at all; its children render straight into the enclosing <strong>.
+;; The test is on the parent alone, so it fires whether the inner strong is
+;; an only child or has siblings. cmark has no matching rule for EMPH
+;; (html.c:376-382), which is why *_foo_* keeps both <em> tags while
+;; ****foo**** collapses to one <strong>. Found by running the spec corpus
+;; through this oracle; the hand-written fixtures had missed it entirely.
+(agrees "nested strong emits one tag"        "****foo****\n")
+(agrees "triply nested strong emits one tag" "******foo******\n")
+(agrees "an inner strong with siblings is spliced too" "__foo, __bar__, baz__\n")
+(agrees "a strong under an em under a strong" "_____foo_____\n")
+(agrees "nested em is NOT collapsed"         "*_foo_*\n")
 (agrees "blockquotes agree"   "> quoted\n>\n> twice\n")
 (agrees "breaks agree"        "a\nb  \nc\n\n---\n")
 (agrees "code blocks agree"   "```scheme linenos\n(f x)\n```\n\n    indented\n")
