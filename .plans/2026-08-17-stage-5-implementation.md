@@ -1770,6 +1770,22 @@ so mind the order.
 
 ;; The check is on the VALUE, not the key's presence: an explicit #f is the
 ;; default and must pass.
+(test-equal "markdown->sxml rejects hardbreaks?"
+  '(hardbreaks? not-applicable)
+  (guard (e ((cmark-invalid-option? e)
+             (list (cmark-invalid-option-key e) (cmark-invalid-option-reason e)))
+            (#t 'wrong-condition))
+    (markdown->sxml "a\nb\n" (make-cmark-options 'hardbreaks? #t))
+    'no-raise))
+
+(test-equal "markdown->sxml rejects nobreaks?"
+  '(nobreaks? not-applicable)
+  (guard (e ((cmark-invalid-option? e)
+             (list (cmark-invalid-option-key e) (cmark-invalid-option-reason e)))
+            (#t 'wrong-condition))
+    (markdown->sxml "a\nb\n" (make-cmark-options 'nobreaks? #t))
+    'no-raise))
+
 (test-equal "markdown->sxml accepts an explicit unsafe-html? #f"
   '(*TOP* (h1 "hi"))
   (markdown->sxml "# hi\n" (make-cmark-options 'unsafe-html? #f)))
@@ -1810,8 +1826,20 @@ directly — and add to the body:
          (raise (make-cmark-invalid-option #f 'invalid-value)))
        ;; Checked before anything native is acquired, so a rejected call
        ;; leaves no resource to clean up.
+       ;;
+       ;; All three are cmark RENDERER options. Verified: CMARK_OPT_UNSAFE,
+       ;; CMARK_OPT_HARDBREAKS, and CMARK_OPT_NOBREAKS appear only in
+       ;; cmark-gfm.h, main.c, and the five renderers -- never in blocks.c,
+       ;; inlines.c, or parser.h. So none of them can reach the AST, and SXML
+       ;; is a different renderer with its own policies: raw-html and
+       ;; softbreak on the sxml-options record. Accepting one silently would
+       ;; discard a setting the caller made explicitly.
        (when (cmark-options-unsafe-html? o)
          (raise (make-cmark-invalid-option 'unsafe-html? 'not-applicable)))
+       (when (cmark-options-hardbreaks? o)
+         (raise (make-cmark-invalid-option 'hardbreaks? 'not-applicable)))
+       (when (cmark-options-nobreaks? o)
+         (raise (make-cmark-invalid-option 'nobreaks? 'not-applicable)))
        (markdown-ast->sxml (markdown->ast md o) so))))
 ```
 
