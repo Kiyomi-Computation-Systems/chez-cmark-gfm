@@ -18,7 +18,12 @@
         (cmark gfm sxml)
         (sxml-html-serializer)
         (spec-corpus)
-        (only (chezscheme) getenv))
+        ;; file-exists? is deliberately NOT requested from (chezscheme):
+        ;; (rnrs) already exports it, and asking for it twice fails the
+        ;; program body with "multiple definitions for file-exists?" --
+        ;; the same trap tests/test-ast-differential.sps records.
+        (only (chezscheme) getenv mkdir)
+        (cmark-testing))
 
 (define runner (test-runner-simple))
 (test-runner-current runner)
@@ -49,17 +54,32 @@
 ;; Returns #f when the two agree, or a pair for the report. Callers wrap it
 ;; in (or … 'agree): SRFI-64 turns a raise in the actual expression into #f,
 ;; so expecting #f here would pass against a crash.
-(define (divergence md o)
-  (let ((a (ours md o)) (b (theirs md o)))
-    (if (string=? a b) #f (list 'ours a 'theirs b))))
+(define divergence
+  (case-lambda
+    ((md o) (divergence md o o))
+    ((md our-o their-o)
+     (let ((a (ours md our-o)) (b (theirs md their-o)))
+       (if (string=? a b) #f (list 'ours a 'theirs b))))))
+
+;; A markdown document whose rendering depends on the extension list, used
+;; by both legs' discrimination guards below.
+(define table-md "| a |\n| --- |\n| 1 |\n")
 
 ;; Proves the comparator can report a difference at all. Without this, a
 ;; comparator that always returned #f would make every assertion below pass
 ;; against anything.
+;;
+;; It CALLS divergence rather than inlining string=? on two hand-picked
+;; renderings, because the inlined form proves only that two different
+;; documents render differently -- it never runs the comparator, so a
+;; comparator hardcoded to "equal" survives it and leaves every assertion in
+;; this file vacuous. Given one options record the comparator cannot report a
+;; difference while the code is correct, so the mismatch is seeded from the
+;; two records instead: same shape as tests/test-ast-differential.sps's, and
+;; the reason its case-lambda exists.
 (test-equal "the comparator can detect a difference"
   #t
-  (let ((a (ours "# hi\n" opts)) (b (theirs "*hi*\n" opts)))
-    (not (string=? a b))))
+  (if (divergence table-md opts (make-cmark-options 'extensions '())) #t #f))
 
 (define (agrees name md)
   (test-equal name 'agree (or (divergence md opts) 'agree)))
@@ -73,8 +93,8 @@
 ;; The test is on the parent alone, so it fires whether the inner strong is
 ;; an only child or has siblings. cmark has no matching rule for EMPH
 ;; (html.c:376-382), which is why *_foo_* keeps both <em> tags while
-;; ****foo**** collapses to one <strong>. Found by running the spec corpus
-;; through this oracle; the hand-written fixtures had missed it entirely.
+;; ****foo**** collapses to one <strong>. Found by the corpus sweep below,
+;; which the hand-written fixtures above had missed entirely.
 (agrees "nested strong emits one tag"        "****foo****\n")
 (agrees "triply nested strong emits one tag" "******foo******\n")
 (agrees "an inner strong with siblings is spliced too" "__foo, __bar__, baz__\n")
@@ -91,7 +111,7 @@
 ;; CMARK_OPT_NOBREAKS appear only in the renderers and main.c, never in
 ;; blocks.c or inlines.c -- so the AST cannot carry them and OUR renderer has
 ;; to be told, exactly as the CLI leg has to be told the extension list.
-;; Found by the option sweep; every fixture above uses the default.
+;; Found by the option sweep below; every fixture above uses the default.
 (define (agrees-under name md o)
   (test-equal name 'agree (or (divergence md o) 'agree)))
 
@@ -207,6 +227,138 @@
     (and (not (memv #\x2192 (string->list all)))
          (memv #\tab (string->list all))
          #t)))
+
+;; --- the whole corpus, in-process --------------------------------------
+;; All 744 examples run with the full default extension set, so table,
+;; tasklist, and strikethrough nodes are actually exercised. Per-example
+;; extension labels and `disabled` markers are ignored: they matter only to
+;; a harness comparing against the file's expected HTML.
+(define all-examples
+  (append (corpus "spec.txt") (corpus "extensions.txt")
+          (corpus "smart_punct.txt") (corpus "regression.txt")))
+
+;; One assertion for the whole sweep rather than 744, so a failure names the
+;; first divergent example instead of drowning the report. The result is the
+;; failing input and both renderings, which is what a debugger needs.
+(define (sweep examples o)
+  (let loop ((es examples) (i 0))
+    (cond
+      ((null? es) 'agree)
+      ((divergence (car es) o) => (lambda (d) (cons i (cons (car es) d))))
+      (else (loop (cdr es) (+ i 1))))))
+
+(test-equal "every corpus example agrees in-process"
+  'agree (sweep all-examples opts))
+
+;; No corpus example may reach the adapter's unmapped-type branch. If one
+;; does, that is a finding about our node coverage, not a pass.
+(test-equal "no corpus example raises unsupported-node"
+  'none
+  (let loop ((es all-examples))
+    (cond
+      ((null? es) 'none)
+      (else
+       (guard (e ((cmark-unsupported-node? e)
+                  (list 'unsupported (cmark-unsupported-node-type e) (car es))))
+         (ours (car es) opts)
+         (loop (cdr es)))))))
+
+;; --- option sweep -------------------------------------------------------
+;; Every option with a cmark equivalent, over the four fixtures. Both sides
+;; get the same record, so any divergence is ours.
+(define fixture-files
+  '("tests/fixtures/core.md" "tests/fixtures/gfm.md"
+    "tests/fixtures/smart.md" "tests/fixtures/hostile.md"))
+
+(define (file->string path)
+  (let* ((p (open-file-input-port path (file-options) (buffer-mode block)
+                                  (make-transcoder (utf-8-codec) (eol-style none))))
+         (s (get-string-all p)))
+    (close-port p)
+    (if (eof-object? s) "" s)))
+
+(define fixtures (map file->string fixture-files))
+
+(define option-matrix
+  (list (make-cmark-options)
+        (make-cmark-options 'hardbreaks? #t)
+        (make-cmark-options 'nobreaks? #t)
+        (make-cmark-options 'smart? #t)
+        (make-cmark-options 'extensions '())
+        (make-cmark-options 'extensions '(table))
+        (make-cmark-options 'extensions '(tasklist))
+        (make-cmark-options 'extensions '(strikethrough))
+        (make-cmark-options 'extensions '(autolink))
+        (make-cmark-options 'extensions '(tagfilter))))
+
+(test-equal "every fixture agrees under every option configuration"
+  'agree
+  (let loop ((os option-matrix))
+    (if (null? os)
+        'agree
+        (let ((r (sweep fixtures (car os))))
+          (if (eq? 'agree r) (loop (cdr os)) r)))))
+
+;; --- the CLI leg --------------------------------------------------------
+;; Not redundant with the in-process leg. Our SXML path and markdown->html
+;; both consume a document parsed through OUR shim, so a wrong option bit or
+;; a missing extension corrupts the parse feeding both sides -- they would
+;; agree while both being wrong. The pinned CLI is the independent witness
+;; that the parse was configured correctly (ADR-0012).
+(define cli (or (getenv "CMARK_CLI") "cmark-gfm"))
+(define tmp-dir "tests/tmp/")
+(define in-path  (string-append tmp-dir "sxml-diff-in.md"))
+(define out-path (string-append tmp-dir "sxml-diff-out.bin"))
+
+(unless (file-exists? tmp-dir) (mkdir tmp-dir))
+
+(define (cli-flags o)
+  (apply string-append
+         "--to html "
+         (map (lambda (x) (string-append "-e " (symbol->string x) " "))
+              (cmark-options-extensions o))))
+
+(define (write-file path s)
+  (let ((p (open-file-output-port path (file-options no-fail)
+                                  (buffer-mode block)
+                                  (make-transcoder (utf-8-codec)))))
+    (put-string p s)
+    (close-port p)))
+
+(define (cli-html md o)
+  (write-file in-path md)
+  (utf8->string
+   (capture-command (string-append cli " " (cli-flags o) " " in-path)
+                    out-path)))
+
+(define cli-divergence
+  (case-lambda
+    ((md o) (cli-divergence md o o))
+    ((md our-o their-o)
+     (let ((a (ours md our-o)) (b (cli-html md their-o)))
+       (if (string=? a b) #f (list 'ours a 'cli b))))))
+
+;; Calls cli-divergence itself rather than inlining string=?, so the guard
+;; exercises the comparator's branch polarity and not merely the fact that
+;; two different documents render differently. Task 4's in-process guard has
+;; the same shape and is corrected alongside this one.
+;;
+;; The mismatch is an EXTENSION mismatch, not two different documents: with
+;; one options record both sides get the same input and the same flags, so a
+;; correct implementation makes them equal and the guard could never pass.
+;; Seeding it from the CLI's record also proves cli-flags actually reaches
+;; the subprocess -- drop -e table there and this fires as well.
+(test-equal "the CLI comparator can detect a difference"
+  #t
+  (if (cli-divergence table-md opts (make-cmark-options 'extensions '())) #t #f))
+
+(test-equal "every fixture agrees against the pinned CLI"
+  'agree
+  (let loop ((fs fixtures))
+    (cond ((null? fs) 'agree)
+          ((cli-divergence (car fs) opts) => (lambda (d) d))
+          (else (loop (cdr fs))))))
+
 
 (test-end "sxml-differential")
 

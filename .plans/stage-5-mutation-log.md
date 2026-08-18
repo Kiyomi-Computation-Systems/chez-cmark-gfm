@@ -2337,3 +2337,122 @@ modified) — never touched by either mutation or probe run. `make test`: 13
 suites, all `ALL SUITES PASSED`. `make check-purity`: three "purity holds"
 lines. `make check-pins`: pins agree. Scratch copies and probe scripts
 deleted afterward.
+
+---
+
+## Task 10 — the full corpus differential
+
+**Baseline**, at HEAD before this task's edits: `CHEZSCHEMELIBDIRS=src:tests:
+build/scheme-libs chez --program tests/test-sxml-differential.sps`: 34/34,
+exit 0. `make test`: 13 suites, all `ALL SUITES PASSED`. `make check-purity`:
+three "purity holds" lines. `make check-pins`: pins agree.
+
+**Method deviation, stated because the log's header promises one.** The
+header's method — copy the *library* to a scratch dir and prepend it to
+`CHEZSCHEMELIBDIRS` — does not apply here: all three of this task's mutation
+targets (`divergence`, `cli-divergence`, `cli-flags`) are defined in the
+suite *program* `tests/test-sxml-differential.sps`, not in a library, and
+Chez's library resolver never consults `CHEZSCHEMELIBDIRS` for a `--program`
+file. So the whole `.sps` was copied to `<scratch>/mut/`, mutated there, and
+run by absolute path — **from the repo root**, because `corpus-dir`,
+`tests/fixtures/`, and `tests/tmp/` are all relative. The tracked file was
+never edited: `md5 tests/test-sxml-differential.sps` matched the unmutated
+scratch copy (`764827967f8957e7900967ac542b512e`) after all three runs.
+
+An unmutated scratch copy was run first, to prove the copy-and-run-by-
+absolute-path rig itself reproduces the baseline rather than silently
+skipping work: **47/47, identical to the repo file.** Without that control, a
+mutant that failed because the rig was broken would look like a passing
+mutation.
+
+### Mutation 1 — `divergence` always reports "equal"
+
+The guard that stops every other in-process assertion in the file from being
+vacuous.
+
+```diff
+      (let ((a (ours md our-o)) (b (theirs md their-o)))
+-       (if (string=? a b) #f (list 'ours a 'theirs b))))))
++       #f))))
+```
+
+**Run:** `CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs CMARK_CLI=cmark-gfm
+chez --program <scratch>/mut/mutation1.sps`
+
+**Result: FAIL, 46/47 — exactly the named assertion, nothing wider.**
+
+```
+FAIL the comparator can detect a difference
+# of expected passes      46
+# of unexpected failures  1
+```
+
+The 46 that still passed are the point, not a consolation: every `agrees`
+fixture, the whole 744-example sweep, and the option matrix all passed
+**vacuously** against a comparator wired to "equal". One assertion stands
+between this file and testing nothing at all.
+
+### Mutation 2 — `cli-divergence` always reports "equal"
+
+```diff
+      (let ((a (ours md our-o)) (b (cli-html md their-o)))
+-       (if (string=? a b) #f (list 'ours a 'cli b))))))
++       #f))))
+```
+
+**Result: FAIL, 46/47 — exactly the named assertion.**
+
+```
+FAIL the CLI comparator can detect a difference
+# of expected passes      46
+# of unexpected failures  1
+```
+
+Note that "every fixture agrees against the pinned CLI" stayed green under
+this mutation, which is precisely why its own guard has to exist separately:
+the parity assertion cannot detect a broken comparator, because a broken
+comparator is indistinguishable from perfect agreement.
+
+### Mutation 3 — `cli-flags` drops `-e table`
+
+Proves the CLI leg actually *exercises* the options record's extension list
+rather than accepting whatever the CLI happens to default to.
+
+```diff
+-              (cmark-options-extensions o))))
++              (filter (lambda (x) (not (eq? 'table x)))
++                      (cmark-options-extensions o)))))
+```
+
+**Result: FAIL, 46/47 — exactly the named assertion.**
+
+```
+FAIL every fixture agrees against the pinned CLI
+# of expected passes      46
+# of unexpected failures  1
+```
+
+`tests/fixtures/gfm.md` contains a table; without `-e table` the subprocess
+renders it as a paragraph of pipes while our side renders `<table>`, so the
+byte comparison fails. `tests/fixtures/core.md` is checked first and still
+agrees, which confirms the failure is the table specifically and not a
+wholesale breakage of the CLI invocation.
+
+**The two discrimination guards stayed green under mutation 3**, as they
+must: both seed their mismatch from an *empty* extension list, which `filter`
+leaves empty. Guard and parity assertion therefore fail independently —
+neither can mask the other.
+
+**Revert.** The repo file was never edited, so revert is confirmed by
+`md5 tests/test-sxml-differential.sps` (`764827967f8957e7900967ac542b512e`,
+equal to the pre-mutation copy) and by `git status --short` showing only the
+one intended `M` line throughout. Re-ran through the ordinary, non-scratch
+command: `CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs CMARK_CLI=cmark-gfm
+chez --program tests/test-sxml-differential.sps` → `# of expected passes 47`,
+exit 0.
+
+**Final reconfirmation for the task.** `make test`: 13 suites, all
+`ALL SUITES PASSED`. `make check-purity`: three "purity holds" lines
+(`tests/test-options.sps` 57, `tests/test-ast.sps` 30, `tests/test-sxml.sps`
+28). `make check-pins`: pins agree. Scratch copies and probe scripts deleted
+afterward.
