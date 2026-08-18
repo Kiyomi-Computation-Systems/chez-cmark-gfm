@@ -34,19 +34,19 @@
   ;; the recursion point makes it structurally impossible for a container to
   ;; forget to reset it -- the mistake a threaded boolean invites, and the
   ;; one that would splice a <strong> out of the wrong place.
-  (define (children->sxml n raw-html tight?)
+  (define (children->sxml n opts tight?)
     (let ((parent-type (markdown-node-type n)))
       (let loop ((cs (markdown-node-children n)) (acc '()))
         (if (null? cs)
             (reverse acc)
-            (let ((s (node->sxml (car cs) raw-html tight? parent-type)))
+            (let ((s (node->sxml (car cs) opts tight? parent-type)))
               (loop (cdr cs)
                     (if (and (pair? s) (eq? 'splice (car s)))
                         (append (reverse (cdr s)) acc)
                         (cons s acc))))))))
 
-  (define (element tag n raw-html tight?)
-    (cons tag (children->sxml n raw-html tight?)))
+  (define (element tag n opts tight?)
+    (cons tag (children->sxml n opts tight?)))
 
   ;; The first whitespace-delimited token of the info string, per
   ;; html.c:223-227.
@@ -70,8 +70,8 @@
   ;; html.c:259,337 -- the SAME comment for a block and an inline. Which one
   ;; it was is recoverable from the tree position, which is how the
   ;; serializer decides its newlines.
-  (define (raw-html->sxml n raw-html)
-    (if (eq? 'escape raw-html)
+  (define (raw-html->sxml n opts)
+    (if (eq? 'escape (sxml-options-raw-html opts))
         (prop n 'literal)
         (list '*COMMENT* " raw HTML omitted ")))
 
@@ -179,7 +179,7 @@
   ;; :774-797 -- a header row opens and closes <thead> around itself; the
   ;; first non-header row opens <tbody>, which stays open until the table
   ;; ends. Either section is absent when it has no rows.
-  (define (table->sxml n raw-html)
+  (define (table->sxml n opts)
     (let loop ((rows (markdown-node-children n)) (i 0) (head '()) (body '()))
       (cond
         ((null? rows)
@@ -209,17 +209,17 @@
            ;; Bound after the guard, not before it: rendering a row we are
            ;; about to reject wastes the work, and an unsupported node inside
            ;; that row would raise first and mask the more specific diagnosis.
-           (let ((tr (cons 'tr (map (lambda (c) (cell->sxml c header? raw-html))
+           (let ((tr (cons 'tr (map (lambda (c) (cell->sxml c header? opts))
                                     (markdown-node-children r)))))
              (if header?
                  (loop (cdr rows) (+ i 1) (cons tr head) body)
                  (loop (cdr rows) (+ i 1) head (cons tr body)))))))))
 
-  (define (cell->sxml c header? raw-html)
+  (define (cell->sxml c header? opts)
     (let ((tag   (if header? 'th 'td))
           (align (markdown-node-property c 'alignment))
           ;; A cell holds inlines only, so tightness cannot reach here.
-          (kids  (children->sxml c raw-html #f)))
+          (kids  (children->sxml c opts #f)))
       (if (memq align '(left center right))
           (cons tag (cons (list '\x40; (list 'align (symbol->string align)))
                           kids))
@@ -230,17 +230,17 @@
   ;; parent-type is the type symbol of the node whose child n is, or #f at
   ;; the root: html.c:367's `node->parent == NULL` and its type test are the
   ;; same branch, and #f satisfies neither arm of the eq? below.
-  (define (node->sxml n raw-html tight? parent-type)
+  (define (node->sxml n opts tight? parent-type)
     (case (markdown-node-type n)
-      ((document)   (cons '*TOP* (children->sxml n raw-html tight?)))
+      ((document)   (cons '*TOP* (children->sxml n opts tight?)))
       ((paragraph)
        ;; html.c:287-297: inside a tight list the paragraph contributes its
        ;; children directly, with no element of its own. `tight?` is the
        ;; enclosing LIST's flag, threaded down through the item, because a
        ;; paragraph cannot see its own grandparent here.
        (if tight?
-           (cons 'splice (children->sxml n raw-html tight?))
-           (element 'p n raw-html tight?)))
+           (cons 'splice (children->sxml n opts tight?))
+           (element 'p n opts tight?)))
       ;; NOT `tight?` -- html.c:288-289 requires the paragraph's grandparent
       ;; to BE the list node itself. Once a blockquote sits between an item
       ;; and a paragraph, that paragraph's grandparent is the item, never a
@@ -250,8 +250,8 @@
       ;; "<blockquote>\nq\n</blockquote>". Threading the incoming tight?
       ;; through unchanged, as every other container in this dispatch does,
       ;; would splice that paragraph and disagree with cmark.
-      ((blockquote) (element 'blockquote n raw-html #f))
-      ((emph)       (element 'em n raw-html tight?))
+      ((blockquote) (element 'blockquote n opts #f))
+      ((emph)       (element 'em n opts tight?))
       ;; html.c:366-374: a STRONG whose DIRECT PARENT is also a STRONG emits
       ;; NEITHER tag -- the whole `if` wraps both the entering and the
       ;; exiting puts -- so its children render straight into the enclosing
@@ -265,25 +265,34 @@
       ;; difference.
       ((strong)
        (if (eq? 'strong parent-type)
-           (cons 'splice (children->sxml n raw-html tight?))
-           (element 'strong n raw-html tight?)))
-      ((strikethrough) (element 'del n raw-html tight?))
+           (cons 'splice (children->sxml n opts tight?))
+           (element 'strong n opts tight?)))
+      ((strikethrough) (element 'del n opts tight?))
       ((heading)
        (cons (string->symbol
               (string-append "h" (number->string (prop n 'level))))
-             (children->sxml n raw-html tight?)))
+             (children->sxml n opts tight?)))
       ((text)       (prop n 'literal))
       ((code)       (list 'code (prop n 'literal)))
       ((code-block) (code-block->sxml n))
       ((thematic-break) '(hr))
       ((linebreak)  '(br))
-      ((softbreak)  "\n")
-      ((html-block html-inline) (raw-html->sxml n raw-html))
+      ;; html.c:319-325 -- the one node cmark's hardbreaks?/nobreaks? flags
+      ;; touch. LINEBREAK above is unconditional (html.c:315-317); only this
+      ;; case reads the policy. The whole sxml-options record is threaded
+      ;; through this walk rather than the raw-html symbol alone, which is
+      ;; what let this field arrive without a signature change anywhere.
+      ((softbreak)
+       (case (sxml-options-softbreak opts)
+         ((break) '(br))
+         ((space) " ")
+         (else    "\n")))
+      ((html-block html-inline) (raw-html->sxml n opts))
       ((link)
        (cons 'a
              (cons (cons '\x40; (cons (list 'href (safe-url (prop n 'url)))
                                   (maybe-title (prop n 'title))))
-                   (children->sxml n raw-html tight?))))
+                   (children->sxml n opts tight?))))
       ((image)
        (list 'img
              (cons '\x40; (cons (list 'src (safe-url (prop n 'url)))
@@ -293,7 +302,7 @@
        ;; A list's children never inherit tightness from an outer list --
        ;; only its OWN tight? property governs the items directly inside
        ;; it. That is what keeps tightness from leaking into a nested list.
-       (let ((kids (children->sxml n raw-html (prop n 'tight?)))
+       (let ((kids (children->sxml n opts (prop n 'tight?)))
              (start (prop n 'start)))
          (if (eq? 'ordered (prop n 'kind))
              (if (= 1 start)
@@ -306,7 +315,7 @@
        ;; disabled in that order; an UNCHECKED box has no checked attribute
        ;; at all -- emitting checked="" unconditionally is a byte
        ;; difference, not a harmless default.
-       (let ((kids (children->sxml n raw-html tight?)))
+       (let ((kids (children->sxml n opts tight?)))
          (cons 'li
                (if (prop n 'task?)
                    (cons (list 'input
@@ -319,7 +328,7 @@
                                             '((disabled ""))))))
                          (cons " " kids))
                    kids))))
-      ((table) (table->sxml n raw-html))
+      ((table) (table->sxml n opts))
       ((extension)
        (raise (make-cmark-unsupported-node (prop n 'native-type))))
       (else
@@ -334,4 +343,4 @@
       ((ast o)
        (unless (sxml-options? o)
          (raise (make-cmark-invalid-option #f 'invalid-value)))
-       (node->sxml ast (sxml-options-raw-html o) #f #f)))))
+       (node->sxml ast o #f #f)))))

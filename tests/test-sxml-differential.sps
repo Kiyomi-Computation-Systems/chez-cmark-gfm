@@ -29,7 +29,21 @@
 ;; the AST entry point must not be allowed to default them on here.
 (define opts (default-cmark-options))
 
-(define (ours md o) (sxml->html (markdown-ast->sxml (markdown->ast md o))))
+;; Our renderer is configured from the SAME record cmark's is. hardbreaks?
+;; and nobreaks? are cmark RENDERER flags on SOFTBREAK (html.c:319-325) that
+;; never reach the parse, so no AST can carry them: handing markdown->ast the
+;; record and markdown-ast->sxml nothing would leave our renderer running the
+;; default while cmark's ran the flag, and the two would differ for a reason
+;; that is ours, not cmark's. This is the in-process counterpart of the CLI
+;; leg's -e flags -- one options record, each renderer told what it says.
+(define (sxml-opts-for o)
+  (make-sxml-options
+   'softbreak (cond ((cmark-options-hardbreaks? o) 'break)
+                    ((cmark-options-nobreaks? o)   'space)
+                    (else                          'newline))))
+
+(define (ours md o)
+  (sxml->html (markdown-ast->sxml (markdown->ast md o) (sxml-opts-for o))))
 (define (theirs md o) (markdown->html md o))
 
 ;; Returns #f when the two agree, or a pair for the report. Callers wrap it
@@ -68,6 +82,25 @@
 (agrees "nested em is NOT collapsed"         "*_foo_*\n")
 (agrees "blockquotes agree"   "> quoted\n>\n> twice\n")
 (agrees "breaks agree"        "a\nb  \nc\n\n---\n")
+
+;; html.c:319-325 -- hardbreaks? and nobreaks? are cmark RENDERER flags, and
+;; SOFTBREAK is the only node they touch: entering one, cmark writes
+;; "<br />\n" under HARDBREAKS, a space under NOBREAKS, and "\n" otherwise.
+;; LINEBREAK is unconditional (html.c:315-317), which is what the third case
+;; below pins. Neither flag reaches the parse -- CMARK_OPT_HARDBREAKS and
+;; CMARK_OPT_NOBREAKS appear only in the renderers and main.c, never in
+;; blocks.c or inlines.c -- so the AST cannot carry them and OUR renderer has
+;; to be told, exactly as the CLI leg has to be told the extension list.
+;; Found by the option sweep; every fixture above uses the default.
+(define (agrees-under name md o)
+  (test-equal name 'agree (or (divergence md o) 'agree)))
+
+(agrees-under "hardbreaks? turns a softbreak into <br />" "a\nb\n"
+              (make-cmark-options 'hardbreaks? #t))
+(agrees-under "nobreaks? turns a softbreak into a space" "a\nb\n"
+              (make-cmark-options 'nobreaks? #t))
+(agrees-under "hardbreaks? leaves a real linebreak alone" "a  \nb\n"
+              (make-cmark-options 'hardbreaks? #t))
 (agrees "code blocks agree"   "```scheme linenos\n(f x)\n```\n\n    indented\n")
 (agrees "raw html agrees"     "<div>\nblock\n</div>\n\npara <b>inline</b> end\n")
 (agrees "adjacent blocks agree" "> a\n\nb\n\n> c\n\n---\n\nd\n")

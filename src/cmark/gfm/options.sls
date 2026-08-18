@@ -26,7 +26,7 @@
           supported-extensions
           extension->native-name
           make-sxml-options default-sxml-options sxml-options-with
-          sxml-options? sxml-options-raw-html)
+          sxml-options? sxml-options-raw-html sxml-options-softbreak)
   (import (rnrs)
           (cmark gfm private limits)
           (cmark gfm private conditions))
@@ -203,9 +203,17 @@
   ;; the plist validation above, which a symbol cannot have, and a second
   ;; field later costs no arity change at any call site.
   (define-record-type (sxml-options %make-sxml-options sxml-options?)
-    (fields raw-html))
+    (fields raw-html softbreak))
 
-  (define sxml-option-keys '(raw-html))
+  ;; softbreak is the SXML side of cmark's hardbreaks?/nobreaks? RENDERER
+  ;; flags (html.c:319-325). They are not parse options -- CMARK_OPT_HARDBREAKS
+  ;; and CMARK_OPT_NOBREAKS appear only in the renderers and main.c, never in
+  ;; blocks.c or inlines.c -- so the AST cannot carry them and the adapter has
+  ;; no other way to learn them. Spelled as what a softbreak BECOMES rather
+  ;; than as two booleans, because cmark's own pair is mutually exclusive with
+  ;; a precedence rule (html.c:320 wins over html.c:322) and a three-valued
+  ;; field cannot express the contradictory state at all.
+  (define sxml-option-keys '(raw-html softbreak))
 
   ;; Reuses plist->alist, which takes its key list as a parameter. Each
   ;; caller supplies only its own, so the two option families still cannot
@@ -217,11 +225,14 @@
   (define (validate-sxml o)
     (unless (memq (sxml-options-raw-html o) '(omit escape))
       (raise (make-cmark-invalid-option 'raw-html 'invalid-value)))
+    (unless (memq (sxml-options-softbreak o) '(newline break space))
+      (raise (make-cmark-invalid-option 'softbreak 'invalid-value)))
     o)
 
   (define (make-sxml-options . plist)
     (let ((a (plist->alist plist sxml-option-keys)))
-      (validate-sxml (%make-sxml-options (lookup a 'raw-html 'omit)))))
+      (validate-sxml (%make-sxml-options (lookup a 'raw-html 'omit)
+                                        (lookup a 'softbreak 'newline)))))
 
   (define (default-sxml-options) (make-sxml-options))
 
@@ -235,4 +246,5 @@
     (let ((a (plist->alist plist sxml-option-keys)))
       (validate-sxml
        (%make-sxml-options
-        (lookup a 'raw-html (sxml-options-raw-html o)))))))
+        (lookup a 'raw-html  (sxml-options-raw-html o))
+        (lookup a 'softbreak (sxml-options-softbreak o)))))))
