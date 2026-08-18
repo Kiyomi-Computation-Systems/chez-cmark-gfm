@@ -225,7 +225,27 @@ check-purity: build deps
 # Always relinks rather than using a stamp file: a stamp keyed on nothing the
 # submodule pin touches would leave stale symlinks after a re-pin. `ln -sfn` is
 # idempotent and the whole loop is well under a second.
+#
+# cmark-gfm is initialised here too, and it is NOT a Scheme dependency: what
+# `deps` needs from it is `test/*.txt`, the 744-example corpus
+# tests/test-sxml-differential.sps reads. That suite is the only thing under
+# tests/ that reads the vendored WORKING TREE at all -- every other suite
+# reaches cmark through $(CMARK_CLI) or the shim, both of which the
+# pkg-config path satisfies without any submodule. So under HAVE_PKG=yes
+# nothing else initialised it: `$(SHIM): vendor` is guarded out, `vendor`
+# never runs, and `make test` on a fresh clone died inside the suite on an
+# uncaught &i/o-file-does-not-exist naming open-file-input-port -- pointing
+# at the reader, not at the missing checkout.
+#
+# CHECKOUT ONLY, deliberately: no cmake, no build. Under HAVE_PKG=no the
+# `vendor` target builds this same submodule for the shim to link against,
+# and building it twice from two targets would be the waste that rule exists
+# to avoid. `git submodule update --init` is idempotent and only ever resets
+# to the recorded gitlink, so running it from both paths disturbs neither --
+# and the corpus has to be at the pinned commit either way, since it is the
+# same revision the library links against.
 deps:
+	git submodule update --init $(VENDOR_DIR)
 	git submodule update --init $(SRFI_SRC)
 	mkdir -p $(SRFI_LIBS)/srfi
 	src=$(abspath $(SRFI_SRC)); dst=$(abspath $(SRFI_LIBS))/srfi; \

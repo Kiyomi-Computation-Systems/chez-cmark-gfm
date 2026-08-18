@@ -277,7 +277,31 @@
     'no-raise))
 
 ;; --- the corpus ---------------------------------------------------------
+;; The vendored WORKING TREE, not $(CMARK_CLI). This is the only read of it
+;; anywhere under tests/ -- every other suite reaches cmark through the CLI
+;; or the shim, both of which the pkg-config acquisition path (ADR-0001)
+;; satisfies with no submodule checked out at all. `make deps` therefore
+;; initialises vendor/cmark-gfm too, checkout only.
+;;
+;; The guard below exists because the failure without it is illegible.
+;; `all-examples` is built at TOP LEVEL, outside any test- form, so a missing
+;; file raises &i/o-file-does-not-exist out of open-file-input-port and kills
+;; the program before SRFI-64 reports anything -- naming the reader, not the
+;; missing checkout. One stat and a sentence turn that into the actual
+;; diagnosis. spec.txt stands for all four: they arrive and leave together,
+;; as one submodule's working tree.
 (define corpus-dir "vendor/cmark-gfm/test/")
+
+(unless (file-exists? (string-append corpus-dir "spec.txt"))
+  (display (string-append
+            "tests/test-sxml-differential.sps: cmark's example corpus is not in "
+            corpus-dir "\n"
+            "The vendor/cmark-gfm submodule is not checked out. Run:\n"
+            "    git submodule update --init vendor/cmark-gfm\n"
+            "or `make deps`, which does exactly that (no build required --\n"
+            "this suite reads test/*.txt only).\n")
+           (current-error-port))
+  (exit 1))
 
 (define (corpus name) (spec-examples (string-append corpus-dir name)))
 
