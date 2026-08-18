@@ -3430,3 +3430,94 @@ test-sxml-differential  51
 744-example corpus stayed byte-identical to cmark under both markers
 throughout (unchanged from Task 11a — nothing in this group touches parse
 or render behaviour).
+
+---
+
+### Group 2 — latent traps (`tests/test-sxml-differential.sps`)
+
+#### `write-file`'s transcoder — fixed, no new assertion
+
+The brief's concern: `write-file` wrote through `(make-transcoder
+(utf-8-codec))` — an unstated *native* eol-style — while `file->string`
+reads with an explicit `eol-style none`, and native and none are not always
+the same encoding (Windows' native is `crlf`; a CR-bearing fixture written
+through one and read through the other could corrupt on the way to disk).
+
+**Checked empirically before deciding what to do, per the dispatch
+instructions' warning about assumed-but-unverified fixtures.** A standalone
+probe (scratch-only, deleted after) wrote `"a\rb\r\nc\n"` through the exact
+unmutated `write-file` transcoder and read the raw bytes back:
+`#vu8(97 13 98 13 10 99 10)` — byte-identical to the input. **On this
+platform (macOS/Darwin, Chez 10.4.1), the described divergence does not
+reproduce**: `native-eol-style` here is `lf`, and a transcoder's eol
+handling only recognises and re-encodes `#\linefeed`, not a bare `#\return`,
+so CR passes through untouched regardless.
+
+Given that, a fixture asserting the CR round-trip would be vacuous *on this
+machine* — it would pass whether `write-file` used the native transcoder or
+the corrected binary form, so it could never be watched to fail here. Rather
+than add a green check that proves nothing on this platform, the fix was
+applied without a new pinned assertion: `write-file` now writes
+`(string->utf8 s)` to a binary port with no transcoder at all, mirroring
+`tests/test-ast-differential.sps:338-341`'s `write-fixture` exactly. This
+removes the platform-dependent assumption outright rather than leaving it
+correct-by-luck — AGENTS.md commits this project to Windows portability, and
+native-eol-style is `crlf` there by convention (inferred from that
+commitment and from R6RS's native-eol-style contract, not independently
+verified — this session has no Windows environment to check against).
+
+No mutation log entry follows because there is no new assertion to defend;
+this is recorded as "checked, found not to reproduce here, fixed anyway,
+and why" per the instruction to say so rather than invent evidence.
+
+#### `cli-flags` — fixed, with a new direct pin
+
+**Baseline**, `CMARK_CLI=<pinned> CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs
+chez --program tests/test-sxml-differential.sps`: 52/52 passes, exit 0 (51
+from Group 1 + 1 new).
+
+`cli-flags` translated only the extension list; `--hardbreaks`, `--nobreaks`,
+`--smart`, `--validate-utf8` are now translated too, mirroring
+`tests/test-ast-differential.sps`'s `options->flags`. `--unsafe` is
+deliberately left untranslated — `unsafe-html?` has no SXML-side equivalent
+at all (`sxml-opts-for` never derives `raw-html` from it, and
+`markdown->sxml`'s own guard refuses the option outright), so translating it
+would produce a real, expected policy disagreement rather than closing one;
+the comment above `cli-flags` in the test file says so.
+
+This function is only ever called with `opts` (the all-defaults record) in
+this file today, so nothing else here would notice a regression in the four
+newly-translated flags — hence the direct pin, cheaper than round-tripping
+the CLI: `"cli-flags translates every parse-level boolean cmark
+understands"`, asserting the exact flag string for each of the four booleans
+in isolation (each call sets `validate-utf8?` explicitly, since its own
+default is `#t`, to keep each case isolated to the one flag it names).
+
+**Mutation** — in a scratch copy of the `.sps` file (not a library, so run
+directly rather than layered through `CHEZSCHEMELIBDIRS`), silence the
+`nobreaks?` translation:
+```diff
+-         (if (cmark-options-nobreaks? o)      "--nobreaks " "")
++         (if #f                                "--nobreaks " "")
+```
+**Run:** `CMARK_CLI=<pinned> CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs
+chez --program <scratch>/test-sxml-differential.sps`
+**Result: FAIL, 51/52 — exactly the named assertion.**
+```
+FAIL cli-flags translates every parse-level boolean cmark understands
+```
+
+**Revert.** The repo file was never edited — only the scratch copy was.
+`md5 tests/test-sxml-differential.sps`: `473d6d026fd9798c55382b05ec8addfc`,
+identical before the scratch copy was made and after the exercise; `git
+diff --stat` against the last commit unchanged by the mutation (same 46
+insertions / 4 deletions as this group's legitimate edits, before and
+after). Re-ran the ordinary command: 52/52, exit 0.
+
+### Group 2 — final counts
+
+`tests/test-sxml-differential.sps`: 52 (was 51 after Group 1). All other
+suites unchanged from Group 1's final counts. `make test`: 14 suites, `ALL
+SUITES PASSED`. `make check-purity` and `make check-pins` hold. The
+744-example corpus stayed byte-identical to cmark under both markers
+throughout.

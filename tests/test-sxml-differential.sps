@@ -405,17 +405,59 @@
 
 (unless (file-exists? tmp-dir) (mkdir tmp-dir))
 
+;; Every PARSE-level option with a cmark CLI equivalent, mirroring
+;; tests/test-ast-differential.sps's options->flags. Before this, only the
+;; extension list was translated -- harmless while this leg is only ever
+;; called with `opts` (the defaults) below, but running it over
+;; option-matrix, as the in-process leg already does, would have reported a
+;; false divergence for hardbreaks?/nobreaks?/smart?/validate-utf8? and
+;; blamed the adapter for a bug in this harness instead.
+;;
+;; --unsafe is deliberately NOT translated. unsafe-html? has no SXML-side
+;; equivalent: sxml-opts-for above never derives raw-html from it, and
+;; markdown->sxml's own public guard refuses the option outright (it is not
+;; "not yet translated", it is "not applicable"). Adding --unsafe here would
+;; not create an agreement point between `ours` and the CLI -- cmark would
+;; render raw HTML verbatim while the adapter still only omits or escapes
+;; it -- so a divergence there would be a real, expected policy difference,
+;; not evidence of a translation bug like the four flags above.
 (define (cli-flags o)
   (apply string-append
          "--to html "
+         (if (cmark-options-hardbreaks? o)    "--hardbreaks " "")
+         (if (cmark-options-nobreaks? o)      "--nobreaks " "")
+         (if (cmark-options-smart? o)         "--smart " "")
+         (if (cmark-options-validate-utf8? o) "--validate-utf8 " "")
          (map (lambda (x) (string-append "-e " (symbol->string x) " "))
               (cmark-options-extensions o))))
 
+;; A direct pin on the flag-string builder, cheaper than a CLI round trip and
+;; exercising exactly the mapping the fix above adds. This leg never varies
+;; these four flags in practice (it is only ever called with `opts` below),
+;; so nothing else in this file would notice a regression here.
+(test-equal "cli-flags translates every parse-level boolean cmark understands"
+  '("--to html " "--to html --hardbreaks " "--to html --nobreaks "
+    "--to html --smart " "--to html --validate-utf8 ")
+  (list (cli-flags (make-cmark-options 'extensions '() 'validate-utf8? #f))
+        (cli-flags (make-cmark-options 'extensions '() 'validate-utf8? #f
+                                        'hardbreaks? #t))
+        (cli-flags (make-cmark-options 'extensions '() 'validate-utf8? #f
+                                        'nobreaks? #t))
+        (cli-flags (make-cmark-options 'extensions '() 'validate-utf8? #f
+                                        'smart? #t))
+        (cli-flags (make-cmark-options 'extensions '() 'validate-utf8? #t))))
+
+;; Binary, not text: a transcoder's eol-style is either explicit or "native",
+;; and this file's own file->string above reads with `eol-style none` --
+;; native and none do not always agree (Windows' native is crlf), so a
+;; transcoder-based write here could translate line endings on the way to
+;; disk in a way the read side never undoes, corrupting a fixture around a
+;; CR byte for a harness reason having nothing to do with the adapter.
+;; tests/test-ast-differential.sps:338-341's write-fixture takes exactly
+;; this form for exactly this reason; mirrored here.
 (define (write-file path s)
-  (let ((p (open-file-output-port path (file-options no-fail)
-                                  (buffer-mode block)
-                                  (make-transcoder (utf-8-codec)))))
-    (put-string p s)
+  (let ((p (open-file-output-port path (file-options no-fail))))
+    (put-bytevector p (string->utf8 s))
     (close-port p)))
 
 (define (cli-html md o)
