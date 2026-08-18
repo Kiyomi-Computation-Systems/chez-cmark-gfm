@@ -331,6 +331,30 @@ $(FLAVOR_STAMP): | $(LIB_DIR)
 	rm -f $(BUILD_DIR)/.flavor-*
 	touch $@
 
+# A stamp's identity change alone does not reliably force the relink: the
+# freshly touched stamp must also be NEWER than the shim, and Apple's make
+# 3.81 (macOS /usr/bin/make) compares mtimes at whole-second granularity,
+# so a mode flip landing in the same wall-clock second as the previous
+# link kept the old artifact (observed: `make build FLAVOR=prod` then an
+# immediate `make build` ran the dev suite against the still-prod shim;
+# GNU make 4.x's sub-second mtimes mask this). Deleting the shim from the
+# stamp recipes is no fix -- make has already cached the target's stat by
+# then and exits with the artifact gone. So detect the flip when the
+# Makefile is READ -- a stamp file present under a name other than the
+# requested ones -- and force the shim rule through a phony prerequisite,
+# which both makes treat as always-remade regardless of timestamps (the
+# same propagation that made the old phony `vendor` prerequisite relink
+# unconditionally). Non-build goals (check-prod, deps-info, clean) never
+# walk $(SHIM), so the flip marker is inert for them and `make check-prod`
+# still probes the artifact the last build left behind.
+STALE_STAMPS := $(filter-out $(ACQ_STAMP) $(FLAVOR_STAMP),\
+                  $(wildcard $(BUILD_DIR)/.acquisition-* $(BUILD_DIR)/.flavor-*))
+ifneq ($(STALE_STAMPS),)
+.PHONY: mode-flip-relink
+mode-flip-relink: ;
+$(SHIM): mode-flip-relink
+endif
+
 $(SHIM): src/cmark-gfm-shim.c src/cmark-gfm-shim.h $(ACQ_STAMP) $(FLAVOR_STAMP) | $(LIB_DIR)
 	$(CC) $(CFLAGS_SHIM) $(CMARK_CFLAGS) $(SHLIB_LDFLAGS) \
 	      -o $@ src/cmark-gfm-shim.c $(CMARK_LIBS)
