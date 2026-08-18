@@ -132,17 +132,43 @@ build: $(SHIM) $(CONFIG_SLS)
 # filename massaging as chez-srfi's percent-encoding fix above, just for a
 # different naming convention.
 #
+# Every top-level private/*.sls file is linked, not just include.sls: the
+# package also ships private/define-values.sls and private/let-optionals.sls
+# beside it, unused by today's one import chain and so easy to miss by
+# naming only the file that IS used. Naming files individually is exactly
+# how include.sls ended up alone here the first time; a re-pin that made
+# (wak private include) reach either of the other two would fail at TEST
+# time with library-not-found, not at deps time where a missing link is far
+# easier to diagnose. Globbing costs nothing extra today and removes that
+# gap for any file this directory gains later, known about or not.
+#
 # The submodule pins and Akku.lock name the same commits, and nothing else
 # enforces that. chez-srfi's drifted within minutes of the rule being
 # written: a `git submodule update --init` (from `deps`, below) resets the
 # working tree to the RECORDED gitlink, silently undoing a manual detach that
 # had not been staged yet. So this is a check, not a comment.
+#
+# The lock= extraction below matches the URL line whose LAST PATH SEGMENT
+# starts with "name_" -- e.g. .../w/wak-common_0.1.0-akku.15.6d495fc_repack
+# .tar.xz -- rather than a bare /name/ search. An unanchored search matches
+# $$name as a substring ANYWHERE in the file, including inside an earlier
+# entry's own URL (a future package named, say, "common" would match inside
+# "wak-common"'s own line), and would then read that earlier entry's hash
+# instead of its own -- silently, since both are valid-looking hex. Every
+# entry names its own URL right after its own "(name ...)" line, which is
+# what let an earlier, unanchored version of this rule look correct for all
+# three packages checked today; that was luck, not the mechanism, and the
+# earlier version also relied on `head -1` to stop an "/$$name/,/^$$/" sed
+# range that never terminates -- Akku.lock has no blank lines, so that range
+# always ran to end of file. Anchoring on the tarball's own name_version
+# convention removes both: the pattern can only match the target package's
+# own line, so which line comes first no longer matters.
 check-pins:
 	@fail=0; \
 	for pair in "$(SRFI_SRC):chez-srfi" "$(SXMLT_SRC):wak-sxml-tools" "$(COMMON_SRC):wak-common"; do \
 	  src=$${pair%%:*}; name=$${pair##*:}; \
 	  rec=$$(git ls-files -s $$src | awk '{print $$2}'); \
-	  lock=$$(sed -n "/$$name/,/^$$/s/.*akku\.[0-9]*\.\([a-f0-9]*\)_repack.*/\1/p" Akku.lock | head -1); \
+	  lock=$$(sed -n "s#.*/$${name}_[^\"]*-akku\.[0-9]*\.\([a-f0-9]*\)_repack.*#\1#p" Akku.lock | head -1); \
 	  if [ -z "$$rec" ] || [ -z "$$lock" ]; then \
 	    echo "check-pins: could not read both pins for $$name (submodule='$$rec' lock='$$lock')" >&2; \
 	    fail=1; continue; \
@@ -214,7 +240,8 @@ deps:
 	ln -sfn $(abspath $(SXMLT_SRC))/sxml-tools $(abspath $(SRFI_LIBS))/wak/sxml-tools
 	git submodule update --init $(COMMON_SRC)
 	mkdir -p $(SRFI_LIBS)/wak/private/include
-	ln -sfn $(abspath $(COMMON_SRC))/private/include.sls $(abspath $(SRFI_LIBS))/wak/private/include.sls
+	src=$(abspath $(COMMON_SRC))/private; dst=$(abspath $(SRFI_LIBS))/wak/private; \
+	for f in $$src/*.sls; do ln -sfn "$$f" "$$dst/$$(basename "$$f")"; done
 	src=$(abspath $(COMMON_SRC))/private/include; dst=$(abspath $(SRFI_LIBS))/wak/private/include; \
 	for f in $$src/*; do ln -sfn "$$f" "$$dst/$$(basename "$$f")"; done
 	ln -sfn $(abspath $(SRFI_LIBS))/wak/private/include/compat.chezscheme.sls \

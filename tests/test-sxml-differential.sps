@@ -65,8 +65,12 @@
 
 ;; Every non-sweep assertion in this file uses the default marker, which is
 ;; what a caller who sets nothing gets; the marker only ever varies through
-;; the sweeps.
-(define default-marker 'caret)
+;; the sweeps. Derived from the library's own default rather than restated
+;; as the literal 'caret: if that default ever changed, a hardcoded copy
+;; here would desync silently, and every non-sweep assertion in this file
+;; would keep passing while no longer exercising what a caller who sets
+;; nothing actually gets.
+(define default-marker (sxml-options-attribute-marker (default-sxml-options)))
 
 (define ours
   (case-lambda
@@ -340,6 +344,21 @@
 (test-equal "the per-marker driver runs both markers and names the failing one"
   '(marker at probe-failed)
   (per-marker (lambda (m) (if (eq? 'at m) '(probe-failed) 'agree))))
+
+;; The probe above does not close the gap it claims to: a `markers` of
+;; `'(at)` alone -- caret silently dropped -- would make the SAME leg
+;; produce this exact same `(marker at probe-failed)` report, since the leg
+;; never fails for caret and nothing above checks caret was ever reached at
+;; all. That would leave the corpus sweeps below covering one dialect while
+;; this comment claims to guard against exactly that. This second probe
+;; asserts the actual VISIT ORDER through a mutable accumulator, independent
+;; of what the driver returns, so a shortened or reordered `markers` fails
+;; here even when every leg it is given always agrees.
+(test-equal "the per-marker driver visits both markers, in order"
+  '(caret at)
+  (let ((visited '()))
+    (per-marker (lambda (m) (set! visited (cons m visited)) 'agree))
+    (reverse visited)))
 
 (test-equal "every corpus example agrees in-process, under both markers"
   'agree

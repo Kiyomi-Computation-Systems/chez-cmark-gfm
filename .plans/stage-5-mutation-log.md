@@ -3587,3 +3587,237 @@ re-read and trusted.
 `spec-corpus.sls`'s new comment did not disturb its parsing).
 `tests/test-differential.sps`: 28/28 (unchanged). Every count is identical
 to its pre-Group-3 value, as a comment-only change requires.
+
+---
+
+### Group 4 — the Task 11/11a review items
+
+#### Rename: "a script tag in a text node..." → "raw-html: escape" (`tests/test-sxml-portability.sps`)
+
+No mutation: a rename changes what a failure would point at, not what the
+assertion tests. The content arrives at the adapter as `html-inline`, not
+`text` -- confirmed by the same reasoning the next item verifies directly
+against `markdown->ast` -- so the old name would have pointed a future
+failure at `sxml.sls`'s `text` case when the real culprit is
+`raw-html->sxml`. Renamed; assertion body unchanged.
+
+#### A genuine `text`-node fixture (`tests/test-sxml-portability.sps`)
+
+**Verified before writing, not assumed** — the dispatch instructions warned
+this is exactly where an earlier task's mutation was misplaced (`<script>`
+arrives as `html-inline`, not `text`). A standalone probe (scratch-only,
+deleted after) ran `(markdown->ast "a < b\n")` and dumped the tree:
+```
+document
+  paragraph
+    text literal="a < b"
+```
+One `text` node, literal `"a < b"` — "<" followed by a space matches none
+of cmark's raw-HTML-tag patterns, so it stays text. Confirmed the SXML tree
+carries it verbatim: `(*TOP* (p "a < b"))`.
+
+**Baseline**, `CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez --program
+tests/test-sxml-portability.sps`: 5/5 (unchanged count — this group nets to
+zero: +1 new text-node assertion, -1 relocated in Group 4's next item below,
+the rename costing nothing).
+
+**Mutation** — `src/cmark/gfm/sxml.sls`'s `text` case, made to pre-escape
+`<` before the tree reaches the (real, third-party) serializer:
+```diff
+-      ((text)       (prop n 'literal))
++      ((text)       (list->string (apply append (map (lambda (c) (if (char=? c #\<) (string->list "&lt;") (list c))) (string->list (prop n 'literal))))))
+```
+**Result: FAIL, 1 failure — exactly "text: a literal needing escaping
+survives to the serializer."** With the literal pre-escaped to `"a &lt; b"`,
+`srl:sxml->html` escapes the `&` again on top of it (`&` is itself one of
+the four characters `escape_html` — houdini's html.c-equivalent — always
+escapes), producing `"a &amp;lt; b"`, which contains neither the plain nor
+the once-escaped form the assertion checks for. The other four assertions
+in this suite are unaffected: the "every mapped node type" fixture still
+serializes to *some* string (pre-escaping doesn't make it invalid SXML);
+`raw-html: escape` exercises `raw-html->sxml`, a different case entirely;
+the attribute-quoting assertion never touches a text node; and `pre`
+content is inserted via `code-block->sxml` as a literal `code` child, never
+through the mutated `text` case at all.
+
+**Revert.** Scratch copy only; `git diff --stat src/cmark/gfm/sxml.sls`
+against the last commit unaffected by the mutation.
+
+#### The "at dialect" assertion relocated to the pure suite (`tests/test-sxml.sps`)
+
+No new mutation: this is a straight move, not a new property. The original
+assertion (`tests/test-sxml-portability.sps`, "the at dialect carries the
+specification's own marker") called `markdown->sxml` directly and compared
+SXML structure — no `srl:sxml->html`, no third-party code at all — so it
+belonged in the pure suite next to "attribute-marker at emits the
+specification's marker at every site" all along, which already covers the
+same tree via the `\x40;` spelling. The one property this assertion adds —
+that the tree built under `'at` is genuinely `equal?` to one built from
+`(string->symbol "@")`, not merely from a `\x40;` escape the reader happens
+to agree with — was already proven non-vacuous in its original location:
+Task 11a's mutation log (Mutation 1, "the marker constant ignores the
+option and always emits `^`") records this EXACT assertion failing there,
+alongside its sibling. Moving it to a new file and adapting it from
+`markdown->sxml` on a markdown string to `markdown-ast->sxml` on this
+file's own `doc`/`para`/`link`/`text` fixture helpers changes neither the
+code path nor the property, so that evidence still applies; re-run to
+confirm the adapted form still passes: `tests/test-sxml.sps`, 40/40.
+
+#### The per-marker non-vacuity probe, strengthened (`tests/test-sxml-differential.sps`)
+
+**The gap, demonstrated before being closed.** The existing probe
+(`"the per-marker driver runs both markers and names the failing one"`)
+asserts `(per-marker (lambda (m) (if (eq? 'at m) '(probe-failed) 'agree)))`
+equals `'(marker at probe-failed)`. **Mutation** — `markers`, `'(caret at)`
+→ `'(at)` (caret silently dropped from the sweep entirely):
+```diff
+-(define markers '(caret at))
++(define markers '(at))
+```
+**Result: FAIL, 1 of 53 — and it is NOT the existing probe.**
+```
+FAIL the per-marker driver visits both markers, in order
+# of expected passes      52
+```
+The pre-existing probe stays green: with `markers` reduced to `'(at)`, the
+same probe leg still returns `'(probe-failed)` on the one marker it is
+ever given, producing the identical `(marker at probe-failed)` report --
+proving the brief's finding directly, not merely citing it. Every corpus,
+option-matrix, and CLI sweep in the file *also* stays green under this
+mutation, because the `'at` dialect genuinely agrees with cmark on its own
+-- meaning that, before this fix, a `markers` silently narrowed to one
+dialect would have been caught by NOTHING in this file.
+
+**The fix.** A second assertion, `"the per-marker driver visits both
+markers, in order"`, records the actual visit sequence through a mutable
+accumulator, independent of any leg's return value:
+```scheme
+(let ((visited '()))
+  (per-marker (lambda (m) (set! visited (cons m visited)) 'agree))
+  (reverse visited))
+```
+expected `'(caret at)`. Re-run against the same mutation above (already
+shown): this is the one assertion that fails, exactly as intended.
+
+**Revert.** Scratch copy of the `.sps` file only (run directly, not layered
+through `CHEZSCHEMELIBDIRS`, matching Task 10's method for this same file).
+`md5 tests/test-sxml-differential.sps`: `83e7db1bafff458f06172ffc94bf9fd5`,
+unchanged before the scratch copy was made and after. Re-ran the ordinary
+command: 53/53, exit 0.
+
+#### `default-marker` derived from the library, not restated (`tests/test-sxml-differential.sps`)
+
+```diff
+-(define default-marker 'caret)
++(define default-marker (sxml-options-attribute-marker (default-sxml-options)))
+```
+No new assertion: every existing non-sweep assertion in this file already
+uses `default-marker` and continues to, so the fix is covered by the file's
+existing 53 assertions rather than a new one — its purpose is to keep this
+constant from silently desyncing from the library's own default if that
+default ever changes, not to pin a new decision. Re-run:
+`tests/test-sxml-differential.sps`, 53/53, unchanged.
+
+#### `check-pins`'s mechanism (`Makefile`)
+
+Not a Scheme assertion, so no SRFI-64 mutation applies; verified instead by
+corrupting `Akku.lock` directly and confirming the check still catches it,
+per the dispatch instructions.
+
+The old `lock=` extraction used `sed -n "/$$name/,/^$$/s/.../\1/p" | head -1`:
+an unanchored `/$$name/` search that could match `$$name` as a substring
+anywhere in the file, and a `,/^$$/` range that never terminates because
+`Akku.lock` has no blank lines, so the range always ran to EOF. It read the
+right hash for all three packages today only because each entry's own URL
+line is the very next line matching the hash pattern after its own
+`(name ...)` line — correct by file layout, not by the mechanism's own
+logic. Rewritten to match the URL line whose LAST PATH SEGMENT starts with
+`"name_"` (Akku's own tarball-naming convention), which can only match the
+target package's own line regardless of what precedes it in the file:
+```diff
+-  lock=$$(sed -n "/$$name/,/^$$/s/.*akku\.[0-9]*\.\([a-f0-9]*\)_repack.*/\1/p" Akku.lock | head -1); \
++  lock=$$(sed -n "s#.*/$${name}_[^\"]*-akku\.[0-9]*\.\([a-f0-9]*\)_repack.*#\1#p" Akku.lock | head -1); \
+```
+
+**Verification 1 — the check still holds on real pins.** `make check-pins`:
+```
+pins agree: chez-srfi 7879b52
+pins agree: wak-sxml-tools 5c14730
+pins agree: wak-common 6d495fc
+```
+
+**Verification 2 — drift is still caught, per pair, on a corrupted copy.**
+`Akku.lock` backed up (`md5 e3a66d01e7920562c94bd43a591fc403`), then edited
+in place three times, once per pair, each time replacing only that pair's
+hash with `deadbee` and restoring the backup before the next:
+
+```
+### chez-srfi's hash corrupted only ###
+PIN DRIFT: chez-srfi submodule 7879b527f267f067416552fb989135ad1b4ea436 but Akku.lock names deadbee.
+pins agree: wak-sxml-tools 5c14730
+pins agree: wak-common 6d495fc
+exit=2
+
+### wak-sxml-tools's hash corrupted only ###
+pins agree: chez-srfi 7879b52
+PIN DRIFT: wak-sxml-tools submodule 5c1473052d306536f770b065ed65e72df4c5c16c but Akku.lock names deadbee.
+pins agree: wak-common 6d495fc
+exit=2
+
+### wak-common's hash corrupted only ###
+pins agree: chez-srfi 7879b52
+pins agree: wak-sxml-tools 5c14730
+PIN DRIFT: wak-common submodule 6d495fcaf7250f414614b1979d1ac07904496970 but Akku.lock names deadbee.
+exit=2
+```
+Each corruption is caught by name, reports drift for exactly the corrupted
+pair, leaves the other two agreeing, and exits non-zero (`make`'s wrapping
+of the recipe's own `exit $$fail`). `Akku.lock` restored and reconfirmed
+byte-identical afterward (`md5 e3a66d01e7920562c94bd43a591fc403`, matching
+the backup and `git status --short Akku.lock` empty).
+
+**A first attempt at documenting this inline (embedding shell comments
+inside the recipe's backslash-continued command via `` `# ...` ``
+command-substitution tricks) broke the recipe outright** --
+`lock=$$(sed ...)`'s own output was swallowed as a bare command instead of
+an assignment, "command not found". Reverted; the explanation was moved to
+a plain Makefile-level comment block above the target instead, which is
+this project's existing convention for documenting recipe internals (the
+block above `check-purity:` does the same). Lesson for this session, not
+worth a permanent AGENTS.md entry on its own — Task 12 Step 3 is out of
+this report's scope and can judge that independently.
+
+#### `make deps` links every `wak-common/private/*.sls`, not just `include.sls` (`Makefile`)
+
+Confirmed real, not speculative: `vendor/wak-common/private/` ships
+`define-values.sls`, `define-values.chezscheme.sls`, and `let-optionals.sls`
+alongside `include.sls`; `grep` across `vendor/wak-sxml-tools` and
+`vendor/wak-common` found no importer of `(wak private define-values)` or
+`(wak private let-optionals)` today, so the gap is currently dormant, not
+yet a failure — exactly why it is a *latent* gap and not a bug report.
+
+```diff
+-	ln -sfn $(abspath $(COMMON_SRC))/private/include.sls $(abspath $(SRFI_LIBS))/wak/private/include.sls
+-	src=$(abspath $(COMMON_SRC))/private/include; dst=$(abspath $(SRFI_LIBS))/wak/private/include; \
++	src=$(abspath $(COMMON_SRC))/private; dst=$(abspath $(SRFI_LIBS))/wak/private; \
++	for f in $$src/*.sls; do ln -sfn "$$f" "$$dst/$$(basename "$$f")"; done
++	src=$(abspath $(COMMON_SRC))/private/include; dst=$(abspath $(SRFI_LIBS))/wak/private/include; \
+ 	for f in $$src/*; do ln -sfn "$$f" "$$dst/$$(basename "$$f")"; done
+```
+
+Not mutation-testable (no assertion; the fix is the check-to-comment
+upgrade AGENTS.md already asks for). Verified instead: cleared
+`build/scheme-libs/wak/private/*.sls`, re-ran `make deps`, confirmed all
+four files are now linked (`define-values.sls`,
+`define-values.chezscheme.sls`, `include.sls`, `let-optionals.sls`), and
+re-ran `tests/test-sxml-portability.sps` (5/5) and
+`tests/test-sxml-serializer.sps` (19/19) to confirm the wak-common-dependent
+suites still resolve correctly through the widened link set.
+
+### Group 4 — final counts
+
+```
+test-options            71   test-sxml               40
+test-sxml-serializer    19   test-sxml-portability     5
+test-sxml-differential  53
+```

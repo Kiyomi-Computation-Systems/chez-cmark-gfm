@@ -68,32 +68,40 @@
             ((string=? needle (substring hay i (+ i n))) #t)
             (else (loop (+ i 1)))))))
 
-(test-equal "a script tag in a text node comes out escaped"
+;; Named "raw-html: escape", not "a text node ...": this content arrives at
+;; the adapter as an html-inline node, not a text node -- <script> matches
+;; cmark's raw-HTML-tag grammar, so it is raw-html->sxml, not the `text`
+;; case, that runs here. The old name pointed a future failure at the wrong
+;; function. (The implementer's own mutation log for this task records the
+;; same finding.)
+(test-equal "raw-html: escape"
   '(#f #t)
   (let ((out (render "A <script>alert(1)</script> B\n"
                      (default-cmark-options)
                      (make-sxml-options 'raw-html 'escape))))
     (list (contains? out "<script>") (contains? out "&lt;script&gt;"))))
 
+;; The genuine `text`-node case the assertion above was misnamed for: "<"
+;; here is not a valid HTML tag opener (a "<" followed by a space matches no
+;; cmark raw-HTML-tag pattern), so cmark keeps it as literal text and this
+;; reaches node->sxml's `text` case, carried verbatim into the tree per
+;; sxml.sls's own header comment. Verified directly against markdown->ast
+;; before writing this fixture (a single `text` node, literal "a < b"), not
+;; assumed from the markdown alone -- confirmed empirically since guessing
+;; wrong here is exactly how the assertion above got misnamed in the first
+;; place. Costs two lines and pins double-escaping-freedom *through*
+;; third-party code, which is the only thing this suite exists to do; the
+;; 744-example differential already catches a double-escape in the `text`
+;; case, but never through a serializer this project does not control.
+(test-equal "text: a literal needing escaping survives to the serializer"
+  '(#f #t)
+  (let ((out (render "a < b\n")))
+    (list (contains? out "a < b") (contains? out "a &lt; b"))))
+
 (test-equal "a quote in an attribute value comes out escaped"
   '(#f #t)
   (let ((out (render "[l](/x \"a\\\"b\")\n")))
     (list (contains? out "title=\"a\"b\"") (contains? out "&quot;"))))
-
-;; --- the other dialect ---------------------------------------------------
-;; No `@`-expecting consumer exists on this platform to hand the tree to --
-;; that is the finding ADR-0013 rests on -- and inventing one would prove
-;; only that our own stand-in agrees with us. So the assertion is on the
-;; object such a consumer would test: a serializer written to the SXML
-;; specification tests (eq? (car x) '@), and the symbol it compares against
-;; is exactly (string->symbol "@"). Built from the CHARACTER here rather than
-;; from a source-level \x40; escape, so this cannot pass against a lookalike
-;; the escape and the reader happened to agree on.
-(test-equal "the at dialect carries the specification's own marker"
-  (list '*TOP* (list 'p (list 'a (list (string->symbol "@") '(href "/x")) "l")))
-  (markdown->sxml "[l](/x)\n"
-                  (default-cmark-options)
-                  (make-sxml-options 'attribute-marker 'at)))
 
 ;; --- whitespace ---------------------------------------------------------
 ;; A pretty-printing serializer would corrupt pre content. This asserts the

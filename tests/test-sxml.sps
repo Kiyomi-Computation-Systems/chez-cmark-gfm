@@ -435,6 +435,23 @@
   (markdown-ast->sxml every-attribute-site
                       (make-sxml-options 'attribute-marker 'at)))
 
+;; Relocated from tests/test-sxml-portability.sps (Task 12 Step 0 cleanup):
+;; this property involves no third-party code -- it never calls
+;; srl:sxml->html -- so it belongs in this pure suite alongside the sibling
+;; above, not the suite reserved for what only third-party code can prove.
+;; Its one property the sibling does not already cover: the tree built under
+;; 'at genuinely equals a marker built from (string->symbol "@") -- the SXML
+;; specification's own construction -- not merely a tree the reader's \x40;
+;; escape happens to agree with. Already proven non-vacuous in its original
+;; location: Task 11a's mutation log records this exact assertion failing
+;; under "the marker constant ignores the option and always emits ^",
+;; alongside the sibling above -- moving it does not change what it tests,
+;; so that evidence still applies.
+(test-equal "attribute-marker at agrees with the specification's own (string->symbol \"@\")"
+  (list '*TOP* (list 'p (list 'a (list (string->symbol "@") '(href "/x")) "l")))
+  (markdown-ast->sxml (doc (para (link "/x" "" (text "l"))))
+                      (make-sxml-options 'attribute-marker 'at)))
+
 (test-end "sxml")
 
 (exit (if (zero? (test-runner-fail-count runner)) 0 1))
