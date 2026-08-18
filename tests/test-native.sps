@@ -212,9 +212,37 @@
   (list "/no/such/path.dylib" 'invalid-override)
   (shim-failure (lambda () (resolve-shim-path a-real-non-library-file "/no/such/path.dylib"))))
 
+;; --- the fifth branch: 'not-built ----------------------------------------
+;; resolve-shim-path's first cond clause fires when there is no override AND
+;; the default path is not a string -- exactly what the checked-in fallback
+;; config (fallback/cmark/gfm/private/config.sls) supplies for shim-path
+;; before any `make build` has run. #f is used here as the default path
+;; because that is literally what the fallback supplies, not a stand-in: the
+;; clause itself raises with a hardcoded #f, and conditions.sls:86 documents
+;; #f as "no path was ever configured". The only prior coverage of this
+;; branch was tests/test-fallback-config.sps, a subprocess suite that greps
+;; a child's stderr for the substring "not-built" -- it cannot see the
+;; condition's path field at all, so a regression that raised 'not-built
+;; with the wrong path would pass there unnoticed.
+(test-equal "a non-string default path with no override is not-built"
+  (list #f 'not-built)
+  (shim-failure (lambda () (resolve-shim-path #f #f))))
+
 (test-assert "a valid absolute, existing, regular-file override is accepted"
   (string=? a-real-non-library-file
             (resolve-shim-path "/irrelevant/default" a-real-non-library-file)))
+
+;; An explicit override still wins even when the default path is not built
+;; (not a string): someone holding a prebuilt shim can point
+;; CHEZ_CMARK_GFM_SHIM at it from an otherwise-unbuilt tree. Turns on the
+;; RETURNED PATH matching the override exactly, via string=?, not on bare
+;; truthiness and not on #f -- if the not-built clause above wrongly fired
+;; here too, resolve-shim-path would raise instead of returning, SRFI-64
+;; would turn that raise into #f for this test's actual expression, and
+;; test-assert would correctly fail on that #f rather than accepting it.
+(test-assert "an explicit override wins over a not-built default path"
+  (string=? a-real-non-library-file
+            (resolve-shim-path #f a-real-non-library-file)))
 
 (test-equal "load-shim wraps a real dlopen failure as load-failed"
   (list a-real-non-library-file 'load-failed)
