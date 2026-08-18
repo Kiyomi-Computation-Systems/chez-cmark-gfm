@@ -176,15 +176,15 @@ output.
 | `blockquote` | `(blockquote …)` | `html.c:151` |
 | `list`, bullet | `(ul …)` | `html.c:170` |
 | `list`, ordered, start = 1 | `(ol …)` | `html.c:174` |
-| `list`, ordered, start ≠ 1 | `(ol (@ (start "N")) …)` | `html.c:178` |
+| `list`, ordered, start ≠ 1 | `(ol (^ (start "N")) …)` | `html.c:178` |
 | `item`, plain | `(li …)` | `html.c:190` |
-| `item`, task, checked | `(li (input (@ (type "checkbox") (checked "") (disabled ""))) " " …)` | `extensions/tasklist.c:125` |
-| `item`, task, unchecked | `(li (input (@ (type "checkbox") (disabled ""))) " " …)` — no `checked` at all | `extensions/tasklist.c:127` |
-| `link` | `(a (@ (href …) (title …)) …)` | `html.c:384` |
-| `image` | `(img (@ (src …) (alt …) (title …)))` | `html.c:402` |
+| `item`, task, checked | `(li (input (^ (type "checkbox") (checked "") (disabled ""))) " " …)` | `extensions/tasklist.c:125` |
+| `item`, task, unchecked | `(li (input (^ (type "checkbox") (disabled ""))) " " …)` — no `checked` at all | `extensions/tasklist.c:127` |
+| `link` | `(a (^ (href …) (title …)) …)` | `html.c:384` |
+| `image` | `(img (^ (src …) (alt …) (title …)))` | `html.c:402` |
 | `code` | `(code …)` | `html.c:329` |
 | `code-block`, no info | `(pre (code …))` | `html.c:218` |
-| `code-block`, info | `(pre (code (@ (class "language-X")) …))` | `html.c:242` |
+| `code-block`, info | `(pre (code (^ (class "language-X")) …))` | `html.c:242` |
 | `thematic-break` | `(hr)` | `html.c:280` |
 | `linebreak` | `(br)` | `html.c:315` |
 | `softbreak` | `"\n"` | `html.c:319` |
@@ -193,9 +193,14 @@ output.
 | `html-inline` / `html-block` | see §5.1 | `html.c:259, 337` |
 | `table` | `(table …)` | `extensions/table.c:756` |
 | `table-row` | see §4.2.2 | `extensions/table.c:774` |
-| `table-cell`, header | `(th (@ (align …)) …)` | `extensions/table.c:798` |
-| `table-cell`, body | `(td (@ (align …)) …)` | `extensions/table.c:798` |
+| `table-cell`, header | `(th (^ (align …)) …)` | `extensions/table.c:798` |
+| `table-cell`, body | `(td (^ (align …)) …)` | `extensions/table.c:798` |
 | `extension` (unknown) | raises `&cmark-unsupported-node` (§3.4) | — |
+
+The `^` in those rows is the attribute marker under the default
+`attribute-marker: caret`. Under `at` it is the specification's `@` and
+nothing else changes — see ADR-0013 for why the default is not the
+specification's spelling.
 
 Details the table compresses:
 
