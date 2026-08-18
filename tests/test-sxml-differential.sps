@@ -57,6 +57,15 @@
 (agrees "raw html agrees"     "<div>\nblock\n</div>\n\npara <b>inline</b> end\n")
 (agrees "adjacent blocks agree" "> a\n\nb\n\n> c\n\n---\n\nd\n")
 
+(agrees "links agree"   "[a](/x) [b](/y \"t\") [c](/a%20b?x=1&y=2)\n")
+(agrees "autolinks agree" "<https://example.com/a?b=1&c=2> and www.example.com\n")
+(agrees "unsafe links agree"
+        "[a](javascript:alert(1)) [b](JaVaScRiPt:x) [c](file:///etc/passwd)\n")
+(agrees "data urls agree"
+        "![a](data:image/png;base64,AA) [b](data:text/html,<b>)\n")
+(agrees "images agree" "![*a* `b`](/i \"t\") ![](/j)\n")
+(agrees "non-ascii urls agree" "[a](/café/naïve) [b](/a b)\n")
+
 (test-end "sxml-differential")
 
 (exit (if (zero? (test-runner-fail-count runner)) 0 1))

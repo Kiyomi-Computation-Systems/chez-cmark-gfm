@@ -106,6 +106,77 @@
     (->sxml (doc (node 'extension '((native-type . "custom_block")) '())))
     'no-raise))
 
+;; --- links --------------------------------------------------------------
+(define (link url title . kids)
+  (node 'link (list (cons 'url url) (cons 'title title)) kids))
+
+;; html.c:392 writes the title attribute only when title.len is non-zero.
+;; An empty title="" is a byte difference, not a harmless extra.
+(test-equal "an empty title is omitted, a present one is kept"
+  '(*TOP* (p (a (\x40; (href "/x")) "l") (a (\x40; (href "/y") (title "t")) "m")))
+  (->sxml (doc (node 'paragraph '()
+                     (list (link "/x" "" (text "l"))
+                           (link "/y" "t" (text "m")))))))
+
+;; houdini_escape_href percent-encodes every byte outside HREF_SAFE
+;; (src/houdini_href_e.c:32-44). & and ' are left ALONE here -- they are the
+;; serializer's half of the split, and encoding them here would produce
+;; &amp;amp; on output.
+(test-equal "a URL is percent-encoded but ampersand and apostrophe pass through"
+  '(*TOP* (p (a (\x40; (href "/a%20b?x=1&y='z'%C3%A9")) "l")))
+  (->sxml (doc (node 'paragraph '()
+                     (list (link "/a b?x=1&y='z'é" "" (text "l")))))))
+
+;; src/scanners.re:345-354. re2c single-quoted literals are
+;; case-insensitive, so mixed case is caught. A rejected URL yields an EMPTY
+;; attribute (html.c:387-391), not a raise and not a removed attribute.
+(test-equal "dangerous schemes yield an empty href, in any case"
+  '(*TOP* (p (a (\x40; (href "")) "a") (a (\x40; (href "")) "b")
+             (a (\x40; (href "")) "c") (a (\x40; (href "")) "d")))
+  (->sxml (doc (node 'paragraph '()
+                     (list (link "javascript:alert(1)" "" (text "a"))
+                           (link "JaVaScRiPt:alert(1)" "" (text "b"))
+                           (link "vbscript:x" "" (text "c"))
+                           (link "file:///etc/passwd" "" (text "d")))))))
+
+(test-equal "data: is rejected except for the four image subtypes"
+  '(*TOP* (p (a (\x40; (href "")) "html")
+             (a (\x40; (href "data:image/png;base64,AA")) "png")
+             (a (\x40; (href "data:image/webp,x")) "webp")))
+  (->sxml (doc (node 'paragraph '()
+                     (list (link "data:text/html,<b>" "" (text "html"))
+                           (link "data:image/png;base64,AA" "" (text "png"))
+                           (link "data:image/webp,x" "" (text "webp")))))))
+
+;; --- images -------------------------------------------------------------
+;; html.c:118-139 -- children render in PLAIN mode into alt: text, code, and
+;; html-inline contribute literals; breaks contribute a single space;
+;; everything else contributes nothing but is still descended into.
+(test-equal "image alt is the flattened plaintext of its children"
+  '(*TOP* (p (img (\x40; (src "/i") (alt "a b c d e")))))
+  (->sxml (doc (node 'paragraph '()
+                     (list (node 'image '((url . "/i") (title . ""))
+                                 (list (text "a ")
+                                       (node 'emph '() (list (text "b")))
+                                       (text " ")
+                                       (node 'code '((literal . "c")) '())
+                                       (node 'softbreak '() '())
+                                       (node 'html-inline '((literal . "d")) '())
+                                       (text " e"))))))))
+
+(test-equal "an image title is omitted when empty and kept when present"
+  '(*TOP* (p (img (\x40; (src "/i") (alt "")))
+             (img (\x40; (src "/j") (alt "") (title "t")))))
+  (->sxml (doc (node 'paragraph '()
+                     (list (node 'image '((url . "/i") (title . "")) '())
+                           (node 'image '((url . "/j") (title . "t")) '()))))))
+
+(test-equal "an image src takes the same dangerous-URL policy"
+  '(*TOP* (p (img (\x40; (src "") (alt "")))))
+  (->sxml (doc (node 'paragraph '()
+                     (list (node 'image '((url . "javascript:x") (title . ""))
+                                 '()))))))
+
 (test-end "sxml")
 
 (exit (if (zero? (test-runner-fail-count runner)) 0 1))

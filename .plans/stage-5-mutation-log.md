@@ -635,3 +635,223 @@ adapter's correctness — a self-inconsistent fixture in the sense the plan's
 task notes warn about (input, not expectation, needs the fix). Fixed by
 adding `(cmark gfm sxml)` to this test file's own import list, touching no
 assertion, no expected value, and no file outside this task's scope.
+
+---
+
+## Task 5 — links, images, and the URL policy
+
+Three mutations, all against `src/cmark/gfm/sxml.sls` (brief Step 7).
+
+**Method used for this task, a variant of the convention stated at the top
+of this file.** Instead of mirroring only the single library's path under
+the scratch directory and prepending `CHEZSCHEMELIBDIRS`, the entire
+working tree was `rsync`'d (excluding `.git`) to
+`<scratch>/mutation-repo/`, including the already-built `build/scheme-libs`
+directory, and each suite was run with `CHEZSCHEMELIBDIRS=src:tests:build/
+scheme-libs` from inside that scratch clone — i.e. a full second checkout
+outside the repo rather than one overridden library directory layered in
+front of the real one. This satisfies the same invariant the stated method
+protects ("the target file is... mutated only there", "the tracked file in
+the repo is never edited") by construction: the mutated file never exists
+inside `/Users/yuzu/github/chez-cmark-gfm` at all, only inside
+`/private/tmp/.../scratchpad/mutation-repo/`. Confirmed throughout by `git
+status --short` / `git diff --stat` on the real repo (showing only this
+task's own already-intended feature changes to three files, unchanged
+before, during, and after all three mutation runs) and by `md5
+src/cmark/gfm/sxml.sls` on the real, tracked file.
+
+**Baseline**, `CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez --program
+tests/test-sxml.sps`: 19/19 passes, exit 0.
+`CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez --program
+tests/test-sxml-differential.sps`: 15/15 passes, exit 0. `make test`: 13
+suites, all `ALL SUITES PASSED`. `make check-purity`: three "purity holds"
+lines. `md5` of the tracked file at baseline: `027f5834316662dd3da2d0b404ba5cb1`.
+Reconfirmed identical in the scratch clone before any mutation (`diff
+src/cmark/gfm/sxml.sls <scratch>/mutation-repo/src/cmark/gfm/sxml.sls` →
+no output) and both suites re-run inside the untouched scratch clone as a
+second baseline: 19/19 and 15/15, exit 0 both.
+
+### Mutation 1 — percent-encode `&` as well
+
+**Mutation** (brief Step 7.1): in the scratch clone only, remove `&` from
+`href-safe-extra`:
+
+```diff
+   (define href-safe-extra
+-    (string->list "!#$%()*+,-./:;=?@_~&'"))
++    (string->list "!#$%()*+,-./:;=?@_~'"))
+```
+
+**Run:** both suites, from inside `<scratch>/mutation-repo`, ordinary
+`CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs`.
+
+**Result: FAIL in both suites — the two assertions the brief names both
+fail, plus one further differential assertion for the identical reason.**
+
+```
+%%%% Starting test sxml
+FAIL a URL is percent-encoded but ampersand and apostrophe pass through
+# of expected passes      18
+# of unexpected failures  1
+```
+
+```
+%%%% Starting test sxml-differential
+FAIL links agree
+FAIL autolinks agree
+# of expected passes      13
+# of unexpected failures  2
+```
+
+**"a URL is percent-encoded but ampersand and apostrophe pass through"** and
+**"links agree"** both fail exactly as Step 7.1 predicts. **"autolinks
+agree"** is not named by the brief, but it is not a different mechanism
+either: its own fixture, `<https://example.com/a?b=1&c=2>`, contains a
+literal `&`, and this mutation turns every `&` in every href into `%26`
+regardless of which test constructed the link, so a second, unnamed
+assertion whose fixture happens to contain `&` fails for the same, single
+reason — unlike Task 1's or Task 3's discrepancies, this is not a case
+needing a second isolating probe, because the failing property is identical
+to the named one, just exercised by more than one fixture. No other
+assertion in either suite regressed, including "images agree" and "data
+urls agree", whose fixtures contain no bare `&`.
+
+**Revert.** Confirmed via `diff` against the tracked file (`IDENTICAL`,
+no output) and `md5 src/cmark/gfm/sxml.sls` on the real repo
+(`027f5834316662dd3da2d0b404ba5cb1`, unchanged throughout). Re-ran both
+suites through the ordinary, non-scratch command against the real repo →
+19/19 and 15/15, exit 0 both.
+
+### Mutation 2 — `data:image` allowlist moved after the `data:` rejection
+
+**Mutation** (brief Step 7.2): in a fresh scratch clone, swap the order of
+the two `cond` clauses in `dangerous-url?`:
+
+```diff
+   (define (dangerous-url? url)
+     (let ((u (ascii-downcase url)))
+       (cond
+-        ((or (prefix? "data:image/png"  u) (prefix? "data:image/gif"  u)
+-             (prefix? "data:image/jpeg" u) (prefix? "data:image/webp" u))
+-         #f)
+-        ((or (prefix? "javascript:" u) (prefix? "vbscript:" u)
+-             (prefix? "file:" u) (prefix? "data:" u))
+-         #t)
++        ((or (prefix? "javascript:" u) (prefix? "vbscript:" u)
++             (prefix? "file:" u) (prefix? "data:" u))
++         #t)
++        ((or (prefix? "data:image/png"  u) (prefix? "data:image/gif"  u)
++             (prefix? "data:image/jpeg" u) (prefix? "data:image/webp" u))
++         #f)
+         (else #f))))
+```
+
+**Run:** both suites, from inside the fresh scratch clone.
+
+**Result: FAIL in both suites, exactly the assertions the mutation
+implicates, nothing wider.**
+
+```
+%%%% Starting test sxml
+FAIL data: is rejected except for the four image subtypes
+# of expected passes      18
+# of unexpected failures  1
+```
+
+```
+%%%% Starting test sxml-differential
+FAIL data urls agree
+# of expected passes      14
+# of unexpected failures  1
+```
+
+**"data: is rejected except for the four image subtypes"** fails exactly as
+Step 7.2 predicts, and it predicts the failure's *content*, not only that it
+fails: it says the mutation "reports an empty href for the png." Confirmed
+directly rather than inferred from the FAIL line — a standalone probe
+(`probe-mutation2.sps`, scratch-only) called `markdown-ast->sxml` against
+the mutated library on the exact fixture the named test uses and printed
+the result:
+
+```
+(*TOP* (p (a (\x40; (href "")) "html")
+          (a (\x40; (href "")) "png")
+          (a (\x40; (href "")) "webp")))
+```
+
+Both the `png` and `webp` links — not only the already-dangerous `html`
+one — now get an empty `href`, because the general `data:` rejection now
+matches and returns `#t` before the image-subtype allowlist clause is ever
+reached. Exactly the predicted mechanism. "data urls agree" (Step 5's own
+differential fixture, not named by Step 7.2 but covering the identical
+code path) fails for the same reason. No other assertion in either suite
+regressed.
+
+**Revert.** Confirmed via `diff` against the tracked file (no output) and
+`md5 src/cmark/gfm/sxml.sls` on the real repo
+(`027f5834316662dd3da2d0b404ba5cb1`, unchanged). Re-ran both suites through
+the ordinary, non-scratch command against the real repo → 19/19 and 15/15,
+exit 0 both.
+
+### Mutation 3 — `plain-text`'s `else` branch deleted
+
+**Mutation** (brief Step 7.3): in a fresh scratch clone, delete the `else`
+branch of `plain-text`, so a node type other than
+`text`/`code`/`html-inline`/`softbreak`/`linebreak` (e.g. `emph`) is simply
+not matched by `case` and contributes nothing — nor do its children get
+visited:
+
+```diff
+   (define (plain-text n port)
+     (case (markdown-node-type n)
+       ((text code html-inline) (put-string port (prop n 'literal)))
+-      ((softbreak linebreak)   (put-char port #\space))
+-      (else
+-       ;; Contributes nothing itself, but its children still render --
+-       ;; the plain-mode branch returns before the element markup, it does
+-       ;; not skip the subtree.
+-       (for-each (lambda (c) (plain-text c port))
+-                 (markdown-node-children n)))))
++      ((softbreak linebreak)   (put-char port #\space))))
+```
+
+**Run:** both suites, from inside the fresh scratch clone.
+
+**Result: FAIL in both suites, exactly the two assertions the brief names,
+nothing wider.**
+
+```
+%%%% Starting test sxml
+FAIL image alt is the flattened plaintext of its children
+# of expected passes      18
+# of unexpected failures  1
+```
+
+```
+%%%% Starting test sxml-differential
+FAIL images agree
+# of expected passes      14
+# of unexpected failures  1
+```
+
+Exactly **"image alt is the flattened plaintext of its children"** and
+**"images agree"** fail; every other assertion in both suites, including
+"an image title is omitted when empty and kept when present" and "an image
+src takes the same dangerous-URL policy" (whose fixtures have no non-leaf
+children in the alt subtree, so this mutation is a no-op on them), stays
+green. This is the property the named test exists to establish: `emph`'s
+`(text "b")` child no longer contributes `"b"` to the flattened alt text
+once `emph` itself is unmatched by `case`, because `case` without a
+matching clause and no `else` returns unspecified and never reaches the
+recursive `for-each` over children at all — the subtree is skipped, not
+merely under-rendered.
+
+**Revert.** Confirmed via `diff` against the tracked file (no output) and
+`md5 src/cmark/gfm/sxml.sls` on the real repo
+(`027f5834316662dd3da2d0b404ba5cb1`, unchanged). Re-ran both suites through
+the ordinary, non-scratch command against the real repo → 19/19 and 15/15,
+exit 0 both.
+
+**Final reconfirmation for the task.** `make test`: 13 suites, all `ALL
+SUITES PASSED`. `make check-purity`: three "purity holds" lines. Scratch
+clone and probe script deleted afterward.
