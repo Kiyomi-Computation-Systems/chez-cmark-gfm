@@ -49,6 +49,13 @@ akku/
 # Executables
 *.exe
 *.out
+# Not a bare extension wildcard in practice: *.out above is meant for
+# `cc -o a.out`-style output, but it also matches examples/expected/NN.out
+# -- make examples's committed golden files -- silently dropping them from
+# `git add`. Confirmed via `git check-ignore -v examples/expected/01.out`
+# before this line existed. Same shape of bug as core.[0-9]* below, which
+# core alone already hit against tests/fixtures/core.md (Task 8).
+!examples/expected/*.out
 *.app
 *.i*86
 *.x86_64
