@@ -2472,6 +2472,79 @@ git commit -m "test: verify SXML conformance and escaping through wak-sxml-tools
 - Modify: `README.org`, `CHANGELOG.md`, `AGENTS.md`
 - Verify: `.plans/stage-5-mutation-log.md`
 
+- [ ] **Step 0: Cleanup pass**
+
+Every task's review deferred its Minor findings here. Fix them in one commit
+per group, each with the test that pins it where a test applies. The full list
+lives in `.superpowers/sdd/progress.md`; these are the ones that touch code.
+
+**Untested code paths — these matter most, because an assertion-free path is
+what this repo's mutation rule exists to prevent:**
+
+- `sxml-options`' `softbreak` field has *no* test at all. `raw-html` has seven
+  in `tests/test-options.sps`; mirror them — default, valid values, an
+  `sxml-options-with` round-trip, unknown key, duplicate key, invalid value,
+  and that `sxml-options-with` validates. Deleting the `(unless (memq …
+  '(newline break space)) …)` clause at `src/cmark/gfm/options.sls:228`
+  currently breaks nothing.
+- Neither the nested-`strong` collapse (`sxml.sls`) nor `softbreak`
+  `'break`/`'space` has a pin in the **pure** suite, though both are pure
+  adapter logic. Their only coverage today needs the native shim and the CLI.
+  Add them to `tests/test-sxml.sps`.
+- `sxml.sls`'s `else` branch — an unmapped node type — has no direct test; the
+  only raise exercised goes through the sibling `extension` case.
+- `markdown-ast->sxml`'s `sxml-options?` guard and `markdown->sxml`'s
+  `cmark-options?` guard are both untested.
+- No test covers a body-only or empty table, an empty URL, or a URL of
+  entirely unsafe bytes. The `data:image` assertion says "four subtypes" and
+  exercises two.
+- No `*COMMENT*` test places one inside `blockquote` or `li`, the other two
+  members of `block-comment-parents`.
+
+**Latent traps:**
+
+- `tests/test-sxml-differential.sps`'s `write-file` writes through a
+  transcoder with the native eol-style, while `file->string` reads with
+  `eol-style none`. A fixture containing CR would diverge for a harness
+  reason. `tests/test-ast-differential.sps:338-341` writes
+  `(string->utf8 markdown)` to a binary port; use that form.
+- `cli-flags` translates only the extension list, dropping `--hardbreaks`,
+  `--nobreaks`, `--smart`, `--unsafe`, `--validate-utf8`, all of which the
+  sibling builder emits. Harmless now, because the CLI leg varies only
+  extensions — but running it over `option-matrix`, the obvious next step,
+  would report false divergences and blame the adapter. Either translate them
+  or say in the comment that it deliberately does not.
+
+**Stale or wrong comments:**
+
+- `src/cmark/gfm/private/conditions.sls:118` cites `conditions.sls:59-60`;
+  the same commit moved that content to `:62-63`.
+- `tests/test-sxml-differential.sps` says `(cmark gfm)` "loads native code on
+  import alone." It does not — Chez instantiates a library's body only when a
+  binding it *defines* is referenced. The conclusion holds; the reason given
+  does not.
+- `sxml-opts-for`'s comment claims it tells each renderer what the record
+  says; it derives `softbreak` only, not `raw-html` from `unsafe-html?`.
+- `sxml.sls`'s comment says re2c orders the `data:image` rule first; the
+  generated DFA resolves by longest-match-with-backtracking. They coincide
+  here, and the Scheme `cond`'s ordering requirement is real — but it stems
+  from `cond` being first-match.
+- `sxml.sls`'s `ol`/`start` logic lacks the `vendor/cmark-gfm` citation every
+  other requirement in that file carries.
+- `tests/spec-corpus.sls`'s header omits the "not under `src/`, reachable via
+  `CHEZ_LIBDIRS`" note both sibling test-only libraries carry, and its
+  close-fence branch guards on state where the Python does not — inert for all
+  four files, but undocumented.
+
+**One deliberate exception to state, not fix:** `markdown->sxml` silently
+discards `source-positions?`. Unlike the three renderer-only options it
+refuses, positions *do* reach the AST — the adapter simply drops them per
+ADR-0011. That is not a downgraded security policy, only wasted parse work, so
+it stays accepted. But it is currently an unstated exception to the rule the
+guard's own comment states, and the differential quietly depends on it by
+using `default-cmark-options` rather than `default-ast-options`. Say so in the
+comment and in the README.
+
 - [ ] **Step 1: Add the README section**
 
 In `README.org`, after the AST section, add an SXML section covering: the two
