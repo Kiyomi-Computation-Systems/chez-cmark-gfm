@@ -956,6 +956,9 @@ this is its first form.
 (import (rnrs)
         (srfi :64)
         (cmark gfm)
+        ;; Directly, not via (cmark gfm): markdown-ast->sxml is not
+        ;; re-exported from the facade until Task 8.
+        (cmark gfm sxml)
         (sxml-html-serializer))
 
 (define runner (test-runner-simple))
@@ -1714,8 +1717,11 @@ Expected: FAIL at import — `unbound variable markdown->sxml`.
 
 - [ ] **Step 3: Implement it**
 
-In `src/cmark/gfm.sls`, add `(cmark gfm sxml)` to the imports, add
-`markdown->sxml` to the exports next to `markdown->ast`, and add to the body:
+In `src/cmark/gfm.sls`, add `(cmark gfm sxml)` to the imports, add **both**
+`markdown->sxml` and `markdown-ast->sxml` to the exports next to
+`markdown->ast` — design spec §2.2 lists both as public entry points, and
+the adapter is otherwise reachable only by importing `(cmark gfm sxml)`
+directly — and add to the body:
 
 ```scheme
   ;; Lives here rather than in sxml.sls because it parses: putting it there
