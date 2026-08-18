@@ -104,18 +104,26 @@ dependency.
   annotations, no `data-*` metadata, no source positions. List `delimiter`,
   `item` index, fence info past the first token, image child structure, and
   every source position are dropped, and `markdown->ast` remains the interface
-  for all of them. That is also what makes the oracle total — there is no
-  property a byte comparison against cmark's HTML cannot see, so unlike Stage
-  3's oracle this one needs no direct assertions alongside it.
+  for all of them. That is what puts almost everything under the oracle: with
+  no metadata channel, what the tree says about the document is what the HTML
+  shows. Two properties still sit outside it and carry direct assertions
+  instead — `raw-html: escape`, which cmark has no equivalent for, and
+  `attribute-marker`, which the test serializer normalises away because it
+  accepts `^` and `@` alike. See design spec §10.
 - `tagfilter` has no observable effect on SXML. `extensions/tagfilter.c:58`
   registers only an HTML filter function — no postprocess, block, or inline
   handler — so it cannot reach the AST. Asserted rather than documented.
 - Verified by re-serializing the tree through a test-only serializer written
   against `vendor/cmark-gfm/src/html.c` and diffing byte-for-byte against
-  `markdown->html` and the pinned CLI across all 744 examples of cmark's own
-  corpus (`spec.txt` 672, `extensions.txt` 30, `smart_punct.txt` 16,
-  `regression.txt` 26), once per attribute marker. `raw-html: escape` has no
-  cmark equivalent and so carries direct assertions only (design spec §10).
+  `markdown->html`, in-process, across all 744 examples of cmark's own corpus
+  (`spec.txt` 672, `extensions.txt` 30, `smart_punct.txt` 16, `regression.txt`
+  26), once per attribute marker. The second leg — the pinned `cmark-gfm` CLI,
+  the independent witness that the parse itself was configured right — runs the
+  four `tests/fixtures/*.md`, not the corpus; 744 × 2 subprocesses costs about
+  13 s against a suite that otherwise finishes in 0.36 s. Design spec §10
+  records that reduction and what it gives up. `raw-html: escape` and
+  `attribute-marker` sit outside the oracle entirely and carry direct
+  assertions only (design spec §10 again).
 - **Byte-equality with cmark is a property of that serializer, not a promise
   about the caller's pipeline.** A conforming third-party serializer differs
   in inter-block whitespace, `"` in text, `'` in an `href`, childless-element

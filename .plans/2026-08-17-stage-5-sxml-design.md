@@ -430,14 +430,17 @@ Each leg carries a discrimination guard proving its comparator can report a
 difference at all, for the reason Stage 2 §7.3 and ADR-0010 both give: a parity
 assertion whose comparator always returns "equal" passes against anything.
 
-### 6.5 The oracle is total
+### 6.5 What the oracle reaches, and what it does not
 
 Stage 3's oracle had three blind spots — `item` index, table `columns`, and
-body-cell alignment — which needed direct assertions. This one has none.
+body-cell alignment — which needed direct assertions. This one has two, both
+named in §10.
 
-That follows from ADR-0011. Because the tree carries no metadata channel, every
-piece of information in an SXML tree is information the HTML shows; there is no
-property that a byte comparison against cmark's HTML cannot see.
+ADR-0011 gets most of the way there. Because the tree carries no metadata
+channel, every piece of information the tree carries *about the document* is
+information the HTML shows. What that argument does not cover is information the
+tree carries about **itself** — its own spelling — and the attribute marker is
+exactly that.
 
 Of ADR-0010's three blind spots, one genuinely closes: body-cell alignment, which
 the HTML renderer emits (`extensions/table.c:806`) and the XML renderer withheld.
@@ -446,8 +449,17 @@ is not carried into SXML, and table `columns` is never read, since the adapter
 builds cells from the row's children rather than from the count. Both remain
 covered by Stage 3's direct assertions, where they belong.
 
-The one behaviour outside the oracle's reach is `raw-html: escape`, which cmark has
-no equivalent for. It is covered by direct assertions and named in §10.
+Two behaviours are outside the oracle's reach. Both carry direct assertions
+instead, and §10 lists both:
+
+- **`raw-html: escape`**, which cmark has no equivalent for.
+- **`attribute-marker` (ADR-0013)**, which the oracle cannot see *by
+  construction*. `tests/sxml-html-serializer.sls`'s attribute predicate accepts
+  `^` and `@` alike, so the marker is normalised away before any byte is
+  compared. That is what lets one serializer judge both dialects, and the cost
+  is that the corpus cannot distinguish them: a `marker` hardwired to `'^`
+  passes both corpus sweeps, the option matrix, and both CLI legs. Its coverage
+  is `tests/test-sxml.sps`'s three marker assertions.
 
 ### 6.6 What a third-party serializer proves that ours cannot
 
@@ -518,7 +530,11 @@ A consumer of this package should not acquire either.
 
 **`tests/test-sxml-differential.sps`** — the corpus, both legs, per §6.4.
 
-- 744 examples × `omit` × default options, byte-identical, in-process and CLI.
+- 744 examples × `omit` × default options, byte-identical, **in-process**, once
+  per attribute marker (ADR-0013). The CLI leg runs the four
+  `tests/fixtures/*.md` rather than the corpus; §10 records that reduction, its
+  cost reason, and what it gives up. An earlier version of this line required
+  the corpus on both legs, which the suite has never done.
 - Option sweep in the Stage 2 style over the five extensions, `hardbreaks?`,
   `nobreaks?`, and `smart?`.
 - Two no-effect assertions: output byte-identical with `source-positions?` on and
@@ -527,7 +543,12 @@ A consumer of this package should not acquire either.
 
 **`tests/test-sxml-portability.sps`** — `wak-sxml-tools`, per §6.6.
 
-- The tree from each of the four existing fixtures is accepted.
+- A small document carrying a block `*COMMENT*`, two inline `*COMMENT*`s, and
+  two further top-level blocks serializes to an asserted **full expected
+  string**. Not "is accepted": a serializer that does not know a construct
+  renders it wrong rather than rejecting it, so acceptance is satisfied by the
+  mangling it exists to detect. `*COMMENT*` is the default `raw-html` policy's
+  output and `*TOP*` is every tree's root, which is why those two.
 - A `text` node holding `<script>alert(1)</script>` serializes escaped — asserted
   on the absence of an unescaped `<script` substring **and** the presence of the
   escaped form, because absence alone passes against empty output.
@@ -590,6 +611,30 @@ Per `AGENTS.md`: a load-bearing comment is a signal it should not be a comment.
 
 - **`raw-html: escape` has no oracle.** cmark has no equivalent behaviour, so it
   carries direct assertions only. Recorded here rather than left implicit.
+- **`attribute-marker` is outside the oracle, by construction.**
+  `tests/sxml-html-serializer.sls` accepts `^` and `@` alike, which is what lets
+  one serializer judge both of ADR-0013's dialects; the price is that the marker
+  is normalised away before any byte is compared. Measured: with `marker` in
+  `src/cmark/gfm/sxml.sls` hardwired to `'^`, `tests/test-sxml-differential.sps`
+  passes 53/53 — both corpus sweeps, the option matrix, and both CLI legs — and
+  `tests/test-sxml-portability.sps` passes 5/5. Its whole coverage is three
+  assertions in `tests/test-sxml.sps`, which fail by name under that probe.
+  **Do not delete them as redundant with the corpus.** The corpus adds nothing
+  to them. What the second sweep buys instead is that all 744 documents convert
+  under `at` without raising, at 17–20 ms plus four CLI subprocesses.
+- **The CLI leg runs the four `tests/fixtures/*.md`, not the 744-example
+  corpus.** The in-process leg runs the corpus; the independent-witness leg
+  (§6.4) runs the fixtures under default options. The reason is subprocess cost:
+  a full corpus CLI leg was measured at 6.7 s per marker — 13 s for the pair,
+  against a suite that otherwise completes in about 0.36 s — and the `Makefile`
+  already treats a few hundred `cmark-gfm` subprocesses as a cost worth naming,
+  in the `MEMORY_TESTS` comment. What this gives up is the corpus examples' own
+  option-configuration witness: a wrong option bit or missing extension that
+  corrupts the parse feeding both in-process sides is caught on the fixtures,
+  which exercise every extension and every parse-level flag, but not on the
+  corpus's 744 individual documents. That gap was probed rather than assumed —
+  running the corpus through the CLI leg by hand gave 0 divergences under both
+  markers — so it is a cost trade, not a suppressed failure.
 - **`extension` nodes are unit-tested, not reached end to end.** No unknown node
   type is producible through this library's options, exactly as Stage 3 found.
 - **Non-default URL policies are untested because they do not exist.** Deferred

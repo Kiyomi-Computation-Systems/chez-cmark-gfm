@@ -385,8 +385,12 @@ remains the interface for all of it:
 | raw HTML literals (under ~omit~)     | ~markdown->ast~ |
 
 This is ADR-0011, not an oversight. Because the tree carries no metadata
-channel, every piece of information in it is information the HTML shows —
-which is what makes the byte-for-byte oracle below total.
+channel, every piece of information the tree carries /about the document/
+is information the HTML shows — which is what puts almost all of it under
+the byte-for-byte oracle below. Two properties stay outside it and are
+tested directly instead: ~raw-html: escape~, which cmark has no equivalent
+for, and ~attribute-marker~, which the test serializer accepts in both
+spellings and so normalises away before comparing. See design spec §10.
 
 *** URLs
 

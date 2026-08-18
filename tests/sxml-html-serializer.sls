@@ -85,9 +85,14 @@
   ;; emits by default, because it is what wak-sxml-tools and wak-htmlprag
   ;; read; '\x40; is what it emits under 'attribute-marker 'at, the SXML
   ;; specification's own spelling. Accepting either is what lets one
-  ;; serializer judge both dialects, so test-sxml-differential.sps can run
-  ;; its corpus sweep once per marker instead of covering one with the
-  ;; oracle and the other with a handful of assertions.
+  ;; serializer judge both dialects.
+  ;;
+  ;; It also puts the marker OUTSIDE this oracle, and that is deliberate but
+  ;; must not be forgotten: whichever marker the adapter emitted, the same
+  ;; bytes come out of here, so no corpus example can tell the two apart. A
+  ;; `marker` in sxml.sls hardwired to '^ passes test-sxml-differential.sps
+  ;; 53/53. The marker's only real coverage is tests/test-sxml.sps's three
+  ;; marker assertions. See design spec 10 and ADR-0013.
   ;;
   ;; \x40; is R6RS's inline hex escape for '@' -- see the matching comment in
   ;; test-sxml-serializer.sps: Chez's strict #!r6rs reader, which `chez

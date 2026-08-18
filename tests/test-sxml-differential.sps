@@ -54,13 +54,23 @@
                     ((cmark-options-nobreaks? o)   'space)
                     (else                          'newline))))
 
-;; ADR-0013's two dialects. The sweeps below run once per entry, so the
-;; oracle is total for BOTH rather than covering one with 744 examples and
-;; the other with a handful of hand-written assertions. Everything reachable
-;; from an attribute list -- the href policy, the alt flattening, table
-;; alignment, the tasklist input -- is then judged against cmark's own bytes
-;; under either marker, and tests/sxml-html-serializer.sls accepts both so
-;; one serializer serves both legs.
+;; ADR-0013's two dialects. The sweeps below run once per entry.
+;;
+;; Read what that does and does not buy, because an earlier version of this
+;; comment claimed the wrong thing. tests/sxml-html-serializer.sls accepts
+;; '^ and '\x40; alike, which is what lets ONE serializer judge both
+;; dialects -- and it means the marker is normalised away before any byte is
+;; compared. The two sweeps therefore produce identical bytes by
+;; construction, whatever marker the adapter actually emitted: a `marker`
+;; hardwired to '^ passes every assertion in this file, 53/53. The MARKER is
+;; covered by tests/test-sxml.sps's caret-tree / at-tree / (string->symbol
+;; "@") assertions and by nothing else in the repository.
+;;
+;; What the second sweep does prove is narrower and real: all 744 documents
+;; convert under `at` without raising. Everything reachable from an
+;; attribute list -- the href policy, the alt flattening, table alignment,
+;; the tasklist input -- is judged against cmark's own bytes under the first
+;; sweep already. Cost is 17-20 ms.
 (define markers '(caret at))
 
 ;; Every non-sweep assertion in this file uses the default marker, which is
@@ -452,6 +462,16 @@
 ;; a missing extension corrupts the parse feeding both sides -- they would
 ;; agree while both being wrong. The pinned CLI is the independent witness
 ;; that the parse was configured correctly (ADR-0012).
+;;
+;; It runs the four FIXTURES, not the 744-example corpus the in-process leg
+;; runs. That is a deliberate reduction on cost, recorded in design spec 10
+;; alongside what it gives up: one subprocess per example per marker measures
+;; at 6.7 s per sweep, 13 s for the pair, against a suite that otherwise
+;; finishes in about 0.36 s. The fixtures cover every extension and every
+;; parse-level flag, which is what this leg is witnessing; what they do not
+;; cover is the corpus's individual documents. Probed rather than assumed --
+;; running the corpus through this leg by hand gives 0 divergences under both
+;; markers -- so the reduction hides no failure.
 (define cli (or (getenv "CMARK_CLI") "cmark-gfm"))
 (define tmp-dir "tests/tmp/")
 (define in-path  (string-append tmp-dir "sxml-diff-in.md"))

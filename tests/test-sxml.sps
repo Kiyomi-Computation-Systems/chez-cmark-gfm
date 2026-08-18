@@ -399,6 +399,17 @@
 
 ;; ADR-0013: the default is `^`, not the specification's `@`, because both
 ;; serializers reachable through Akku speak `^` and neither recognises `@`.
+;;
+;; THE THREE ASSERTIONS BELOW ARE THE MARKER'S ONLY COVERAGE. Do not delete
+;; them as redundant with the 744-example corpus differential, which is what
+;; ADR-0013 used to imply they were. That differential normalises the marker
+;; away before comparing anything: tests/sxml-html-serializer.sls accepts '^
+;; and '\x40; alike, which is what lets one serializer judge both dialects.
+;; Measured, not argued -- with `marker` in src/cmark/gfm/sxml.sls hardwired
+;; to '^ so it ignores the option outright, tests/test-sxml-differential.sps
+;; passes 53/53 (both corpus sweeps, the option matrix, both CLI legs) and
+;; tests/test-sxml-portability.sps passes 5/5, while this file fails two of
+;; the three by name. Design spec 10 lists it as a deliberate gap.
 (define caret-tree
   '(*TOP*
     (pre (code (^ (class "language-scheme")) "x\n"))
