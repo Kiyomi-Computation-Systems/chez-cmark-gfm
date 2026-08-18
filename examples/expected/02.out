@@ -1,0 +1,16 @@
+supported-extensions: (autolink strikethrough table tagfilter tasklist)
+default extensions:   (autolink strikethrough table tagfilter tasklist)
+tables only:          (table)
+updated smart?:       #t
+original smart?:      #f
+extensions carried:   (table)
+max-input-bytes:      5242880
+max-nodes:            250000
+max-depth:            1000
+validate-utf8?:       #t
+source-positions?:    #f
+hardbreaks?:          #f
+nobreaks?:            #f
+unsafe-html?:         #f
+is an options record: #t
+<p>“quoted” – dashed</p>

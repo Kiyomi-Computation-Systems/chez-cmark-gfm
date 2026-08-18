@@ -1,0 +1,17 @@
+root type:     document
+is a node:     #t
+child count:   2
+properties:    ()
+first child:   heading
+heading level: 1
+source pos?:   #t
+start line:    1
+start column:  1
+end line:      1
+end column:    7
+positions off: #f
+ast defaults:  #t
+node count:    8
+mapped text:   TITLE
+built literal: made
+replaced kids: 1
