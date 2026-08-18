@@ -1569,8 +1569,8 @@ Append to `tests/test-sxml.sps`, before `(test-end "sxml")`:
 ;; cmark would not generate. Reachable only through markdown-ast->sxml on a
 ;; caller-built or caller-transformed AST.
 (test-equal "a header row after the first row is refused"
-  'malformed-table
-  (guard (e ((cmark-invalid-input? e) (cmark-invalid-input-reason e))
+  'header-row-not-first
+  (guard (e ((cmark-malformed-tree? e) (cmark-malformed-tree-reason e))
             (#t 'wrong-condition))
     (->sxml (doc (table (row #t (cell 'none (text "h")))
                         (row #f (cell 'none (text "a")))
@@ -1578,8 +1578,8 @@ Append to `tests/test-sxml.sps`, before `(test-end "sxml")`:
     'no-raise))
 
 (test-equal "two leading header rows are refused"
-  'malformed-table
-  (guard (e ((cmark-invalid-input? e) (cmark-invalid-input-reason e))
+  'header-row-not-first
+  (guard (e ((cmark-malformed-tree? e) (cmark-malformed-tree-reason e))
             (#t 'wrong-condition))
     (->sxml (doc (table (row #t (cell 'none (text "h")))
                         (row #t (cell 'none (text "h2"))))))
@@ -1629,9 +1629,7 @@ Add to `src/cmark/gfm/sxml.sls`, before `node->sxml`:
                 (if (null? body) '() (list (cons 'tbody (reverse body)))))))
         (else
          (let* ((r (car rows))
-                (header? (markdown-node-property r 'header?))
-                (tr (cons 'tr (map (lambda (c) (cell->sxml c header? raw-html))
-                                   (markdown-node-children r)))))
+                (header? (markdown-node-property r 'header?)))
            ;; The parser cannot produce a header row anywhere but first:
            ;; extensions/table.c:402-403 sets is_header exactly once, on the
            ;; row synthesised when the table block opens, and every later row
@@ -1647,10 +1645,15 @@ Add to `src/cmark/gfm/sxml.sls`, before `node->sxml`:
            ;; body output opens a thead while a tbody is still open, which is
            ;; not well-formed HTML.
            (when (and header? (positive? i))
-             (raise (make-cmark-invalid-input 'malformed-table)))
-           (if header?
-               (loop (cdr rows) (+ i 1) (cons tr head) body)
-               (loop (cdr rows) (+ i 1) head (cons tr body))))))))
+             (raise (make-cmark-malformed-tree 'header-row-not-first)))
+           ;; Bound after the guard, not before it: rendering a row we are
+           ;; about to reject wastes the work, and an unsupported node inside
+           ;; that row would raise first and mask the more specific diagnosis.
+           (let ((tr (cons 'tr (map (lambda (c) (cell->sxml c header? raw-html))
+                                    (markdown-node-children r)))))
+             (if header?
+                 (loop (cdr rows) (+ i 1) (cons tr head) body)
+                 (loop (cdr rows) (+ i 1) head (cons tr body)))))))))
 
   (define (cell->sxml c header? raw-html)
     (let ((tag   (if header? 'th 'td))
