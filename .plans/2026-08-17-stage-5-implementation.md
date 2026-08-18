@@ -17,6 +17,11 @@
 - **`0` is truthy in Scheme.** Never use `test-assert` where a value comparison will do.
 - **Never let an assertion's meaning depend on argument evaluation order.** Chez evaluates arguments right-to-left in compiled library code, left-to-right when interpreted.
 - **Read cmark semantics from `vendor/cmark-gfm/`, never from recall.**
+- **`string-map` is R7RS, not R6RS — it is unbound under `(rnrs)`.** So are
+  `string-set!` and mutable strings. Build a transformed string with
+  `(list->string (map … (string->list s)))`, or accumulate through
+  `open-string-output-port`. `string-for-each` *is* R6RS and is fine.
+  Discovered in Task 5.
 - **SXML's `@` attribute marker must be written `\x40;` in source.** Chez's
   `#!r6rs` reader rejects a bare `@` token ("@ symbol syntax is not allowed in
   #!r6rs mode") and also rejects `|@|`, which is not R6RS syntax. R6RS's inline
@@ -1173,11 +1178,12 @@ In `src/cmark/gfm/sxml.sls`, add before `node->sxml`:
   ;; a string's LENGTH, which would misalign the prefix tests below; scheme
   ;; names are ASCII, so this is both correct and total.
   (define (ascii-downcase s)
-    (string-map (lambda (c)
-                  (if (char<=? #\A c #\Z)
-                      (integer->char (+ 32 (char->integer c)))
-                      c))
-                s))
+    (list->string
+     (map (lambda (c)
+            (if (char<=? #\A c #\Z)
+                (integer->char (+ 32 (char->integer c)))
+                c))
+          (string->list s))))
 
   (define (prefix? p s)
     (and (>= (string-length s) (string-length p))
@@ -1912,7 +1918,8 @@ Create `tests/spec-corpus.sls`:
          (string=? p (substring s 0 (string-length p)))))
 
   (define (arrows->tabs s)
-    (string-map (lambda (c) (if (char=? c #\x2192) #\tab c)) s))
+    (list->string
+     (map (lambda (c) (if (char=? c #\x2192) #\tab c)) (string->list s))))
 
   (define (read-lines path)
     (let ((p (open-file-input-port path (file-options)
