@@ -1741,3 +1741,233 @@ and after). Re-ran `tests/test-sxml.sps` and `tests/test-sxml-
 differential.sps` through the ordinary, non-scratch command → 28/28 each,
 exit 0. Also reconfirmed `make check-purity` and `make test` (13 suites,
 `ALL SUITES PASSED`) after this exercise. Scratch copies deleted afterward.
+
+---
+
+## Task 8 — `markdown->sxml`
+
+**Baseline**, at HEAD before this task's edits: `CHEZSCHEMELIBDIRS=src:
+tests:build/scheme-libs chez --program tests/test-options.sps`: 57/57,
+exit 0. `tests/test-sxml-differential.sps`: 28/28, exit 0. `make test`: 13
+suites, all `ALL SUITES PASSED`. `make check-purity`: three "purity holds"
+lines (`tests/test-options.sps` 57, `tests/test-ast.sps` 30,
+`tests/test-sxml.sps` 28).
+
+### Files touched
+- `src/cmark/gfm.sls` — imports `(cmark gfm sxml)`; exports `markdown->sxml`
+  and `markdown-ast->sxml` next to `markdown->ast`; defines `markdown->sxml`
+  as a 1/2/3-argument `case-lambda` defaulting to `default-cmark-options`
+  and `default-sxml-options`, rejecting a non-`cmark-options?` first
+  argument and an `unsafe-html?` value of `#t` before calling
+  `markdown->ast` then `markdown-ast->sxml`.
+- `tests/test-options.sps` — imports `(cmark gfm)`; two new assertions
+  (`markdown->sxml rejects unsafe-html?`, `markdown->sxml accepts an
+  explicit unsafe-html? #f`); header comment rewritten (see deviation 2
+  below).
+- `tests/test-sxml-differential.sps` — two new assertions (`source-
+  positions? does not change the SXML`, `tagfilter does not change the
+  SXML`).
+- `Makefile` — `check-purity`'s suite list drops `tests/test-options.sps`;
+  surrounding comment rewritten (see deviation 2 below).
+
+### Two deviations from the brief's literal text, found and fixed
+
+**Deviation 1 — test placement in `tests/test-options.sps`.** Step 1 says
+to append the two new assertions "before its final `(exit …)`", which
+literally means *after* the existing `(test-end "options")`. Step 5's
+instruction for the sibling file says the opposite — "before `(test-end
+…)`" — and Step 4 expects the printed summary to read `# of expected passes
+59`. These cannot all hold at once, so before trusting either placement a
+scratch probe (`probe-testend.sps`, not part of this repo) checked what
+SRFI-64 actually does with assertions placed after `test-end`:
+
+```
+%%%% Starting test probe
+# of expected passes      1
+FAIL after test-end -- should this pass 2 (intentionally wrong)
+fail-count: 1
+pass-count: 2
+```
+
+`test-end` pops the group stack and fires the `on-final` summary hook
+immediately (`vendor/chez-srfi/%3a64/testing-impl.scm:405-429`); assertions
+placed after it still run and still count toward `test-runner-fail-count`
+(the value `(exit …)` checks — confirmed above: the deliberately-wrong
+assertion after `test-end` produced `fail-count: 1` and exit 1), but they
+are invisible to the summary line printed at `test-end`, which reports only
+the count accumulated up to that point. Placing the two new assertions
+literally where Step 1 says would make `(exit …)` still correct but the
+printed count freeze at 57, never reaching 59 — self-inconsistent with Step
+4's own expectation. Fixed by placing them before `(test-end "options")`
+instead, matching Step 5's phrasing for the sibling file and the placement
+of `test-end` as the last test-registering form in every other suite in
+this repo. The expectation (59 in the summary) was kept; the input
+(placement) was changed, per this file's own precedent for self-inconsistent
+briefs.
+
+**Deviation 2 — `make check-purity`'s suite list.** Step 1's own note says
+"this suite imports `(cmark gfm)` ... so it is not in the purity gate", but
+implementing that (necessary for `markdown->sxml` to be in scope at all) is
+exactly what makes `tests/test-options.sps` fail `make check-purity`'s
+existing loop outright: `(cmark gfm)` transitively imports `(cmark gfm
+private native)`, whose library body loads the shared object unconditionally
+at instantiation (`src/cmark/gfm/private/native.sls:100`, `(define
+shim-loaded (load-shim shim-file))`, a bare top-level definition, not gated
+behind any call) — confirmed by running the unmodified loop after Step 3 and
+watching it crash before a single assertion runs:
+
+```
+=== check-purity: tests/test-options.sps, CHEZ_CMARK_GFM_SHIM poisoned ===
+Exception occurred with condition components:
+  0. &cmark-shim-unavailable: "/nonexistent"
+PURITY VIOLATED: tests/test-options.sps failed with CHEZ_CMARK_GFM_SHIM poisoned
+make: *** [check-purity] Error 1
+```
+
+Step 4 expects "purity still holds for all three pure suites", but the only
+three suites this repo has ever marked `PURE SUITE` (confirmed by `rg -n
+"PURE SUITE" tests/`) are exactly the Makefile's original three-item list —
+`test-options.sps`, `test-ast.sps`, `test-sxml.sps` — so once
+`test-options.sps` is (correctly, per Step 1's own note) no longer one of
+them, only two remain; no fourth pure suite exists to restore the count to
+three, and the brief's file list does not request adding one. Fixed by
+dropping `tests/test-options.sps` from the Makefile's loop and rewriting
+the surrounding comment. `options.sls`'s own purity stays covered without
+it: `tests/test-sxml.sps` also imports `(cmark gfm options)` and remains in
+the loop, so a real regression there still fails `make check-purity`. This
+is recorded here rather than silently reconciled, per this file's own
+Task 1 precedent for a prediction that does not hold exactly as stated.
+
+### TDD
+
+**RED** (Step 2), before Step 3's implementation:
+```
+Exception: attempt to reference unbound identifier markdown->sxml at line 362, char 6 of tests/test-options.sps
+```
+
+**GREEN** (Step 4), after Step 3:
+```
+CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez --program tests/test-options.sps
+%%%% Starting test options
+# of expected passes      59
+```
+Exit 0.
+
+**Step 6**, after Step 5's two assertions:
+```
+CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez --program tests/test-sxml-differential.sps
+%%%% Starting test sxml-differential
+# of expected passes      30
+```
+Exit 0.
+
+Both counts match the brief exactly (59 = 57 + 2; 30 = 28 + 2).
+
+### Step 5's two no-effect assertions, confirmed non-vacuous
+
+Both compare rendered strings specifically so a boolean-comparator bug
+cannot make either pass by accident (Global Constraints). Confirmed each is
+sensitive to the property it guards, not merely structurally incapable of
+failing:
+
+**`source-positions?`.** A scratch probe (`probe-nonvacuous.sps`) parsed
+the Step 5 fixture with the flag on and off and inspected the heading
+node's own `markdown-node-source` directly:
+```
+heading source, positions ON:  #[#{source-position ...} 1 1 1 3]
+heading source, positions OFF: #f
+sxml equal?: #t
+distinct docs equal?: #f
+```
+The AST input to the adapter genuinely differs (`#f` vs. a real
+`source-position` record) — this is not a case of both sides producing
+identical input — yet the SXML output is identical, because `sxml.sls`
+never calls `markdown-node-source` anywhere (confirmed by `rg -n "source"
+src/cmark/gfm/sxml.sls`, whose only hit is a comment). The last line rules
+out a vacuously-#t comparator: two genuinely different documents through
+the same `equal?` produce `#f`.
+
+**`tagfilter`.** `vendor/cmark-gfm/extensions/tagfilter.c:56-59`'s
+`create_tagfilter_extension` calls exactly one setter,
+`cmark_syntax_extension_set_html_filter_func` — no postprocess, block, or
+inline handler, so the extension has no AST-shaping capability at all.
+`rg -n "html_filter_func" vendor/cmark-gfm/src vendor/cmark-gfm/extensions`
+shows its only three non-definition call sites are all in `src/html.c`
+(cmark's own HTML renderer), a code path `markdown->ast`/`markdown-ast->sxml`
+never runs. A scratch probe (`probe-tagfilter2.sps`) confirmed the flag is
+not a global no-op — with `unsafe-html? #t` (required for `html.c:335`'s
+`CMARK_OPT_UNSAFE` gate to consult the filter at all), cmark's own
+`markdown->html` differs with vs. without tagfilter:
+```
+cmark markdown->html WITH tagfilter:    "&lt;title>x&lt;/title>\n<p>para &lt;iframe>y&lt;/iframe> end</p>\n"
+cmark markdown->html WITHOUT tagfilter: "<title>x</title>\n<p>para <iframe>y</iframe> end</p>\n"
+cmark HTML differs with vs without tagfilter: #t
+our SXML equal with vs without tagfilter: #t
+```
+So the underlying feature is real and observable; it is specifically our
+AST-based path that cannot see it, which is exactly what the assertion
+claims.
+
+### Mutation (Step 7)
+
+**Method:** scratch copy outside the repo, mirroring only the one file
+under test (`<scratch>/mutation-task8/cmark/gfm.sls`, this task's method,
+matching Tasks 1-4: `gfm.sls` is a top-level facade no `src/` library
+imports, so shadowing only it via a prepended `CHEZSCHEMELIBDIRS` entry
+cannot desync any other library's version). `md5` of the tracked file
+before the copy was made: `fa9f7bb3004b870df2dbcdde6813b2da`.
+
+**Mutation** (brief Step 7): "Change the `unsafe-html?` guard to test key
+presence rather than value (raise whenever the caller passed the key at
+all)." A built `cmark-options` is a fixed-shape record, not a plist — every
+field, `unsafe-html?` included, is unconditionally present once
+construction has filled in defaults, so "the caller passed this key" has no
+representation left to test on `o` at the point this guard runs. The literal
+reading of "raise whenever the key is present" therefore collapses, on this
+data representation, to "raise unconditionally":
+
+```diff
+-       (when (cmark-options-unsafe-html? o)
++       (when #t
+          (raise (make-cmark-invalid-option 'unsafe-html? 'not-applicable)))
+```
+
+Applied only to `<scratch>/mutation-task8/cmark/gfm.sls`; the tracked
+`src/cmark/gfm.sls` was never edited.
+
+**Run:** `CHEZSCHEMELIBDIRS=<scratch>/mutation-task8:src:tests:build/scheme-libs
+chez --program tests/test-options.sps`
+
+**Result: FAIL, 58/59 — exactly the assertion the brief names, nothing
+wider.**
+```
+%%%% Starting test options
+FAIL markdown->sxml accepts an explicit unsafe-html? #f
+# of expected passes      58
+# of unexpected failures  1
+```
+**"markdown->sxml accepts an explicit unsafe-html? #f"** fails (the guard now
+raises even though the caller passed `#f`) while **"markdown->sxml rejects
+unsafe-html?"** stays green (the guard still raises when the caller passed
+`#t`, which is what that assertion checks) — exactly Step 7's prediction,
+needing no reconciliation.
+
+**Revert.** Confirmed via `git diff --stat src/cmark/gfm.sls` (only this
+task's own legitimate 27-line addition, unchanged before and after the
+exercise) and `md5 src/cmark/gfm.sls` (`fa9f7bb3004b870df2dbcdde6813b2da`,
+identical throughout). Re-ran the ordinary, non-scratch command:
+```
+CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez --program tests/test-options.sps
+# of expected passes      59
+```
+exit 0. Scratch copy deleted afterward.
+
+**Final reconfirmation for the task.** `git status --short` showed only
+this task's four intended files modified (`src/cmark/gfm.sls`,
+`tests/test-options.sps`, `tests/test-sxml-differential.sps`, `Makefile`) —
+never touched by the mutation or any probe. `make test`: 13 suites, all
+`ALL SUITES PASSED`, with `tests/test-options.sps` at 59 and `tests/test-
+sxml-differential.sps` at 30. `make check-purity`: two "purity holds"
+lines (`tests/test-ast.sps` 30, `tests/test-sxml.sps` 28) — see Deviation 2
+above for why the count is two rather than three. `make check-pins`: pins
+agree. All scratch copies and probe scripts deleted afterward.

@@ -1,10 +1,14 @@
 #!r6rs
-;; PURE SUITE. This file must never import a library that loads a shared
-;; object. That is what makes every assertion below unable to pass by
-;; accident because of native behaviour. If you add an import here, check
-;; its transitive imports first.
+;; NOT a pure suite (Task 8): the markdown->sxml block near the end imports
+;; (cmark gfm), and merely importing it loads native code as a side effect
+;; of library instantiation (private/native.sls's top-level `shim-loaded`
+;; definition) -- before any test body runs. `make check-purity` therefore
+;; excludes this file. Every assertion above that block still exercises
+;; only (cmark gfm options)'s pure Scheme values; tests/test-sxml.sps is
+;; the pure witness for the SXML adapter itself.
 (import (rnrs)
         (srfi :64)
+        (cmark gfm)
         (cmark gfm options)
         (cmark gfm private conditions))
 
@@ -345,6 +349,24 @@
             (#t 'wrong-condition))
     (sxml-options-with (default-sxml-options) 'raw-html 'reject)
     'no-raise))
+
+;; --- markdown->sxml rejects unsafe-html? --------------------------------
+;; unsafe-html? is a cmark RENDERER policy. It cannot reach SXML -- the
+;; adapter takes only the AST, which does not carry it -- so accepting it
+;; silently would discard a security option the caller set explicitly.
+(test-equal "markdown->sxml rejects unsafe-html?"
+  '(unsafe-html? not-applicable)
+  (guard (e ((cmark-invalid-option? e)
+             (list (cmark-invalid-option-key e) (cmark-invalid-option-reason e)))
+            (#t 'wrong-condition))
+    (markdown->sxml "# hi\n" (make-cmark-options 'unsafe-html? #t))
+    'no-raise))
+
+;; The check is on the VALUE, not the key's presence: an explicit #f is the
+;; default and must pass.
+(test-equal "markdown->sxml accepts an explicit unsafe-html? #f"
+  '(*TOP* (h1 "hi"))
+  (markdown->sxml "# hi\n" (make-cmark-options 'unsafe-html? #f)))
 
 (test-end "options")
 

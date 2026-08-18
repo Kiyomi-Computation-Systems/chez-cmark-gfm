@@ -28,6 +28,10 @@
 
           ;; AST
           markdown->ast
+          ;; SXML convenience entry point and the pure adapter it wraps --
+          ;; design spec 2.2 lists both as public; without this re-export
+          ;; the adapter is reachable only via (cmark gfm sxml) directly.
+          markdown->sxml markdown-ast->sxml
           make-markdown-node markdown-node?
           markdown-node-type markdown-node-properties
           markdown-node-children markdown-node-source
@@ -73,8 +77,31 @@
           (cmark gfm render)
           (cmark gfm ast)
           (cmark gfm parse)
+          (cmark gfm sxml)
           (cmark gfm private conditions)
           (cmark gfm private native))
+
+  ;; Lives here rather than in sxml.sls because it parses: putting it there
+  ;; would pull (cmark gfm private native) into that library's import chain
+  ;; and forfeit `make check-purity`.
+  ;;
+  ;; Defaults to default-cmark-options, NOT default-ast-options: positions
+  ;; never reach SXML (ADR-0011), so turning CMARK_OPT_SOURCEPOS on would
+  ;; cost a flag in the parse for information the output discards. That is
+  ;; ADR-0009's per-entry-point principle pointing the other way from
+  ;; markdown->ast.
+  (define markdown->sxml
+    (case-lambda
+      ((md) (markdown->sxml md (default-cmark-options) (default-sxml-options)))
+      ((md o) (markdown->sxml md o (default-sxml-options)))
+      ((md o so)
+       (unless (cmark-options? o)
+         (raise (make-cmark-invalid-option #f 'invalid-value)))
+       ;; Checked before anything native is acquired, so a rejected call
+       ;; leaves no resource to clean up.
+       (when (cmark-options-unsafe-html? o)
+         (raise (make-cmark-invalid-option 'unsafe-html? 'not-applicable)))
+       (markdown-ast->sxml (markdown->ast md o) so))))
 
   ;; Deliberately does NOT call ensure-native-loaded!. runtime-version-string
   ;; needs no initialisation: its foreign procedure is bound as soon as

@@ -95,6 +95,25 @@
 (agrees "tables adjacent to blocks agree"
         "para\n\n| a |\n| --- |\n| 1 |\n\npara\n")
 
+;; ADR-0011: positions are not carried, so the flag must not change the
+;; output. Compared against a rendered string, not a boolean: a comparison
+;; that always said "same" would pass here regardless.
+(test-equal "source-positions? does not change the SXML"
+  #t
+  (let ((on  (make-cmark-options 'source-positions? #t))
+        (off (make-cmark-options 'source-positions? #f))
+        (md  "# h\n\n| a |\n| --- |\n| 1 |\n\n- [x] t\n"))
+    (string=? (ours md on) (ours md off))))
+
+;; extensions/tagfilter.c:58 registers only an html_filter_func -- no
+;; postprocess, no block or inline handler -- so it cannot reach the AST.
+(test-equal "tagfilter does not change the SXML"
+  #t
+  (let ((with    (make-cmark-options 'extensions '(tagfilter)))
+        (without (make-cmark-options 'extensions '()))
+        (md      "<title>x</title>\n\npara <iframe>y</iframe> end\n"))
+    (string=? (ours md with) (ours md without))))
+
 (test-end "sxml-differential")
 
 (exit (if (zero? (test-runner-fail-count runner)) 0 1))

@@ -129,9 +129,18 @@ check-pins:
 
 # options.sls and ast.sls must import no library that loads a shared object,
 # directly or transitively (each file's own header comment states this).
-# That purity is what makes every one of test-options.sps's 49 assertions
-# and test-ast.sps's 30 unable to pass by accident because of native
+# That purity is what makes every assertion in tests/test-ast.sps and
+# tests/test-sxml.sps unable to pass by accident because of native
 # behaviour -- they exercise Scheme values only.
+#
+# tests/test-options.sps dropped out of this loop in Stage 5 Task 8: it now
+# imports (cmark gfm) to cover markdown->sxml, so poisoning the shim faults
+# it at library-instantiation time before a single assertion runs, for a
+# reason that has nothing to do with options.sls's own purity (native.sls's
+# top-level shim load runs on import alone, whether or not anything calls
+# markdown->sxml). options.sls stays covered anyway: test-sxml.sps below
+# also imports (cmark gfm options), so a real regression there still fails
+# this loop.
 # Poisoning CHEZ_CMARK_GFM_SHIM with a path that looks absolute but does not
 # exist is a probe: if nothing in the suite's import chain ever reaches
 # (cmark gfm private native), the variable is never even read and the suite
@@ -152,7 +161,7 @@ check-pins:
 # what trips this.
 check-purity: build deps
 	@fail=0; \
-	for t in tests/test-options.sps tests/test-ast.sps tests/test-sxml.sps; do \
+	for t in tests/test-ast.sps tests/test-sxml.sps; do \
 	  echo "=== check-purity: $$t, CHEZ_CMARK_GFM_SHIM poisoned ==="; \
 	  if CHEZ_CMARK_GFM_SHIM=/nonexistent CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) \
 	      $(CHEZ) --program $$t; then \
