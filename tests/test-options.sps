@@ -460,6 +460,23 @@
     (sxml-options-with (default-sxml-options) 'attribute-marker 'at-sign)
     'no-raise))
 
+;; The other two carry-through paths, found uncovered by the Task 12 Step 4
+;; audit. Replacing (lookup a 'softbreak (sxml-options-softbreak o)) or
+;; (lookup a 'attribute-marker (sxml-options-attribute-marker o)) in
+;; sxml-options-with with the constructor's hardcoded default broke NOTHING
+;; in this file: every base record a functional-update test started from held
+;; the default for the field it did not touch, so no assertion could tell
+;; "carried from o" apart from "rebuilt from the default." Only raw-html's
+;; carry-through was pinned, by the assertion above. This base sets both
+;; other fields to non-default values and the update changes neither.
+(test-equal "sxml-options-with carries softbreak and attribute-marker through"
+  '(space at escape)
+  (let* ((base    (make-sxml-options 'softbreak 'space 'attribute-marker 'at))
+         (updated (sxml-options-with base 'raw-html 'escape)))
+    (list (sxml-options-softbreak updated)
+          (sxml-options-attribute-marker updated)
+          (sxml-options-raw-html updated))))
+
 (test-end "options")
 
 (exit (if (zero? (test-runner-fail-count runner)) 0 1))

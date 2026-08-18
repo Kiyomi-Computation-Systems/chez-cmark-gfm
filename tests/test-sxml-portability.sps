@@ -106,9 +106,22 @@
 ;; --- whitespace ---------------------------------------------------------
 ;; A pretty-printing serializer would corrupt pre content. This asserts the
 ;; chosen one does not, which is what lets the README promise it.
+;;
+;; Asserted on the WHOLE rendering, not on a `contains?` probe for
+;; "  indented\n". That earlier form was vacuous, found by mutation in Task
+;; 12 Step 4: with srl:sxml->html turned into an unconditional pretty-printer
+;; (its "pre"/"script"/"style"/"textarea" exemption removed AND its
+;; bare-text-child rule neutered, in a scratch copy of the vendored
+;; upstream/serializer.scm -- neither edit alone is enough), the output
+;; becomes "<pre>\n  <code>\n      indented\n\tтаb\n\n  </code>\n</pre>".
+;; The injected indent is FOUR spaces immediately before the content's own
+;; two, so "  indented\n" is still a substring of the corrupted output and
+;; the probe passed against exactly the corruption it existed to detect.
+;; Equality against the full string cannot: it fails on the injected
+;; newlines and indents anywhere in or around the pre.
 (test-equal "pre content survives with no injected indentation"
-  #t
-  (contains? (render "```\n  indented\n\tтаb\n```\n") "  indented\n"))
+  "<pre><code>  indented\n\tтаb\n</code></pre>"
+  (render "```\n  indented\n\tтаb\n```\n"))
 
 (test-end "sxml-portability")
 
