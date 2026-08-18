@@ -855,3 +855,302 @@ exit 0 both.
 **Final reconfirmation for the task.** `make test`: 13 suites, all `ALL
 SUITES PASSED`. `make check-purity`: three "purity holds" lines. Scratch
 clone and probe script deleted afterward.
+
+---
+
+## Task 6 — lists, list items, and task items
+
+Three mutations, all against `src/cmark/gfm/sxml.sls` (brief Step 7). Same
+rsync-a-full-scratch-clone method as Task 5:
+`<scratch>/mutation-repo/`, the whole tree except `.git` (including the
+already-built `build/scheme-libs`), each suite run from inside that clone
+with `CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs`. The tracked file in
+the real repo is never edited; `diff` against it and `md5
+src/cmark/gfm/sxml.sls` on the real repo confirm this before, during, and
+after every mutation.
+
+**Baseline**, `CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez --program
+tests/test-sxml.sps`: 23/23 passes, exit 0.
+`CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez --program
+tests/test-sxml-differential.sps`: 23/23 passes, exit 0 (22 from the
+brief's Step 5 plus one fixture added ahead of the mutation step — see
+"An unbrief-ed fix" below). `make test`: 13 suites, all `ALL SUITES
+PASSED`. `make check-purity`: three "purity holds" lines. `md5` of the
+tracked file at this baseline: `edf36283223fbfc12c2c7093f93241b3`.
+Reconfirmed identical in the scratch clone before any mutation (`diff
+src/cmark/gfm/sxml.sls <scratch>/mutation-repo/src/cmark/gfm/sxml.sls` →
+no output) and both suites re-run inside the untouched scratch clone as a
+second baseline: 23/23 both.
+
+### An unbrief-ed fix, found and closed before the mutation step
+
+Before mutating anything, a direct probe (`ours`/`theirs`, the same
+comparator the differential uses) was run against a fixture *not* in the
+brief's Step 5 list: `"- > q\n- b\n"` (a blockquote directly inside a tight
+list item). The brief's Step 3, taken completely literally, says "update
+the existing cases to pass `tight?` through unchanged" for every call site
+`node->sxml`/`children->sxml` already had from Tasks 4-5 — including
+`blockquote`. Doing exactly that disagreed with cmark:
+
+```
+OURS:   "<ul>\n<li>\n<blockquote>\nquoted\n</blockquote>\n</li>\n<li>b</li>\n</ul>\n"
+THEIRS: "<ul>\n<li>\n<blockquote>\n<p>quoted</p>\n</blockquote>\n</li>\n<li>b</li>\n</ul>\n"
+```
+
+`vendor/cmark-gfm/src/html.c:288-291` keys tightness on the paragraph's
+**grandparent being the list node itself** (`grandparent->type ==
+CMARK_NODE_LIST`), not on being reachable through one. Once a `blockquote`
+sits between an `item` and a `paragraph`, that paragraph's grandparent is
+the `item`, never a `list`, so cmark always gives it a `<p>` regardless of
+the enclosing list's tightness. Threading the inbound `tight?` through
+`blockquote` unchanged — correct for every *other* container in the
+dispatch, since none of the rest (`emph`, `strong`, `strikethrough`,
+`heading`, `link`) can ever hold a `paragraph` as a descendant — extends
+tightness one hop too far for this one container.
+
+Per the task's own governing rule ("[the differential's] expectation is
+produced by cmark and must never be adjusted to accommodate your code. If
+they disagree, read the governing lines in `vendor/cmark-gfm/` and fix the
+adapter"), the `blockquote` case was changed to force `#f` rather than
+thread `tight?` through:
+
+```diff
+-      ((blockquote) (element 'blockquote n raw-html tight?))
++      ((blockquote) (element 'blockquote n raw-html #f))
+```
+
+Re-running the same probe after the fix: both sides produce
+`"<ul>\n<li>\n<blockquote>\n<p>quoted</p>\n</blockquote>\n</li>\n<li>b</li>\n</ul>\n"`
+— agree. Both suites re-run clean (23/23, 23/23) — no regression to any
+brief-named fixture, including "nested lists agree", which has no
+blockquote in it and was never at risk. A permanent regression fixture,
+`"a blockquote in a tight item keeps its own <p>"` for `"- > q\n- b\n"`,
+was added to `tests/test-sxml-differential.sps` (documented in-file as
+beyond Step 5's exact list) so this cannot silently regress; it is the
+23rd pass in every differential run reported in this task's entry. This is
+not a Step 7 mutation — it is a real, pre-existing gap the brief's literal
+text would have shipped, caught by the same cmark-as-oracle discipline
+Step 7 exists to exercise, closed before Step 7 began so the mutations
+below probe a correct baseline.
+
+### Mutation 1 — tightness propagates from a list to all descendants, not just its own children
+
+**Mutation** (brief Step 7.1): in the scratch clone only, make the `list`
+case forward the *inbound* `tight?` to its own children instead of reading
+its own `tight?` property:
+
+```diff
+       ((list)
+-       (let ((kids (children->sxml n raw-html (prop n 'tight?)))
++       (let ((kids (children->sxml n raw-html tight?))
+             (start (prop n 'start)))
+```
+
+**Run:** both suites, from inside `<scratch>/mutation-repo`.
+
+**Result: FAIL in both suites, substantially WIDER than the two assertions
+the brief names — flagged in advance by the task instructions as the
+mutation "most likely to behave differently than predicted."**
+
+```
+%%%% Starting test sxml
+FAIL a tight list has no p elements, a loose one does
+FAIL tightness does not leak into a nested list
+FAIL task items get a disabled checkbox, checked ones get the attribute
+# of expected passes      20
+# of unexpected failures  3
+```
+
+```
+%%%% Starting test sxml-differential
+FAIL tight lists agree
+FAIL ordered lists agree
+FAIL ol start agrees
+FAIL nested lists agree
+FAIL task lists agree
+FAIL a blockquote in a tight item keeps its own <p>
+# of expected passes      17
+# of unexpected failures  6
+```
+
+The brief names exactly two: **"tightness does not leak into a nested
+list"** and **"nested lists agree."** Both fail, but so do four more
+assertions the brief does not name, and the ones it does name fail for a
+*different* mechanism than their own name suggests. A second, isolating
+probe (`probe-mutation1.sps`, scratch-only) pinned this down directly by
+printing the actual tree, rather than inferring it from which FAIL lines
+appeared:
+
+```
+nested-list fixture, actual tree under the mutation:
+(*TOP* (ul (li (p "a") (ul (li (p "b"))))))
+expected tree:
+(*TOP* (ul (li "a" (ul (li (p "b"))))))
+
+plain top-level tight list (no nesting at all):
+(*TOP* (ul (li (p "x"))))
+expected: (*TOP* (ul (li "x")))
+
+loose outer list containing a nested TIGHT list:
+(*TOP* (ul (li (p "a") (ul (li (p "b"))))))
+expected: (*TOP* (ul (li (p "a") (ul (li "b")))))
+```
+
+The name "tightness does not leak into a nested list" suggests the failure
+mode is over-application: a loose list wrongly inheriting `#t` from a
+tight ancestor. That is not what happens. The mutated `list` case never
+reads `(prop n 'tight?)` at all any more, so the *only* place in the whole
+file that ever turns `tight?` on — anywhere, at any depth — is deleted.
+`markdown-ast->sxml` seeds the walk with `#f`
+(`(node->sxml ast (sxml-options-raw-html o) #f)`), `document` passes it
+through unchanged, and now `list` does too, so every list in the tree,
+top-level or nested, tight or loose by its own declared property, is
+stuck at `tight?` = `#f` forever. The second probe proves this directly:
+a plain, non-nested `bullet #t` list (no nesting anywhere in the
+document) loses its tightness just as completely as the nested-list
+fixture does. The third probe shows the failure runs in the *opposite*
+direction from "leak": a nested list that is genuinely declared tight
+(`bullet #t`) *fails to render tight* when its enclosing list is loose,
+because it now inherits the outer list's incoming `#f` instead of
+consulting its own property — under-tightening, not over-tightening.
+
+The named fixture "tightness does not leak into a nested list" still
+fails, but by coincidence of what its expected value happens to pin (the
+bare `"a"` on the *outer*, non-nested item), not because the nested list
+specifically leaked anything: the outer item's own paragraph loses its
+splice for the same global-collapse reason as the plain top-level case.
+"task items get a disabled checkbox, checked ones get the attribute"
+fails for the identical root cause working through the splice mechanism
+exactly as flagged: its fixture is a tight list, so under the mutation its
+paragraphs stop splicing and `(li input " " "a")` becomes `(li input " "
+(p "a"))`, a mismatch having nothing to do with the checkbox attributes
+themselves. The differential fixtures that fail split the same way: "ol
+start agrees" and "ordered lists agree" have nothing to do with the
+`start` attribute (unaffected by this mutation) and fail purely because
+their lists are tight and stop rendering tight; "a blockquote in a tight
+item keeps its own `<p>`" fails because *its* second item ("b", a bare
+paragraph, not the blockquote) also loses its splice.
+
+**Revert.** Confirmed via `diff` against the tracked file (no output) and
+`md5 src/cmark/gfm/sxml.sls` on the real repo
+(`edf36283223fbfc12c2c7093f93241b3`, unchanged throughout). Re-ran both
+suites through the ordinary, non-scratch command against the real repo →
+23/23 and 23/23, exit 0 both.
+
+### Mutation 2 — `(checked "")` emitted unconditionally
+
+**Mutation** (brief Step 7.2): in a fresh scratch clone, drop the
+`checked?` conditional in the `item` case so every task item's checkbox
+carries `checked=""`:
+
+```diff
+                                            (append
+-                                           (if (prop n 'checked?)
+-                                               '((checked ""))
+-                                               '())
++                                           '((checked ""))
+                                            '((disabled ""))))))
+```
+
+**Run:** both suites, from inside the fresh scratch clone.
+
+**Result: FAIL in both suites — the two assertions the brief names both
+fail, plus one further differential assertion for the identical reason.**
+
+```
+%%%% Starting test sxml
+FAIL task items get a disabled checkbox, checked ones get the attribute
+# of expected passes      22
+# of unexpected failures  1
+```
+
+```
+%%%% Starting test sxml-differential
+FAIL task lists agree
+FAIL loose task lists agree
+# of expected passes      21
+# of unexpected failures  2
+```
+
+**"task items get a disabled checkbox, checked ones get the attribute"**
+and **"task lists agree"** both fail exactly as Step 7.2 predicts. **"loose
+task lists agree"** is not named by the brief, but — as with Task 5's
+"autolinks agree" under its Mutation 1 — it is not a different mechanism:
+its own fixture, `"- [ ] a\n\n- [x] b\n"`, contains an *unchecked* task
+item, and this mutation gives every checkbox `checked=""` regardless of
+which test constructed it. Confirmed directly with a standalone probe
+(`probe-mutation2.sps`, scratch-only) comparing `ours`/`theirs` on that
+exact fixture:
+
+```
+OURS:   "<ul>\n<li><input type=\"checkbox\" checked=\"\" disabled=\"\" /> \n<p>a</p>\n</li>\n<li><input type=\"checkbox\" checked=\"\" disabled=\"\" /> \n<p>b</p>\n</li>\n</ul>\n"
+THEIRS: "<ul>\n<li><input type=\"checkbox\" disabled=\"\" /> \n<p>a</p>\n</li>\n<li><input type=\"checkbox\" checked=\"\" disabled=\"\" /> \n<p>b</p>\n</li>\n</ul>\n"
+```
+
+Item "a" (unchecked) picks up a spurious `checked=""` in `OURS`; item "b"
+(checked) is identical in both — exactly the predicted mechanism, exercised
+by a second fixture. No other assertion in either suite regressed.
+
+**Revert.** Confirmed via `diff` against the tracked file (no output) and
+`md5 src/cmark/gfm/sxml.sls` on the real repo
+(`edf36283223fbfc12c2c7093f93241b3`, unchanged). Re-ran both suites through
+the ordinary, non-scratch command against the real repo → 23/23 and 23/23,
+exit 0 both.
+
+### Mutation 3 — `(\x40; (start "1"))` emitted for every ordered list
+
+**Mutation** (brief Step 7.3): in a fresh scratch clone, drop the `(= 1
+start)` guard in the `list` case so the `start` attribute is always
+written, even when it is 1:
+
+```diff
+         (if (eq? 'ordered (prop n 'kind))
+-            (if (= 1 start)
+-                (cons 'ol kids)
+-                (cons 'ol (cons (list '\x40; (list 'start (number->string start)))
+-                                kids)))
++            (cons 'ol (cons (list '\x40; (list 'start (number->string start)))
++                            kids))
+             (cons 'ul kids))))
+```
+
+**Run:** both suites, from inside the fresh scratch clone.
+
+**Result: FAIL in both suites, exactly the two assertions the brief names,
+nothing wider.**
+
+```
+%%%% Starting test sxml
+FAIL ol start is emitted only when it is not one
+# of expected passes      22
+# of unexpected failures  1
+```
+
+```
+%%%% Starting test sxml-differential
+FAIL ordered lists agree
+# of expected passes      22
+# of unexpected failures  1
+```
+
+Exactly **"ol start is emitted only when it is not one"** and **"ordered
+lists agree"** fail. "ol start agrees" (the differential's other
+ordered-list fixture, `"5. a\n6. b\n"`) stays green, because it already
+starts at 5 and so already took the "write the attribute" branch even
+before the mutation — this mutation is a no-op on it, exactly as expected
+since its own start value was never 1. No other assertion in either suite
+regressed.
+
+**Revert.** Confirmed via `diff` against the tracked file (no output) and
+`md5 src/cmark/gfm/sxml.sls` on the real repo
+(`edf36283223fbfc12c2c7093f93241b3`, unchanged). Re-ran both suites through
+the ordinary, non-scratch command against the real repo → 23/23 and 23/23,
+exit 0 both.
+
+**Final reconfirmation for the task.** `git status --short` on the real
+repo throughout showed only this task's own three intended files modified
+(`src/cmark/gfm/sxml.sls`, `tests/test-sxml.sps`,
+`tests/test-sxml-differential.sps`) — never touched by any mutation or
+probe run. `make test`: 13 suites, all `ALL SUITES PASSED`. `make
+check-purity`: three "purity holds" lines. Scratch clone and probe scripts
+deleted afterward.

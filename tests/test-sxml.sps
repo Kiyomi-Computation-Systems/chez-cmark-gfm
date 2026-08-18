@@ -177,6 +177,55 @@
                      (list (node 'image '((url . "javascript:x") (title . ""))
                                  '()))))))
 
+;; --- lists --------------------------------------------------------------
+(define (li . kids)
+  (node 'item '((index . 1) (task? . #f) (checked? . #f)) kids))
+
+(define (bullet tight? . items)
+  (node 'list (list (cons 'kind 'bullet) (cons 'start 1)
+                    (cons 'tight? tight?) (cons 'delimiter 'none))
+        items))
+
+(define (ordered start tight? . items)
+  (node 'list (list (cons 'kind 'ordered) (cons 'start start)
+                    (cons 'tight? tight?) (cons 'delimiter 'period))
+        items))
+
+(define (para . kids) (node 'paragraph '() kids))
+
+;; html.c:174-183 -- start is written only when it is not 1.
+(test-equal "ol start is emitted only when it is not one"
+  '(*TOP* (ol (li (p "a"))) (ol (\x40; (start "3")) (li (p "a"))))
+  (->sxml (doc (ordered 1 #f (li (para (text "a"))))
+               (ordered 3 #f (li (para (text "a")))))))
+
+;; html.c:287-297 -- a paragraph whose GRANDPARENT list is tight emits no
+;; <p> at all; its children go straight into the <li>. A tight list is not a
+;; list that renders compactly, it is a list with no paragraph elements.
+(test-equal "a tight list has no p elements, a loose one does"
+  '(*TOP* (ul (li "a")) (ul (li (p "a"))))
+  (->sxml (doc (bullet #t (li (para (text "a"))))
+               (bullet #f (li (para (text "a")))))))
+
+;; Tightness comes from the ENCLOSING list only. A loose list nested inside a
+;; tight one keeps its paragraphs.
+(test-equal "tightness does not leak into a nested list"
+  '(*TOP* (ul (li "a" (ul (li (p "b"))))))
+  (->sxml (doc (bullet #t (li (para (text "a"))
+                              (bullet #f (li (para (text "b")))))))))
+
+;; extensions/tasklist.c:124-128. Note the attribute ORDER and that an
+;; unchecked box has no checked attribute at all. The trailing space cmark
+;; writes after "/>" is a text node here.
+(test-equal "task items get a disabled checkbox, checked ones get the attribute"
+  '(*TOP* (ul (li (input (\x40; (type "checkbox") (checked "") (disabled ""))) " " "a")
+              (li (input (\x40; (type "checkbox") (disabled ""))) " " "b")))
+  (->sxml (doc (bullet #t
+                       (node 'item '((index . 1) (task? . #t) (checked? . #t))
+                             (list (para (text "a"))))
+                       (node 'item '((index . 2) (task? . #t) (checked? . #f))
+                             (list (para (text "b"))))))))
+
 (test-end "sxml")
 
 (exit (if (zero? (test-runner-fail-count runner)) 0 1))

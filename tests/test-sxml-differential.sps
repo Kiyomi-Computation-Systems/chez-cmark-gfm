@@ -66,6 +66,25 @@
 (agrees "images agree" "![*a* `b`](/i \"t\") ![](/j)\n")
 (agrees "non-ascii urls agree" "[a](/café/naïve) [b](/a b)\n")
 
+(agrees "tight lists agree"   "- a\n- b\n- c\n")
+(agrees "loose lists agree"   "- a\n\n- b\n\n- c\n")
+(agrees "ordered lists agree" "1. a\n2. b\n\n3) c\n4) d\n")
+(agrees "ol start agrees"     "5. a\n6. b\n")
+(agrees "nested lists agree"  "- a\n  - b\n\n    c\n- d\n")
+(agrees "task lists agree"    "- [ ] a\n- [x] b\n- c\n")
+(agrees "loose task lists agree" "- [ ] a\n\n- [x] b\n")
+
+;; Beyond Task 6's brief: html.c:288-289 keys tightness on the paragraph's
+;; grandparent being the LIST NODE ITSELF, not merely reachable through one.
+;; A blockquote directly inside a tight item breaks that chain -- the
+;; paragraph's grandparent is the item, never a list -- so its <p> must
+;; survive even though the enclosing list is tight. Caught only by running
+;; this fixture through cmark directly (a scratch probe, not this file) and
+;; comparing against a first implementation that threaded tight? through
+;; blockquote unchanged, which spliced the <p> and disagreed with cmark.
+;; Recorded here as a permanent fixture so the fix cannot silently regress.
+(agrees "a blockquote in a tight item keeps its own <p>" "- > q\n- b\n")
+
 (test-end "sxml-differential")
 
 (exit (if (zero? (test-runner-fail-count runner)) 0 1))

@@ -23,11 +23,23 @@
 
   (define (prop n key) (markdown-node-property n key))
 
-  (define (children->sxml n raw-html)
-    (map (lambda (c) (node->sxml c raw-html)) (markdown-node-children n)))
+  ;; tight? is the enclosing LIST's flag (html.c:287-297 reads it off a
+  ;; paragraph's GRANDPARENT), threaded through every call so it can reach a
+  ;; paragraph two levels down. A spliced paragraph (see the `paragraph`
+  ;; case below) returns a `splice` marker instead of a value; this is the
+  ;; one place that must flatten it back into the surrounding child list.
+  (define (children->sxml n raw-html tight?)
+    (let loop ((cs (markdown-node-children n)) (acc '()))
+      (if (null? cs)
+          (reverse acc)
+          (let ((s (node->sxml (car cs) raw-html tight?)))
+            (loop (cdr cs)
+                  (if (and (pair? s) (eq? 'splice (car s)))
+                      (append (reverse (cdr s)) acc)
+                      (cons s acc)))))))
 
-  (define (element tag n raw-html)
-    (cons tag (children->sxml n raw-html)))
+  (define (element tag n raw-html tight?)
+    (cons tag (children->sxml n raw-html tight?)))
 
   ;; The first whitespace-delimited token of the info string, per
   ;; html.c:223-227.
@@ -154,18 +166,36 @@
   (define (maybe-title title)
     (if (string=? "" title) '() (list (list 'title title))))
 
-  (define (node->sxml n raw-html)
+  ;; tight? is #f at every call except the one the `list` and `item` cases
+  ;; make for their own children -- see the comment on children->sxml.
+  (define (node->sxml n raw-html tight?)
     (case (markdown-node-type n)
-      ((document)   (cons '*TOP* (children->sxml n raw-html)))
-      ((paragraph)  (element 'p n raw-html))
-      ((blockquote) (element 'blockquote n raw-html))
-      ((emph)       (element 'em n raw-html))
-      ((strong)     (element 'strong n raw-html))
-      ((strikethrough) (element 'del n raw-html))
+      ((document)   (cons '*TOP* (children->sxml n raw-html tight?)))
+      ((paragraph)
+       ;; html.c:287-297: inside a tight list the paragraph contributes its
+       ;; children directly, with no element of its own. `tight?` is the
+       ;; enclosing LIST's flag, threaded down through the item, because a
+       ;; paragraph cannot see its own grandparent here.
+       (if tight?
+           (cons 'splice (children->sxml n raw-html tight?))
+           (element 'p n raw-html tight?)))
+      ;; NOT `tight?` -- html.c:288-289 requires the paragraph's grandparent
+      ;; to BE the list node itself. Once a blockquote sits between an item
+      ;; and a paragraph, that paragraph's grandparent is the item, never a
+      ;; list, so cmark always gives it a <p>. Confirmed empirically: cmark
+      ;; renders "- > q\n- b\n" (a tight list) as
+      ;; "<blockquote>\n<p>q</p>\n</blockquote>", not
+      ;; "<blockquote>\nq\n</blockquote>". Threading the incoming tight?
+      ;; through unchanged, as every other container in this dispatch does,
+      ;; would splice that paragraph and disagree with cmark.
+      ((blockquote) (element 'blockquote n raw-html #f))
+      ((emph)       (element 'em n raw-html tight?))
+      ((strong)     (element 'strong n raw-html tight?))
+      ((strikethrough) (element 'del n raw-html tight?))
       ((heading)
        (cons (string->symbol
               (string-append "h" (number->string (prop n 'level))))
-             (children->sxml n raw-html)))
+             (children->sxml n raw-html tight?)))
       ((text)       (prop n 'literal))
       ((code)       (list 'code (prop n 'literal)))
       ((code-block) (code-block->sxml n))
@@ -177,12 +207,42 @@
        (cons 'a
              (cons (cons '\x40; (cons (list 'href (safe-url (prop n 'url)))
                                   (maybe-title (prop n 'title))))
-                   (children->sxml n raw-html))))
+                   (children->sxml n raw-html tight?))))
       ((image)
        (list 'img
              (cons '\x40; (cons (list 'src (safe-url (prop n 'url)))
                             (cons (list 'alt (alt-text n))
                                   (maybe-title (prop n 'title)))))))
+      ((list)
+       ;; A list's children never inherit tightness from an outer list --
+       ;; only its OWN tight? property governs the items directly inside
+       ;; it. That is what keeps tightness from leaking into a nested list.
+       (let ((kids (children->sxml n raw-html (prop n 'tight?)))
+             (start (prop n 'start)))
+         (if (eq? 'ordered (prop n 'kind))
+             (if (= 1 start)
+                 (cons 'ol kids)
+                 (cons 'ol (cons (list '\x40; (list 'start (number->string start)))
+                                 kids)))
+             (cons 'ul kids))))
+      ((item)
+       ;; extensions/tasklist.c:124-128: a checked box carries type, checked,
+       ;; disabled in that order; an UNCHECKED box has no checked attribute
+       ;; at all -- emitting checked="" unconditionally is a byte
+       ;; difference, not a harmless default.
+       (let ((kids (children->sxml n raw-html tight?)))
+         (cons 'li
+               (if (prop n 'task?)
+                   (cons (list 'input
+                               (cons '\x40;
+                                     (cons '(type "checkbox")
+                                           (append
+                                            (if (prop n 'checked?)
+                                                '((checked ""))
+                                                '())
+                                            '((disabled ""))))))
+                         (cons " " kids))
+                   kids))))
       ((extension)
        (raise (make-cmark-unsupported-node (prop n 'native-type))))
       (else
@@ -197,4 +257,4 @@
       ((ast o)
        (unless (sxml-options? o)
          (raise (make-cmark-invalid-option #f 'invalid-value)))
-       (node->sxml ast (sxml-options-raw-html o))))))
+       (node->sxml ast (sxml-options-raw-html o) #f)))))
