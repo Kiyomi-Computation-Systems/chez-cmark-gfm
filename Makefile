@@ -84,7 +84,13 @@ SRFI_SRC     := vendor/chez-srfi
 SXMLT_SRC    := vendor/wak-sxml-tools
 COMMON_SRC   := vendor/wak-common
 SRFI_LIBS    := $(BUILD_DIR)/scheme-libs
-CHEZ_LIBDIRS := src:tests:$(SRFI_LIBS)
+# src FIRST, fallback SECOND, and the order is the mechanism: Chez resolves a
+# library from the first entry that has it, so the generated
+# src/cmark/gfm/private/config.sls shadows fallback/'s checked-in sentinel
+# whenever a build has happened. Reversing these two makes every native suite
+# fail with reason 'not-built against a perfectly good build.
+# tests/test-fallback-config.sps asserts the ordering directly.
+CHEZ_LIBDIRS := src:fallback:tests:$(SRFI_LIBS)
 TESTS        := $(wildcard tests/test-*.sps)
 
 # The differential suite spawns ~400 cmark-gfm subprocesses. Those are separate

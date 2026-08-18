@@ -63,6 +63,11 @@
 
   (define (resolve-shim-path default-path override)
     (cond
+      ;; The fallback config's sentinel: shim-path is #f because no build has
+      ;; run, so there is no path to report. Guarded on (not override) so an
+      ;; explicit CHEZ_CMARK_GFM_SHIM still wins in an unbuilt tree.
+      ((and (not override) (not (string? default-path)))
+       (raise (make-cmark-shim-unavailable #f 'not-built)))
       ((not override)
        (if (regular-file? default-path)
            default-path
