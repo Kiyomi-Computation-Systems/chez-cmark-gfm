@@ -981,17 +981,21 @@ this is its first form.
 ;; Returns #f when the two agree, or a pair for the report. Callers wrap it
 ;; in (or … 'agree): SRFI-64 turns a raise in the actual expression into #f,
 ;; so expecting #f here would pass against a crash.
-(define (divergence md o)
-  (let ((a (ours md o)) (b (theirs md o)))
+(define (divergence-between our-md their-md o)
+  (let ((a (ours our-md o)) (b (theirs their-md o)))
     (if (string=? a b) #f (list 'ours a 'theirs b))))
+
+;; The comparator every assertion below runs through. Taking both documents
+;; lets the discrimination guard exercise THIS procedure rather than an
+;; inlined string=?, so a comparator that always reported "equal" is caught.
+(define (divergence md o) (divergence-between md md o))
 
 ;; Proves the comparator can report a difference at all. Without this, a
 ;; comparator that always returned #f would make every assertion below pass
 ;; against anything.
 (test-equal "the comparator can detect a difference"
   #t
-  (let ((a (ours "# hi\n" opts)) (b (theirs "*hi*\n" opts)))
-    (not (string=? a b))))
+  (if (divergence-between "# hi\n" "*hi*\n" opts) #t #f))
 
 (define (agrees name md)
   (test-equal name 'agree (or (divergence md opts) 'agree)))
@@ -2163,9 +2167,13 @@ Add to `tests/test-sxml-differential.sps`, before `(test-end …)`:
   (let ((a (ours md o)) (b (cli-html md o)))
     (if (string=? a b) #f (list 'ours a 'cli b))))
 
+;; Calls cli-divergence itself rather than inlining string=?, so the guard
+;; exercises the comparator's branch polarity and not merely the fact that
+;; two different documents render differently. Task 4's in-process guard has
+;; the same shape and is corrected alongside this one.
 (test-equal "the CLI comparator can detect a difference"
   #t
-  (not (string=? (ours "# hi\n" opts) (cli-html "*hi*\n" opts))))
+  (if (cli-divergence "# hi\n" opts) #t #f))
 
 (test-equal "every fixture agrees against the pinned CLI"
   'agree
