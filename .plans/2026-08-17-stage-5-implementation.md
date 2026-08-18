@@ -151,7 +151,7 @@ In `src/cmark/gfm.sls`, add to the `(export …)` list under the conditions bloc
 CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez --program tests/test-conditions.sps
 ```
 
-Expected: PASS, `# of expected passes 28`.
+Expected: PASS, `# of expected passes 26`.
 
 - [ ] **Step 6: Mutation — watch it fail**
 
