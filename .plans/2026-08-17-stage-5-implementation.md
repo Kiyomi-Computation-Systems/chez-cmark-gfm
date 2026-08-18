@@ -2466,12 +2466,6 @@ git commit -m "test: verify SXML conformance and escaping through wak-sxml-tools
 
 ---
 
-### Task 12: Documentation and release
-
-**Files:**
-- Modify: `README.org`, `CHANGELOG.md`, `AGENTS.md`
-- Verify: `.plans/stage-5-mutation-log.md`
-
 ### Task 11a: the attribute marker becomes an option
 
 Landed after Task 11 revealed that neither available serializer accepts `@`.
@@ -2492,6 +2486,12 @@ See ADR-0013 for the reasoning; this records the shape.
   construction under which §6.6's conformance claim means anything.
 
 ---
+
+### Task 12: Documentation and release
+
+**Files:**
+- Modify: `README.org`, `CHANGELOG.md`, `AGENTS.md`
+- Verify: `.plans/stage-5-mutation-log.md`
 
 - [ ] **Step 0: Cleanup pass**
 
