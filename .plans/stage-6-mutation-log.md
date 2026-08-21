@@ -60,10 +60,16 @@ the free-buffer entry (Task 7) below, both flagged inline.
 | 13 | Build a prod shim (`make prod`), counters frozen at 0 | 7 | `the counters actually move while a document is live` | **FAIL**, exactly that one assertion, exit 1; other three pass vacuously as expected | Task 7 report |
 | 14 | Edit one README matrix version | 8 | the CI matrix check | **FAIL** as specified. A narrower family (empty/prefix/corrupted-suffix version) the brief did not name was found to pass vacuously and was fixed — see below | Task 8 report + fix-pass report |
 | 15 | Add a bogus dependency to `Akku.manifest` | 11a | `test-manifest-deps.sps`'s marker and exact-set assertions | **FAIL**, both named, `"sphinx"` identified | re-run in Task 13; also Task 11 report's fix pass |
+| 16 | `native.sls:305`'s `(if (zero? addr) #f ...)` → `(if #f #f ...)` (dereferences NULL instead of checking for it) | Final review, B1 | `c-string->string maps NULL to #f` | **Before fix: PASSED VACUOUSLY**, 56/56, exit 0 — the assertion's own bare `#f` expected value is also what a swallowed raise produces. **After fix: FAIL**, named, 55/56, exit 1 | this task — transcript below |
+| 17 | `Akku.manifest`: `(depends/dev ...)` → `(depends ...)` (promotes both dev dependencies to hard runtime ones) | Final review, F1 | `no hard runtime dependency is declared` and `the declared dev-dependency set is exactly the current known-good set` | **Before fix: PASSED VACUOUSLY**, 3/3, exit 0 — the sole exact-set assertion compared the UNION of `depends` and `depends/dev`, unchanged by a promotion between them. **After fix: FAIL**, both named, 2/4, exit 1 | this task — transcript below |
 
 All 15 rows in the brief's table are accounted for. Two carry a caveat
 (rows 12 and 14); both are recorded in full below, per AGENTS.md's rule that
 an assertion no mutation can break must be written down, not left silent.
+Rows 16 and 17 are not from the brief's table — they were found during a
+later, separate pre-1.0 whole-branch review and are recorded here in the
+same format because they are the same class of finding: an assertion that
+passes whether the code under test is right or wrong.
 
 ---
 
@@ -1067,6 +1073,164 @@ what would be convenient for it to have shown.
 
 ---
 
+## Final pre-1.0 review — two more empty assertions (rows 16, 17)
+
+A final whole-branch review, independent of Tasks 1-13, found two more
+assertions of exactly the shape this log exists to catch — both already
+covered by AGENTS.md's own documented trap ("SRFI-64 turns any exception in
+a test's actual expression into `#f`") but not yet applied to these two
+sites. Both mutations below used this file's standing convention: the code
+under test copied to a scratch location outside the repo (`native.sls`), or
+run against a scratch copy of the data file it reads by a hard-coded
+relative path (`Akku.manifest`, read via `CHEZSCHEMELIBDIRS` pointed at the
+real suite but invoked from a scratch working directory holding the mutated
+file) — never the tracked file itself. `git status --short` was empty
+before and after each.
+
+### Row 16 — `tests/test-native.sps`, `c-string->string maps NULL to #f`
+
+The assertion's expected value was the bare symbol `#f`. `c-string->string`
+maps a NULL pointer to `#f`; the mutation makes it dereference address 0
+instead of checking for it first (`native.sls:305`, `(if (zero? addr) #f
+...)` → `(if #f #f ...)`).
+
+**Before the fix**, against the ORIGINAL assertion (`(test-equal "c-string->string maps NULL to #f" #f (c-string->string 0))`):
+
+```
+$ CHEZSCHEMELIBDIRS="<scratch>/b1-mutation:src:fallback:tests:build/scheme-libs" \
+    CMARK_CLI=cmark-gfm chez --program tests/test-native.sps; echo "EXIT=$?"
+%%%% Starting test native
+# of expected passes      56
+EXIT=0
+```
+
+56/56, exit 0 — not even a collateral failure, exactly as B1 reported.
+Dereferencing address 0 did not crash the process on this machine (macOS
+10.4.1/ARM64); whatever it raises internally is caught by SRFI-64's
+catch-all guard and turned into `#f`, which matched the assertion's own
+bare `#f` expected value.
+
+**Fixed** to a sentinel the raise path cannot produce:
+
+```scheme
+(test-equal "c-string->string maps NULL to #f"
+  'null
+  (let ((r (c-string->string 0))) (if (eq? r #f) 'null (list 'got r))))
+```
+
+**After the fix**, normal run (real `native.sls`, unmutated):
+
+```
+$ CHEZSCHEMELIBDIRS=src:fallback:tests:build/scheme-libs CMARK_CLI=cmark-gfm chez --program tests/test-native.sps
+%%%% Starting test native
+# of expected passes      56
+EXIT=0
+```
+
+**After the fix**, against the SAME mutated `native.sls`:
+
+```
+$ CHEZSCHEMELIBDIRS="<scratch>/b1-mutation:src:fallback:tests:build/scheme-libs" \
+    CMARK_CLI=cmark-gfm chez --program tests/test-native.sps; echo "EXIT=$?"
+%%%% Starting test native
+FAIL c-string->string maps NULL to #f
+# of expected passes      55
+# of unexpected failures  1
+EXIT=1
+```
+
+Fails by name, through the exact asserted property (NULL detection), with
+no collateral. **Covered.**
+
+While fixing this, the rest of `tests/test-native.sps` was checked for any
+other assertion whose expected value is bare `#f` or bare truthiness. One
+more was found: `"all flags off is the default mask, and differs from all
+flags on"` (originally `(test-equal "..." #f (= (option-bits ...)
+(option-bits ...)))`) — a raise from either `option-bits` call would be
+swallowed to `#f` by the same mechanism and satisfy the same bare-`#f`
+expected value. Fixed the same way, with a `'differ`/`'same` sentinel pair
+rather than a bare boolean. (One further candidate was considered and left
+alone: `"tasklist-checked returns exactly 1 or 0, never a stray bit
+pattern"` expects bare `#t`, not `#f` — a swallowed raise produces `#f`,
+which mismatches `#t` and correctly fails the assertion, so this one is not
+an instance of the trap.) No dedicated watched-mutation run was performed
+for the second (`option-bits`) fix — it was corrected by inspection, using
+the identical reasoning just demonstrated on row 16 — and that is recorded
+here rather than left silent, per AGENTS.md.
+
+### Row 17 — `tests/test-manifest-deps.sps`, the exact-dependency-set assertion
+
+The suite's sole exact-set assertion compared `(list-sort string<?
+all-deps)` — the UNION of `(dep-names 'depends)` and `(dep-names
+'depends/dev)` — against `'("chez-srfi" "wak-sxml-tools")`. Promoting both
+declared dependencies from `depends/dev` to `depends` in `Akku.manifest`
+leaves that union unchanged.
+
+**Before the fix**, against the ORIGINAL assertion, from a scratch working
+directory holding a copy of `Akku.manifest` with `(depends/dev ...)`
+rewritten to `(depends ...)`:
+
+```
+$ cat Akku.manifest
+...
+  (depends ("chez-srfi" "^0.0.0-akku.181.7879b52")
+               ("wak-sxml-tools" "^0.0.0-akku.1.5c14730")))
+
+$ CHEZSCHEMELIBDIRS=<repo>/src:<repo>/fallback:<repo>/tests:<repo>/build/scheme-libs \
+    chez --program <repo>/tests/test-manifest-deps.sps; echo "EXIT=$?"
+%%%% Starting test manifest-deps
+# of expected passes      3
+EXIT=0
+```
+
+3/3, exit 0 — both of today's dev dependencies promoted to hard runtime
+dependencies, and nothing notices, exactly as F1 reported.
+
+**Fixed** by checking `depends` and `depends/dev` independently rather than
+their union:
+
+```scheme
+(test-equal "no hard runtime dependency is declared"
+  '()
+  (dep-names 'depends))
+
+(test-equal "the declared dev-dependency set is exactly the current known-good set"
+  '("chez-srfi" "wak-sxml-tools")
+  (list-sort string<? (dep-names 'depends/dev)))
+```
+
+**After the fix**, normal run (real `Akku.manifest`, unmutated):
+
+```
+$ CHEZSCHEMELIBDIRS=src:fallback:tests:build/scheme-libs chez --program tests/test-manifest-deps.sps
+%%%% Starting test manifest-deps
+# of expected passes      4
+EXIT=0
+```
+
+**After the fix**, against the SAME mutated `Akku.manifest`:
+
+```
+$ CHEZSCHEMELIBDIRS=<repo>/src:<repo>/fallback:<repo>/tests:<repo>/build/scheme-libs \
+    chez --program <repo>/tests/test-manifest-deps.sps; echo "EXIT=$?"
+%%%% Starting test manifest-deps
+FAIL no hard runtime dependency is declared
+FAIL the declared dev-dependency set is exactly the current known-good set
+# of expected passes      2
+# of unexpected failures  2
+EXIT=1
+```
+
+Both fail by name, through the exact asserted property (a dependency's
+declared class), with no unrelated collateral — the marker-check and seed
+assertions, unaffected by this mutation, stayed green. **Covered.**
+
+`git status --short` and `git diff --stat` were confirmed empty for both
+`native.sls` and `Akku.manifest` throughout; only the scratch copies were
+ever mutated.
+
+---
+
 ## Final confirmation
 
 Every mutation re-run in this task lived only in a scratch directory
@@ -1089,3 +1253,37 @@ $ echo $?
 
 No mutation was left in the tree while another was in progress. This file
 is the only change this task makes to the repository.
+
+---
+
+## Final confirmation (final pre-1.0 review pass)
+
+Rows 16 and 17 above, plus the false-comment and documentation fixes from
+the same review, are a later, separate pass over this branch, after Task
+13. All five covering checks were run fresh against the finished tree; real
+output below.
+
+```
+$ make test
+... 18 suites, ALL SUITES PASSED ...
+$ echo $?
+0
+
+$ make examples
+... 6 examples, ALL EXAMPLES PASSED ...
+
+$ make check-purity
+... 5 pure suites, purity holds for every one ...
+
+$ make check-config
+check-config: fallback and generated config agree
+
+$ make test-memory
+... 17 memory-eligible suites (test-differential.sps excluded by design), no FAIL lines ...
+$ echo $?
+0
+```
+
+All green. Nothing was left uncommitted or half-fixed; see
+`.superpowers/sdd/final-fix-report.md` for the full per-finding breakdown
+and commit SHAs.
