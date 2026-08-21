@@ -354,12 +354,23 @@ examples` — all green, 17 suites, `ALL SUITES PASSED`, `ALL EXAMPLES PASSED`.
 against this code; where a criterion's strongest evidence is a CI job rather than a
 local command, that is stated rather than credited as if it had run.
 
-Four criteria are not a clean `MET`: **4** and **7** (the "freed" half of each
+**Corrected 2026-08-21, a later pass, after `deab488`, `12fab60`, and `9cfd667`
+landed.** Row 15 was `PARTLY MET` at the original audit because nothing ran
+`Akku.manifest`'s dependency set through a check; `deab488` closed exactly that gap
+(this is the same fact `CHANGELOG.md`'s 1.0.0 entry already states), and row 15 is now
+`MET` with `tests/test-manifest-deps.sps` as its evidence. Row 13's suite count is
+corrected from 16 to 17 memory-eligible suites — the real count against the current
+tree, since `deab488` added an eighteenth `tests/test-*.sps` file after the original
+16-of-17 count was taken. §9's citation for "an unbuilt tree names its own remedy" is
+corrected from `test-shim-loading.sps`, which contains no `not-built` or fallback
+coverage, to the suites that actually provide it.
+
+Three criteria are not a clean `MET`: **4** and **7** (the "freed" half of each
 rests on the same counter evidence and the same unexecuted Linux Valgrind run as
-criterion 13 — originally left unqualified here, corrected in this fix pass),
-**13** (the leak-checking half is real but CI-gated and unexercised on this
-branch), and **15** (true today, but nothing would notice it stop being true). All
-four are detailed in the notes after the table.
+criterion 13 — originally left unqualified here, corrected in this fix pass), and
+**13** (the leak-checking half is real but CI-gated and unexercised on this branch).
+All three are detailed in the notes after the table. **15**, corrected above, is no
+longer among them.
 
 | # | Criterion (plan §16) | Evidence | Status |
 |---|---|---|---|
@@ -375,9 +386,9 @@ four are detailed in the notes after the table.
 | 10 | CommonMark and GFM node types represented and tested | `test-convert.sps:218-225` (all 18 reachable CommonMark type strings present); `:378-386` (all 6 reachable GFM extension type strings present); `:384` (exactly 24 total — no extra, no missing, not just "some covered"); `test-ast-differential.sps:293-296,316,364-421` (independent XML-oracle cross-check of types, attributes, and properties, in-process and against the pinned CLI, across curated core/gfm/smart/hostile fixtures, 25-level nesting, and the four escaped characters) | MET |
 | 11 | SXML escapes or rejects raw HTML; validates URLs | `test-options.sps:295-296` (default `raw-html` is `'omit`, the only two valid values being `'omit`/`'escape` — never passthrough); `test-sxml.sps:110-115` (default: both block and inline raw HTML become a comment); `:187-197` (four dangerous schemes, case-insensitive, all four fixtures asserted, not just one); `:199-210` (`data:` rejected except exactly the four allowed image subtypes, all four asserted); `:221-226` (all-unsafe-byte URL fully percent-encoded); `:248-256` (image `src` takes the same policy as link `href`) | MET |
 | 12 | Version incompatibility fails clearly | `src/cmark/gfm/private/native.sls:267-279` (the real, wired-in check: `ensure-native-loaded!` raises `make-cmark-version-incompatible` when `version-compatible?` fails); `test-native.sps:143-169` (the pure predicate, at both range boundaries, both arguments independently — this file's own comment explains why the raise site itself has no integration test: it runs against the real, always-compatible library, so only synthetic values can exercise the boundary); `test-conditions.sps:17-34` (the condition is a `cmark-error?`, carries `compiled` and `runtime`, distinguishable from `dead-document`) | MET |
-| 13 | Native tests pass under ASan and a leak checker | ASan: run today, `make test-memory`, macOS, exit 0, all 16 memory-eligible suites (`test-differential.sps` excluded by design — see Makefile:129) — real output in this task's report. Leak checking: **only Linux Valgrind can support that claim (ADR-0003)**, and that job (`.github/workflows/ci.yml`, `linux`) has never run against this branch — no upstream configured, never pushed. The mechanism is real and well-formed (read directly, not assumed), but is CI evidence not yet produced for this code | MET, locally, for ASan only — the leak-checking half is unverified on this branch pending a CI run |
+| 13 | Native tests pass under ASan and a leak checker | ASan: run today, `make test-memory`, macOS, exit 0, all 17 memory-eligible suites (`test-differential.sps` excluded by design — see Makefile:129; the count is 17, not 16, because `deab488` added `tests/test-manifest-deps.sps` as an eighteenth `tests/test-*.sps` file after the original count was taken) — real output in this task's report. Leak checking: **only Linux Valgrind can support that claim (ADR-0003)**, and that job (`.github/workflows/ci.yml`, `linux`) has never run against this branch — no upstream configured, never pushed. The mechanism is real and well-formed (read directly, not assumed), but is CI evidence not yet produced for this code | MET, locally, for ASan only — the leak-checking half is unverified on this branch pending a CI run |
 | 14 | Chez, platform, cmark versions documented | `README.org:28-46` (the matrix); `.github/workflows/ci.yml` "Check the README matrix names the Chez this job ran" (both `linux` and `macos` jobs) anchors on the exact table cell text and fails the build on drift — checked character-for-character against the current table, not merely present. Confirmed on this machine: `chez --version` → `10.4.1`, matching the macOS row exactly | MET (Task 8) |
-| 15 | No dependency on a documentation-site framework | True today, checked by direct inspection: `Akku.manifest` declares zero runtime `depends` and exactly two `depends/dev` (`chez-srfi`, `wak-sxml-tools`), neither a documentation tool; no `docs/` directory or site-generator config (`mkdocs.yml`, `conf.py`, `package.json`, etc.) exists anywhere in the repository. **No runnable check protects this.** `make check-purity` (the design spec's own suggested evidence) tests something else entirely — that specific pure suites import no *native/FFI* code — and does not read `Akku.manifest` or notice a new dependency of any kind. Nothing would fail if one were added tomorrow | PARTLY MET — true, but by inspection only; see notes |
+| 15 | No dependency on a documentation-site framework | `tests/test-manifest-deps.sps` reads `Akku.manifest` as data and asserts, independently: (1) no declared dependency of either class names a documentation-site tool; (2) `depends` (hard runtime dependencies) is exactly empty; (3) `depends/dev` is exactly `("chez-srfi" "wak-sxml-tools")`. Checking (2) against `depends` alone, not against the union of `depends` and `depends/dev`, is what makes it non-vacuous — a dependency promoted from dev to runtime leaves the union unchanged but still fails (2). Added in `deab488`; runs under both `make test` and `make check-purity` (`Makefile`, `check-purity` target), alongside `test-example-coverage.sps`, `test-options.sps`, `test-ast.sps`, and `test-sxml.sps` | MET |
 
 ### Notes
 
@@ -407,14 +418,15 @@ verify, not what it expects. Resolved by pushing the branch and letting CI run, 
 by anything this task can do locally on macOS/ARM64, which cannot run Valgrind at
 all and cannot detect leaks even with ASan (ADR-0003).
 
-**Criterion 15.** This is a genuine audit finding, not a rounding-down of something
-close enough: the property is real but sits on prose and repository-layout
-inspection alone. Per AGENTS.md ("prefer a check to a comment"), Task 11a has been
-added to the Stage 6 implementation plan to give it one — a small check reading
+**Criterion 15.** This was a genuine audit finding at the time, not a rounding-down of
+something close enough: the property was real but sat on prose and repository-layout
+inspection alone. Per AGENTS.md ("prefer a check to a comment"), Task 11a was added to
+the Stage 6 implementation plan to give it one — a small check reading
 `Akku.manifest` as data and asserting its dependency set is exactly the expected
 one, with a mutation (add a bogus dependency, confirm the check names it, revert).
-Writing that check is construction, not audit, so it is scoped as a task rather than
-done inline here.
+Writing that check was construction, not audit, so it was scoped as a task rather than
+done inline here. **Closed by Task 11a (commit `deab488`, `tests/test-manifest-deps.sps`)**;
+row 15 above is corrected to `MET` accordingly, per the note after the audit stamp.
 
 **On "MET" as used throughout.** A row is `MET` only where this audit opened the
 cited assertion, confirmed what it actually compares (a real value or sentinel, not
@@ -439,7 +451,7 @@ Per AGENTS.md, each rule this stage introduces is executable:
 | Examples need no dev dependency | `make examples` sets `CHEZSCHEMELIBDIRS=src:fallback` only |
 | The documented support matrix matches what CI ran | CI matrix step |
 | The documented install sequence works from nothing | `clean-install` job |
-| An unbuilt tree names its own remedy | `clean-install` step 3; `test-shim-loading.sps` |
+| An unbuilt tree names its own remedy | `clean-install` step 3; `tests/test-fallback-config.sps`; `tests/test-native.sps:227-229` |
 | The prerequisite list cannot drift from the job | one copy — `packaging/debian-prereqs.txt` |
 | Nothing accumulates across repeated renders | `tests/test-stress.sps` |
 
