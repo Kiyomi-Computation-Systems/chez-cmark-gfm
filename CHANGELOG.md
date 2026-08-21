@@ -86,16 +86,25 @@ behavior changed: 1.0 freezes the API. The one public-API change is additive.
 
 ### Verification status
 
-- **Leak-checking has not run against this release.** Plan §16 names "native
-  tests pass under AddressSanitizer *and* a leak checker" as a v1 acceptance
-  criterion, and only half of that is satisfied here. ASan re-ran clean against
-  this branch, but on macOS/ARM64 it runs with leak detection disabled, because
-  LeakSanitizer does not exist there (ADR-0003). The Linux Valgrind job is this
-  project's sole source of leak-freedom evidence, and it has not yet run against
-  this branch. The mechanism is in place and unchanged; the evidence for *this*
-  code is not yet produced. Recorded rather than glossed: the acceptance audit
-  in the Stage 6 design spec §8 marks criteria 4, 7, and 13 with this same
-  caveat.
+- **Leak-checking has now run against this release, and is clean.** Plan §16
+  names "native tests pass under AddressSanitizer *and* a leak checker" as a v1
+  acceptance criterion. Both halves are satisfied. On Linux/x86-64, all 17
+  memory-eligible suites ran under Valgrind (`--leak-check=full
+  --show-leak-kinds=definite --error-exitcode=9`): **`definitely lost: 0 bytes
+  in 0 blocks`** in every suite reporting a leak summary, "all heap blocks were
+  freed" in the rest, and `ERROR SUMMARY: 0 errors` in all 17. The residual
+  `still reachable: 6,019 bytes in 31 blocks` is identical in every suite and is
+  Chez's own runtime allocation, not this binding's. On macOS/ARM64 ASan ran
+  clean with leak detection disabled, because LeakSanitizer does not exist there
+  (ADR-0003) — which is why the Linux run, and only the Linux run, is what
+  supports this claim.
+- **This release is the first whose CI has actually executed.** The branch
+  carrying it was pushed before merge specifically so the evidence above would
+  exist rather than being assumed, and the first run failed all three jobs: CI
+  had come to depend on `ripgrep`, which GitHub-hosted runners do not install.
+  A silently-empty package list, two matrix checks that could not distinguish a
+  missing tool from a real mismatch, and a container-ownership refusal were all
+  found that way and fixed before merge.
 
 ### Fixed
 
