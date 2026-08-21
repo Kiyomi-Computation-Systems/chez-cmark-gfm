@@ -3,6 +3,106 @@
 All notable changes to this project are documented here. This project follows
 [Semantic Versioning](https://semver.org).
 
+## [1.0.0] — 2026-08-18
+
+Packaging, documentation, and release. No parsing, rendering, or mapping
+behavior changed: 1.0 freezes the API. The one public-API change is additive.
+
+### Added
+
+- **`examples/`** — six runnable programs covering rendering, options, the
+  AST, SXML, the condition family, and capability inspection. `make examples`
+  runs each and diffs its output. It sets `CHEZSCHEMELIBDIRS=src:fallback` and
+  nothing else, so an example that reached a dev dependency breaks the build —
+  which is what keeps 0.3.0's "a consumer acquires neither" true rather than
+  merely written down.
+- **`tests/test-example-coverage.sps`** — fails when `(cmark gfm)` gains an
+  export that appears in no example. It reads the export list and each
+  example as *datums*, not text, so an identifier mentioned only in a comment
+  does not count. Exemptions carry a reason each and are themselves checked
+  for staleness and typos; today they cover eleven condition type names,
+  which are not first-class values, and eleven predicates and accessors on
+  conditions an example cannot trigger through the public API — most
+  genuinely unreachable, three (`cmark-shim-unavailable?` and its two
+  accessors) reachable only at import time, before an example's own code
+  runs. `cmark-unsupported-node?`/`cmark-unsupported-node-type` carry no
+  exemption: an earlier version of the list exempted them on the reasoning
+  that the adapter covers every node type the real parser emits, which
+  argues from the parser's side — `markdown-ast->sxml` is public and accepts
+  an arbitrary caller-built tree, and `make-markdown-node` validates
+  nothing, so the condition is reachable through public procedures alone.
+  `examples/05-errors.sps` demonstrates it directly, handing the adapter an
+  `extension` node that names a native type cmark-gfm never registered.
+- **`tests/test-manifest-deps.sps`** — reads `Akku.manifest` as data, the
+  same technique `test-example-coverage.sps` uses on `gfm.sls`, and asserts
+  that no declared dependency's name matches a documentation-site-tool
+  marker and that the declared dependency set is exactly today's known-good
+  one. Plan §16, criterion 15 (no dependency on a documentation-site
+  framework) was true only by inspection before this suite existed.
+  `make check-purity` now gates five pure suites, up from three: this one
+  and `test-example-coverage.sps` join `test-options.sps`, `test-ast.sps`,
+  and `test-sxml.sps`.
+- **`tests/test-stress.sps`** — asserts the live parser, root, and buffer
+  counts return to zero after *every* iteration of a repeated
+  parse/render/AST/SXML loop. Every counter assertion before this was
+  single-shot, so a per-call leak of one buffer satisfied all of them.
+  `CMARK_STRESS_ITERATIONS` tunes the count; the memory targets drop it to 2.
+- **`fallback/cmark/gfm/private/config.sls`** — a checked-in configuration,
+  shadowed by the generated one whenever a build has happened. See below.
+- **`NOTICE`** — the binding's own BSD-3-Clause notice, plus all seven
+  license blocks bundled in `vendor/cmark-gfm/COPYING`, reproduced in full:
+  cmark-gfm's core and its `test/` suite (BSD-2-Clause, both John
+  MacFarlane); the `houdini`-, `buffer`/`chunk`-, and `utf8proc`-derived code
+  (three separate MIT grants); `normalize.py` (MIT, Karl Dubost); and the
+  CommonMark spec text itself (CC-BY-SA 4.0). Plan §14 requires license
+  notices for the binding and its native dependency; this repository had
+  neither before.
+- **A clean-machine CI job** in a bare `ubuntu:24.04` container that runs only
+  the steps the README documents. It never runs `make deps`.
+- **`make check-config`** and **`make examples`**.
+
+### Changed
+
+- **`&cmark-shim-unavailable` carries a `reason`**: `not-built`, `missing`,
+  `invalid-override`, or `load-failed`. Four distinct failures previously
+  shared one field, so a caller could not tell a missing build from a bad
+  `CHEZ_CMARK_GFM_SHIM`. Additive for existing `guard` clauses. Mirrors
+  `&cmark-invalid-option`'s `key` + `reason` pair.
+- **An unbuilt tree now names its own remedy.** It used to fail with
+  `library (cmark gfm private config) not found`, which names no cause and is
+  not a condition; it now raises `&cmark-shim-unavailable` with reason
+  `not-built`. The fallback's `shim-path` is `#f` rather than a plausible fake
+  path, because no build can produce a non-string there — which is what keeps
+  "never built" distinguishable from "shim deleted since". See ADR-0014.
+- **`CHEZSCHEMELIBDIRS` is now `src:fallback`.** The order is the mechanism:
+  Chez resolves a library from the first entry that has it.
+- **The documented Chez floor is 9.5.8, not 10.4.1.** The old claim recorded
+  one developer's machine and was never tested; 9.5.8 is what Ubuntu CI runs
+  green under Valgrind. A CI step now asserts the README matrix against the
+  version each job actually ran, so a runner-image bump fails the build rather
+  than letting the claim go stale.
+
+### Fixed
+
+- **Four empty assertions in `tests/test-native.sps`.** Each expected exactly
+  the path `resolve-shim-path` *returns on success*, so all four passed against
+  code with every rejection deleted — verified: 54 of 54, exit 0. They now
+  assert `(path reason)`, a shape no success path here produces, and each
+  `guard` body ends in `'no-condition`.
+
+### Documentation
+
+- The supported platform/Chez/cmark matrix, the memory-ownership contract, and
+  the static-versus-dynamic linking behavior (static linking is *impossible*
+  here, not merely unchosen — cmark's static archives hide every symbol that
+  ADR-0002 requires Scheme to resolve at runtime). All three are Plan §14
+  requirements the README had never met.
+- Prerequisites live in `packaging/debian-prereqs.txt` in exactly one copy,
+  which the README points at and CI installs from.
+- Akku is documented as *not yet* a supported install path, with what an
+  unbuilt tree does instead. README additions are deliberately terse; in-depth
+  documentation is deferred to a `docs/` tree.
+
 ## [0.3.0] — 2026-08-18
 
 The SXML adapter. `markdown->sxml` and `markdown-ast->sxml` turn Markdown into
