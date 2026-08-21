@@ -38,7 +38,16 @@
 ;; NULL must be distinguishable from the empty string. Several cmark
 ;; accessors return NULL for nodes of an incompatible type, and conflating
 ;; that with "" would silently invent data.
-(test-equal "c-string->string maps NULL to #f" #f (c-string->string 0))
+;;
+;; Expected value is the sentinel 'null, not bare #f: SRFI-64 turns any
+;; exception in a test's actual expression into #f
+;; (vendor/chez-srfi/%3a64/testing-impl.scm:568-571), so an assertion
+;; expecting #f directly would still "pass" if (c-string->string 0) raised
+;; instead of returning #f -- e.g. if it dereferenced address 0 instead of
+;; checking for it. 'null is a value only the real success path produces.
+(test-equal "c-string->string maps NULL to #f"
+  'null
+  (let ((r (c-string->string 0))) (if (eq? r #f) 'null (list 'got r))))
 
 ;; The other direction of the same distinction: a real, non-NULL buffer
 ;; whose first byte already terminates the string must decode to "", never
@@ -294,10 +303,16 @@
   (not (= (option-bits #t #f #f #f #f #f)
           (option-bits #f #f #f #f #f #f))))
 
+;; Expected value is the sentinel 'differ, not bare #f, for the same reason
+;; documented above the NULL-mapping assertion: bare #f is also what a
+;; swallowed exception from either option-bits call would produce, which
+;; would make this assertion pass whether or not the two masks actually
+;; differ.
 (test-equal "all flags off is the default mask, and differs from all flags on"
-  #f
-  (= (option-bits #f #f #f #f #f #f)
-     (option-bits #t #t #t #f #t #t)))
+  'differ
+  (let ((a (option-bits #f #f #f #f #f #f))
+        (b (option-bits #t #t #t #f #t #t)))
+    (if (= a b) 'same 'differ)))
 
 ;; --- Stage 3: node accessors -------------------------------------------
 ;; Driven through call-with-native-document rather than a bare parser so the
