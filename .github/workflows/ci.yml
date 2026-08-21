@@ -214,3 +214,72 @@ jobs:
       # read a green result here as "no leaks" -- that is the Linux job's job.
       - name: Memory (ASan, no leak detection)
         run: make test-memory
+
+  clean-install:
+    name: clean machine (documented steps only)
+    runs-on: ubuntu-latest
+    # A bare container, NOT the runner image. ubuntu-latest arrives with a
+    # toolchain, git, and build tools already present, so building there
+    # proves nothing about a clean machine -- which is exactly what
+    # milestone 6's exit criterion is about. This job runs only what the
+    # README tells a reader to run.
+    container: ubuntu:24.04
+    steps:
+      # A bare container has no git, so checkout cannot run yet. This is the
+      # only thing installed that the README does not list, and it is needed
+      # to obtain the repository at all rather than to build it.
+      - name: Bootstrap enough to check out
+        run: |
+          set -eu
+          apt-get update -qq
+          apt-get install -y --no-install-recommends git ca-certificates
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # The SAME list README.org points readers at -- one copy, so this
+      # cannot drift from the documentation. Must follow checkout, which is
+      # what puts the file on disk.
+      - name: Install the documented prerequisites
+        run: |
+          set -eu
+          apt-get install -y --no-install-recommends \
+            $(grep -v '^#' packaging/debian-prereqs.txt | grep -v '^$' | tr '\n' ' ')
+
+      - name: Report versions
+        run: |
+          echo "chez: $(chezscheme --version 2>&1)"
+          echo "cc:   $(cc --version | head -1)"
+
+      # Before building anything: an unbuilt tree must name its own remedy.
+      # This is the one place that runs on a machine which is GENUINELY
+      # unbuilt rather than synthetically so.
+      - name: An unbuilt tree raises not-built, not a missing library
+        run: |
+          set -eu
+          if CHEZSCHEMELIBDIRS=src:fallback chezscheme --script tests/shim-load-probe.sps \
+               > probe.out 2> probe.err; then
+            echo "::error::an unbuilt tree loaded the shim; it must not"
+            exit 1
+          fi
+          cat probe.err
+          grep -q 'cmark-shim-unavailable' probe.err || {
+            echo "::error::an unbuilt tree did not raise cmark-shim-unavailable"; exit 1; }
+          grep -q 'not-built' probe.err || {
+            echo "::error::an unbuilt tree did not report reason not-built"; exit 1; }
+          if grep -q 'library (cmark gfm private config) not found' probe.err; then
+            echo "::error::an unbuilt tree still reports a missing library"
+            exit 1
+          fi
+
+      # CHEZ=chezscheme because Debian names the binary that way and the
+      # Makefile defaults to `chez`.
+      - name: Build, exactly as the README says
+        run: make CHEZ=chezscheme build
+
+      # No `make deps`, deliberately. The examples must run with
+      # CHEZSCHEMELIBDIRS=src:fallback and no dev dependency whatsoever;
+      # omitting deps here is what makes that falsifiable.
+      - name: Run every documented example
+        run: make CHEZ=chezscheme examples
