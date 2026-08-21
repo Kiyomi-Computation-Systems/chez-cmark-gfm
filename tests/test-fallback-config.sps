@@ -7,7 +7,12 @@
 ;;;      "library (cmark gfm private config) not found".
 ;;;   2. With a real built src/ ahead of fallback/, the fallback is NOT used.
 ;;;      If that ordering were ever reversed, every native suite would break
-;;;      in a confusing way; this asserts the ordering directly.
+;;;      in a confusing way -- but THIS suite covers the documented order
+;;;      only: that the fallback engages when nothing ahead of it has a
+;;;      config (section 1 below), and that a built src/ shadows it once
+;;;      there is one (section 2 below). It does not exercise the reversed
+;;;      order failing against a good build; that rests on the other native
+;;;      suites breaking collaterally instead. See ADR-0014.
 ;;;
 ;;; Subprocesses are mandatory, not stylistic. native.sls resolves the shim
 ;;; during library instantiation, which happens at import -- before any

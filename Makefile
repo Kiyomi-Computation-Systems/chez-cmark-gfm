@@ -89,7 +89,11 @@ SRFI_LIBS    := $(BUILD_DIR)/scheme-libs
 # src/cmark/gfm/private/config.sls shadows fallback/'s checked-in sentinel
 # whenever a build has happened. Reversing these two makes every native suite
 # fail with reason 'not-built against a perfectly good build.
-# tests/test-fallback-config.sps asserts the ordering directly.
+# tests/test-fallback-config.sps covers the documented order only -- that the
+# fallback engages when nothing ahead of it has a config, and that a built
+# src/ shadows it. It does not itself exercise the reversed order breaking;
+# that rests on the other native suites failing collaterally instead. See
+# ADR-0014.
 CHEZ_LIBDIRS := src:fallback:tests:$(SRFI_LIBS)
 TESTS        := $(wildcard tests/test-*.sps)
 
