@@ -13,7 +13,8 @@ CommonMark GFM for Chez Sceme
 
 ** Prerequisites
 
-- *Chez Scheme* 10.4.1 or later. The binary is ~chez~.
+- *Chez Scheme* 9.5.8 or later. The binary is ~chez~ on macOS and
+  ~chezscheme~ on Debian/Ubuntu.
 - *cmark-gfm*, in the ~0.29.0.gfm.x~ range, pinned to ~0.29.0.gfm.13~ — the
   range ~make build~ writes into ~cmark-supported-version-range~ in the
   generated ~src/cmark/gfm/private/config.sls~ (~(#x001d0000 . #x001dffff)~,
@@ -21,6 +22,28 @@ CommonMark GFM for Chez Sceme
   numbers free). A runtime library outside that range makes the first parse
   raise ~&cmark-version-incompatible~. Satisfied either by a system package
   ~pkg-config~ can see, or by the vendored submodule below.
+- On Debian/Ubuntu, the packages in [[file:packaging/debian-prereqs.txt][packaging/debian-prereqs.txt]] — the same
+  list CI installs from. On macOS: ~brew install chezscheme cmark-gfm cmake pkg-config~.
+
+*** Supported matrix
+
+Two rows, because two rows are what CI proves. Between them, both
+acquisition paths (ADR-0001) are exercised — macOS runs pkg-config and
+vendored; Linux runs vendored only.
+
+| Platform              | Chez   | Memory evidence                  |
+|-----------------------+--------+----------------------------------|
+| macOS/ARM64 (Homebrew)| 10.4.1 | ASan only — *no leak claim*      |
+| Linux/x86-64 (apt)    | 9.5.8  | Valgrind clean                   |
+
+The floor is *9.5.8*, established by test rather than assumption: earlier
+revisions of this file said "10.4.1 or later", which recorded one
+developer's machine and was never verified. LeakSanitizer does not exist on
+macOS/ARM64, so only the Linux row can support a leak claim (ADR-0003).
+
+A CI step asserts this table against the versions each job actually ran, so
+a runner-image bump fails the build until the table is updated rather than
+letting the claim go stale.
 
 ** Build
 

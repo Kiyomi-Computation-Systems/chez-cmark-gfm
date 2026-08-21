@@ -48,6 +48,25 @@ jobs:
           pkg-config --exists libcmark-gfm && echo "present: $(pkg-config --modversion libcmark-gfm)" \
                                            || echo "absent (expected on Ubuntu; the vendored path covers this)"
 
+      # The README matrix decays silently the moment a runner image bumps
+      # Chez. This makes that a build failure instead. Deliberately asserts
+      # agreement with what THIS run used -- it does not pin a version, which
+      # would fight the "recorded rather than asserted" note above.
+      - name: Check the README matrix names the Chez this job ran
+        run: |
+          set -eu
+          actual=$( (chezscheme --version 2>&1 || scheme --version 2>&1) | tr -d '[:space:]')
+          echo "this job ran Chez: $actual"
+          if ! rg -qF "| Linux/x86-64 (apt)    | $actual" README.org; then
+            echo "::error::README.org's Supported matrix does not name Chez $actual for the Linux row."
+            echo "This runner now ships a different Chez than the table documents."
+            echo "Fix: edit the 'Supported matrix' table in README.org to say $actual."
+            echo "Do not pin the toolchain and do not delete this check -- the table is"
+            echo "supposed to track whatever CI actually runs, not the other way around."
+            rg -n 'Linux/x86-64' README.org || true
+            exit 1
+          fi
+
       # Ubuntu names the binary `chezscheme`; the Makefile defaults to `chez`.
       - name: Resolve the Chez binary
         run: |
@@ -137,6 +156,23 @@ jobs:
           echo "chez:  $(chez --version 2>&1)"
           echo "cmark: $(cmark-gfm --version | head -1)"
           echo "pkg-config libcmark-gfm: $(pkg-config --modversion libcmark-gfm)"
+
+      # Equivalent to the linux job's check above (same rationale: the table
+      # tracks what "Report versions" printed, and is not a pinned version).
+      - name: Check the README matrix names the Chez this job ran
+        run: |
+          set -eu
+          actual=$(chez --version 2>&1 | tr -d '[:space:]')
+          echo "this job ran Chez: $actual"
+          if ! rg -qF "| macOS/ARM64 (Homebrew)| $actual" README.org; then
+            echo "::error::README.org's Supported matrix does not name Chez $actual for the macOS row."
+            echo "This runner now ships a different Chez than the table documents."
+            echo "Fix: edit the 'Supported matrix' table in README.org to say $actual."
+            echo "Do not pin the toolchain and do not delete this check -- the table is"
+            echo "supposed to track whatever CI actually runs, not the other way around."
+            rg -n 'macOS/ARM64' README.org || true
+            exit 1
+          fi
 
       - name: Scheme dependencies
         run: make deps

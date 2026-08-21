@@ -1,0 +1,9 @@
+# Debian/Ubuntu packages needed to build and test chez-cmark-gfm.
+# ONE copy, deliberately: README.org points at this file instead of
+# restating the list, and .github/workflows/ci.yml installs from it. A list
+# in two places drifts; a list in one place cannot.
+# Lines starting with # and blank lines are ignored.
+chezscheme
+cmake
+pkg-config
+build-essential
