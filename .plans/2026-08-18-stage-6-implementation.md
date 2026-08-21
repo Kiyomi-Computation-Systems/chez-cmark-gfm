@@ -1781,8 +1781,9 @@ git clone --recursive <repo> && cd chez-cmark-gfm && make build
 then put ~src~ and ~fallback~ on Chez's library path:
 ~CHEZSCHEMELIBDIRS=src:fallback~.
 
-~Akku.manifest~ declares this package's libraries and its (development-only)
-dependencies, and ~Akku.lock~ is committed. *Akku is not a supported install
+~Akku.manifest~ declares this package's name, version, license, and its
+(development-only) dependencies; ~Akku.lock~ is committed. It does *not*
+list libraries — Akku infers those from the file tree. *Akku is not a supported install
 path yet:* it distributes Scheme source and cannot build the native shim, so
 an ~akku install~ leaves a tree that has no compiled shim and no generated
 ~config.sls~. Such a tree fails with ~&cmark-shim-unavailable~ and reason

@@ -380,7 +380,9 @@ shim, false-positive volume is manageable.
 
 ### 6.6 Packaging
 
-`Akku.manifest` declares the Scheme libraries; `Akku.lock` is committed. The core
+`Akku.manifest` declares the package's name, version, license, and dependencies;
+`Akku.lock` is committed. It does not list libraries — Akku infers those from the
+file tree. The core
 package does not depend on `wak-htmlprag` or any site generator.
 
 **Documented install caveat:** Akku distributes Scheme source and cannot build the
