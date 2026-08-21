@@ -1421,7 +1421,7 @@ Create `tests/test-stress.sps`:
   (markdown->sxml       doc opts))
 
 ;; live-counts is exported by (cmark gfm private native) and already returns
-;; (list (live-parsers) (live-roots) (live-buffers)) -- native.sls:278. Do not
+;; (list (live-parsers) (live-roots) (live-buffers)) -- native.sls:283. Do not
 ;; redefine it here; tests/test-lifecycle.sps calls the same procedure, so a
 ;; second spelling would drift from it.
 
@@ -1467,7 +1467,7 @@ Create `tests/test-stress.sps`:
 (exit (if (zero? (test-runner-fail-count runner)) 0 1))
 ```
 
-**Note:** `live-counts` comes from `(cmark gfm private native)` (defined at `native.sls:278`, exported at `native.sls:18`) and returns a three-element list — parsers, roots, buffers. `tests/test-lifecycle.sps` calls the same procedure; that is the one to use.
+**Note:** `live-counts` comes from `(cmark gfm private native)` (defined at `native.sls:283`, exported at `native.sls:18`) and returns a three-element list — parsers, roots, buffers. `tests/test-lifecycle.sps` calls the same procedure; that is the one to use.
 
 - [ ] **Step 2: Run it, and prove the seeded control is not vacuous**
 
@@ -1489,18 +1489,20 @@ Expected: **FAIL** on `the counters actually move while a document is live`, `ex
 
 - [ ] **Step 3: Verify it catches a leak**
 
-The mutation this suite exists for. In a scratch copy outside the repo, remove one `free-buffer` call from the render path, then run against it:
+The mutation this suite exists for. In a scratch copy outside the repo, remove the render path's `free-buffer` call AND its paired `count-buffer-free!` call, then run against it:
 
 ```bash
 S=/tmp/stress-mutation
 rm -rf $S && mkdir -p $S && cp -R src $S/src
-rg -n 'free-buffer' $S/src/cmark/gfm/private/scope.sls
-# Comment out the single free-buffer call the render path makes, then:
+rg -n 'free-buffer|count-buffer-free' $S/src/cmark/gfm/private/scope.sls
+# Comment out BOTH free-buffer and count-buffer-free! in the render path, then:
 CHEZSCHEMELIBDIRS=$S/src:fallback:tests:build/scheme-libs chez --program tests/test-stress.sps; echo "exit=$?"
 rm -rf $S
 ```
 
-Expected: FAIL on `no native resource accumulates across iterations`, whose actual value is `(leaked-at-iteration 0 (0 0 N))` naming the iteration and the counter. `exit=1`. This is the assertion's whole purpose — do not proceed until you have seen it fail this way.
+Commenting out only `free-buffer` and leaving `count-buffer-free!` in place does **not** fail: the suite reads `live-counts`, the paired Scheme-side counters, never real allocator state, so a dropped free whose paired count still decrements leaves the counters balanced at `(0 0 0)` even though the buffer itself leaked. Both lines have to go together to reproduce the regression this step demonstrates.
+
+Expected: FAIL on `no native resource accumulates across iterations`, whose actual value is `(leaked-at-iteration 0 (0 0 16))` naming the iteration and the counter. `exit=1`. This is the assertion's whole purpose — do not proceed until you have seen it fail this way.
 
 - [ ] **Step 4: Lower the iteration count under Valgrind**
 

@@ -86,7 +86,7 @@
   (markdown->sxml       doc opts))
 
 ;; live-counts is exported by (cmark gfm private native) and already returns
-;; (list (live-parsers) (live-roots) (live-buffers)) -- native.sls:278. Do not
+;; (list (live-parsers) (live-roots) (live-buffers)) -- native.sls:283. Do not
 ;; redefine it here; tests/test-lifecycle.sps calls the same procedure, so a
 ;; second spelling would drift from it.
 
@@ -113,6 +113,19 @@
 
 ;; The point of the suite: nothing accumulates. Checked after EVERY iteration,
 ;; not just at the end, so a failure names the iteration it first appeared in.
+;;
+;; What this assertion reads is live-counts -- the paired Scheme-side
+;; counters each resource's after-thunk increments/decrements alongside its
+;; real native call (e.g. free-buffer/count-buffer-free! at
+;; scope.sls:187-188) -- not real allocator state. A dropped free whose
+;; paired count is ALSO dropped is caught here: that is the realistic
+;; regression shape, a whole cleanup block deleted in a refactor, taking
+;; free and count together. A dropped free whose paired count survives is
+;; NOT caught: the counters still return to (0 0 0) while the real
+;; allocation leaks. That uncaught case is exactly what `make test-memory`
+;; (Valgrind on Linux, ASan on macOS) exists to catch -- which is why the
+;; release treats sanitizer, leak, stress, and conformance as four distinct
+;; legs, not one subsuming the others.
 (test-equal "no native resource accumulates across iterations"
   'balanced
   (let loop ((i 0))
