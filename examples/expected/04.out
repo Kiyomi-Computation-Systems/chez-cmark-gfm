@@ -1,0 +1,12 @@
+default:        (*TOP* (p A  (a (^ (href /x)) link)  and a  (*COMMENT*  raw HTML omitted ) raw (*COMMENT*  raw HTML omitted )  tag.))
+raw-html omit:  omit
+escape instead: (*TOP* (p A  (a (^ (href /x)) link)  and a  <b> raw </b>  tag.))
+marker default: caret
+with @ marker:  (*TOP* (p A  (a (@ (href /x)) link)  and a  (*COMMENT*  raw HTML omitted ) raw (*COMMENT*  raw HTML omitted )  tag.))
+softbreak:      newline
+as a space:     (*TOP* (p one   two))
+is sxml opts:   #t
+functional upd: escape
+from an AST:    (*TOP* (p A  (a (^ (href /x)) link)  and a  (*COMMENT*  raw HTML omitted ) raw (*COMMENT*  raw HTML omitted )  tag.))
+with options:   (*TOP* (p A  (a (^ (href /x)) link)  and a  <b> raw </b>  tag.))
+unsafe url:     (*TOP* (p (a (^ (href )) x)))

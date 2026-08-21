@@ -1,0 +1,4 @@
+version is a string:  #t
+version is non-empty: #t
+compatible:           #t
+available extensions: (autolink strikethrough table tagfilter tasklist)

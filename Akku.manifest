@@ -1,7 +1,7 @@
 #!r6rs ; -*- scheme -*-
 (import (akku format manifest))
 
-(akku-package ("chez-cmark-gfm" "0.3.0")
+(akku-package ("chez-cmark-gfm" "1.0.0")
   (synopsis "CommonMark and GitHub Flavored Markdown for Chez Scheme")
   (authors "Kiyomi Computation Systems LLC")
   (license "BSD-3-Clause")

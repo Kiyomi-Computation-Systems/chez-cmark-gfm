@@ -38,7 +38,16 @@
 ;; NULL must be distinguishable from the empty string. Several cmark
 ;; accessors return NULL for nodes of an incompatible type, and conflating
 ;; that with "" would silently invent data.
-(test-equal "c-string->string maps NULL to #f" #f (c-string->string 0))
+;;
+;; Expected value is the sentinel 'null, not bare #f: SRFI-64 turns any
+;; exception in a test's actual expression into #f
+;; (vendor/chez-srfi/%3a64/testing-impl.scm:568-571), so an assertion
+;; expecting #f directly would still "pass" if (c-string->string 0) raised
+;; instead of returning #f -- e.g. if it dereferenced address 0 instead of
+;; checking for it. 'null is a value only the real success path produces.
+(test-equal "c-string->string maps NULL to #f"
+  'null
+  (let ((r (c-string->string 0))) (if (eq? r #f) 'null (list 'got r))))
 
 ;; The other direction of the same distinction: a real, non-NULL buffer
 ;; whose first byte already terminates the string must decode to "", never
@@ -180,34 +189,73 @@
 (define a-real-non-library-file
   (string-append (current-directory) "/Makefile"))
 
-(test-equal "resolve-shim-path rejects a directory given as an override"
-  a-real-directory
-  (guard (e ((cmark-shim-unavailable? e) (cmark-shim-unavailable-path e)))
-    (resolve-shim-path "/irrelevant/default" a-real-directory)))
+;; --- reason discriminates the four resolution failures -------------------
+;; Asserting (list path reason) rather than the path alone is deliberate, and
+;; is a fix, not a flourish. resolve-shim-path RETURNS the path it accepts, so
+;; an assertion expecting just the path is satisfied by the success path:
+;; verified by deleting every rejection from resolve-shim-path, after which
+;; this suite still reported 54 expected passes and exit 0. A two-element list
+;; is a value no success path here produces, and the trailing 'no-condition
+;; closes the other half -- a guard returns its body's value when nothing
+;; raises.
+(define (shim-failure thunk)
+  (guard (e ((cmark-shim-unavailable? e)
+             (list (cmark-shim-unavailable-path e)
+                   (cmark-shim-unavailable-reason e))))
+    (thunk)
+    'no-condition))
 
-(test-equal "resolve-shim-path rejects a directory as the default path when there is no override"
-  a-real-directory
-  (guard (e ((cmark-shim-unavailable? e) (cmark-shim-unavailable-path e)))
-    (resolve-shim-path a-real-directory #f)))
+(test-equal "a directory override is rejected as invalid-override"
+  (list a-real-directory 'invalid-override)
+  (shim-failure (lambda () (resolve-shim-path "/irrelevant/default" a-real-directory))))
 
-(test-equal "resolve-shim-path rejects a non-absolute override"
-  "relative/path.dylib"
-  (guard (e ((cmark-shim-unavailable? e) (cmark-shim-unavailable-path e)))
-    (resolve-shim-path a-real-non-library-file "relative/path.dylib")))
+(test-equal "a directory as the default path, with no override, is missing"
+  (list a-real-directory 'missing)
+  (shim-failure (lambda () (resolve-shim-path a-real-directory #f))))
 
-(test-equal "resolve-shim-path rejects a nonexistent override"
-  "/no/such/path.dylib"
-  (guard (e ((cmark-shim-unavailable? e) (cmark-shim-unavailable-path e)))
-    (resolve-shim-path a-real-non-library-file "/no/such/path.dylib")))
+(test-equal "a non-absolute override is rejected as invalid-override"
+  (list "relative/path.dylib" 'invalid-override)
+  (shim-failure (lambda () (resolve-shim-path a-real-non-library-file "relative/path.dylib"))))
 
-(test-assert "resolve-shim-path accepts a valid absolute, existing, regular-file override"
-  (equal? a-real-non-library-file
-          (resolve-shim-path "/irrelevant/default" a-real-non-library-file)))
+(test-equal "a nonexistent override is rejected as invalid-override"
+  (list "/no/such/path.dylib" 'invalid-override)
+  (shim-failure (lambda () (resolve-shim-path a-real-non-library-file "/no/such/path.dylib"))))
 
-(test-equal "load-shim wraps a real dlopen failure in cmark-shim-unavailable, carrying the path"
-  a-real-non-library-file
-  (guard (e ((cmark-shim-unavailable? e) (cmark-shim-unavailable-path e)))
-    (load-shim a-real-non-library-file)))
+;; --- the fifth branch: 'not-built ----------------------------------------
+;; resolve-shim-path's first cond clause fires when there is no override AND
+;; the default path is not a string -- exactly what the checked-in fallback
+;; config (fallback/cmark/gfm/private/config.sls) supplies for shim-path
+;; before any `make build` has run. #f is used here as the default path
+;; because that is literally what the fallback supplies, not a stand-in: the
+;; clause itself raises with a hardcoded #f, and conditions.sls:86 documents
+;; #f as "no path was ever configured". The only prior coverage of this
+;; branch was tests/test-fallback-config.sps, a subprocess suite that greps
+;; a child's stderr for the substring "not-built" -- it cannot see the
+;; condition's path field at all, so a regression that raised 'not-built
+;; with the wrong path would pass there unnoticed.
+(test-equal "a non-string default path with no override is not-built"
+  (list #f 'not-built)
+  (shim-failure (lambda () (resolve-shim-path #f #f))))
+
+(test-assert "a valid absolute, existing, regular-file override is accepted"
+  (string=? a-real-non-library-file
+            (resolve-shim-path "/irrelevant/default" a-real-non-library-file)))
+
+;; An explicit override still wins even when the default path is not built
+;; (not a string): someone holding a prebuilt shim can point
+;; CHEZ_CMARK_GFM_SHIM at it from an otherwise-unbuilt tree. Turns on the
+;; RETURNED PATH matching the override exactly, via string=?, not on bare
+;; truthiness and not on #f -- if the not-built clause above wrongly fired
+;; here too, resolve-shim-path would raise instead of returning, SRFI-64
+;; would turn that raise into #f for this test's actual expression, and
+;; test-assert would correctly fail on that #f rather than accepting it.
+(test-assert "an explicit override wins over a not-built default path"
+  (string=? a-real-non-library-file
+            (resolve-shim-path #f a-real-non-library-file)))
+
+(test-equal "load-shim wraps a real dlopen failure as load-failed"
+  (list a-real-non-library-file 'load-failed)
+  (shim-failure (lambda () (load-shim a-real-non-library-file))))
 
 ;; --- Stage 2: version string ------------------------------------------
 ;; Not asserted against a hardcoded "0.29.0.gfm.13", which would only pin the
@@ -234,7 +282,7 @@
 ;; This is the only coverage validate-utf8? can have: the public API takes a
 ;; Scheme string and string->utf8 always emits valid UTF-8, so
 ;; CMARK_OPT_VALIDATE_UTF8 has no observable effect on any reachable input
-;; and no differential cell can discriminate it (design spec 10.1). Testing
+;; and no differential cell can discriminate it (design spec §5.6). Testing
 ;; the BIT is honest; testing the behaviour would be an assertion that
 ;; passes either way.
 (define (all-distinct? xs)
@@ -255,10 +303,16 @@
   (not (= (option-bits #t #f #f #f #f #f)
           (option-bits #f #f #f #f #f #f))))
 
+;; Expected value is the sentinel 'differ, not bare #f, for the same reason
+;; documented above the NULL-mapping assertion: bare #f is also what a
+;; swallowed exception from either option-bits call would produce, which
+;; would make this assertion pass whether or not the two masks actually
+;; differ.
 (test-equal "all flags off is the default mask, and differs from all flags on"
-  #f
-  (= (option-bits #f #f #f #f #f #f)
-     (option-bits #t #t #t #f #t #t)))
+  'differ
+  (let ((a (option-bits #f #f #f #f #f #f))
+        (b (option-bits #t #t #t #f #t #t)))
+    (if (= a b) 'same 'differ)))
 
 ;; --- Stage 3: node accessors -------------------------------------------
 ;; Driven through call-with-native-document rather than a bare parser so the

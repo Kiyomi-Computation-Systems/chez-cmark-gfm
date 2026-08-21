@@ -63,18 +63,23 @@
 
   (define (resolve-shim-path default-path override)
     (cond
+      ;; The fallback config's sentinel: shim-path is #f because no build has
+      ;; run, so there is no path to report. Guarded on (not override) so an
+      ;; explicit CHEZ_CMARK_GFM_SHIM still wins in an unbuilt tree.
+      ((and (not override) (not (string? default-path)))
+       (raise (make-cmark-shim-unavailable #f 'not-built)))
       ((not override)
        (if (regular-file? default-path)
            default-path
-           (raise (make-cmark-shim-unavailable default-path))))
+           (raise (make-cmark-shim-unavailable default-path 'missing))))
       ((and (> (string-length override) 0)
             (char=? (string-ref override 0) #\/)
             (regular-file? override))
        override)
-      (else (raise (make-cmark-shim-unavailable override)))))
+      (else (raise (make-cmark-shim-unavailable override 'invalid-override)))))
 
   (define (load-shim path)
-    (guard (e (#t (raise (make-cmark-shim-unavailable path))))
+    (guard (e (#t (raise (make-cmark-shim-unavailable path 'load-failed))))
       (load-shared-object path)))
 
   (define shim-file
@@ -91,7 +96,7 @@
   (define cmark-loaded
     (for-each (lambda (path)
                 (unless (regular-file? path)
-                  (raise (make-cmark-shim-unavailable path)))
+                  (raise (make-cmark-shim-unavailable path 'missing)))
                 (load-shim path))
               cmark-library-paths))
 

@@ -60,6 +60,7 @@
           cmark-extension-unavailable-name
           &cmark-invalid-input cmark-invalid-input? cmark-invalid-input-reason
           &cmark-shim-unavailable cmark-shim-unavailable? cmark-shim-unavailable-path
+          cmark-shim-unavailable-reason
           &cmark-invalid-option cmark-invalid-option?
           cmark-invalid-option-key cmark-invalid-option-reason
           &cmark-render-failed cmark-render-failed? cmark-render-failed-format

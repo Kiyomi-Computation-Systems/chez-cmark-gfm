@@ -84,7 +84,17 @@ SRFI_SRC     := vendor/chez-srfi
 SXMLT_SRC    := vendor/wak-sxml-tools
 COMMON_SRC   := vendor/wak-common
 SRFI_LIBS    := $(BUILD_DIR)/scheme-libs
-CHEZ_LIBDIRS := src:tests:$(SRFI_LIBS)
+# src FIRST, fallback SECOND, and the order is the mechanism: Chez resolves a
+# library from the first entry that has it, so the generated
+# src/cmark/gfm/private/config.sls shadows fallback/'s checked-in sentinel
+# whenever a build has happened. Reversing these two makes every native suite
+# fail with reason 'not-built against a perfectly good build.
+# tests/test-fallback-config.sps covers the documented order only -- that the
+# fallback engages when nothing ahead of it has a config, and that a built
+# src/ shadows it. It does not itself exercise the reversed order breaking;
+# that rests on the other native suites failing collaterally instead. See
+# ADR-0014.
+CHEZ_LIBDIRS := src:fallback:tests:$(SRFI_LIBS)
 TESTS        := $(wildcard tests/test-*.sps)
 
 # The differential suite spawns ~400 cmark-gfm subprocesses. Those are separate
@@ -122,7 +132,7 @@ TESTS        := $(wildcard tests/test-*.sps)
 # work that would be lost".
 MEMORY_TESTS := $(filter-out tests/test-differential.sps,$(TESTS))
 
-.PHONY: all build deps check-pins check-purity check-prod dev test test-memory vendor clean prod deps-info
+.PHONY: all build deps check-pins check-purity check-prod check-config examples dev test test-memory vendor clean prod deps-info
 
 all: build
 
@@ -241,7 +251,7 @@ check-pins:
 # what trips this.
 check-purity: build deps
 	@fail=0; \
-	for t in tests/test-options.sps tests/test-ast.sps tests/test-sxml.sps; do \
+	for t in tests/test-options.sps tests/test-ast.sps tests/test-sxml.sps tests/test-example-coverage.sps tests/test-manifest-deps.sps; do \
 	  echo "=== check-purity: $$t, CHEZ_CMARK_GFM_SHIM poisoned ==="; \
 	  if CHEZ_CMARK_GFM_SHIM=/nonexistent CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) \
 	      $(CHEZ) --program $$t; then \
@@ -406,7 +416,8 @@ test: build deps check-pins
 test-memory: build deps check-pins
 ifeq ($(UNAME_S),Linux)
 	@for t in $(MEMORY_TESTS); do \
-	  CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) CMARK_CLI=$(CMARK_CLI) valgrind --error-exitcode=9 \
+	  CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) CMARK_CLI=$(CMARK_CLI) \
+	    CMARK_STRESS_ITERATIONS=2 valgrind --error-exitcode=9 \
 	    --leak-check=full --show-leak-kinds=definite \
 	    $(CHEZ) --program $$t || exit 1; \
 	done
@@ -420,6 +431,7 @@ else
 # on this exact recipe; see stage-2-mutation-log.md, Mutation C.
 	CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) \
 	  CMARK_CLI=$(CMARK_CLI) \
+	  CMARK_STRESS_ITERATIONS=2 \
 	  DYLD_INSERT_LIBRARIES="$$(command ls $$(dirname $$(xcrun --find clang))/../lib/clang/*/lib/darwin/libclang_rt.asan_osx_dynamic.dylib | head -1)" \
 	  ASAN_OPTIONS=detect_leaks=0 \
 	  MallocNanoZone=0 \
@@ -462,3 +474,46 @@ check-prod: deps
 
 clean:
 	rm -rf $(BUILD_DIR) $(CONFIG_SLS)
+
+# The fallback config (fallback/) and the generated one (src/) both declare
+# (cmark gfm private config). Nothing else would notice them diverging, and a
+# divergence is invisible until a consumer imports an unbuilt tree -- so this
+# is a check, not a comment. Depends on `build` because it has nothing to
+# compare against until the generated file exists.
+check-config: build
+	$(CHEZ) --program tests/check-config.sps
+
+EXAMPLES := $(wildcard examples/*.sps)
+
+# CHEZSCHEMELIBDIRS is src:fallback and NOTHING ELSE, deliberately. No
+# build/scheme-libs, no chez-srfi, no wak-*. The 0.3.0 CHANGELOG claims a
+# consumer of this package acquires no dev dependency; an example that
+# reached one would break this target, which is the only way that claim
+# stays true rather than merely written down.
+#
+# Each examples/NN-name.sps pairs with examples/expected/NN.out. Keeps going
+# after a failure so one stale example cannot hide the others.
+examples: build
+	@mkdir -p tests/tmp; \
+	fail=0; \
+	for e in $(EXAMPLES); do \
+	  base=$$(basename $$e .sps); \
+	  exp=examples/expected/$$(echo $$base | cut -d- -f1).out; \
+	  echo "=== $$e ==="; \
+	  if [ ! -f $$exp ]; then \
+	    echo "MISSING expected output: $$exp" >&2; fail=1; continue; \
+	  fi; \
+	  if CHEZSCHEMELIBDIRS=src:fallback $(CHEZ) --program $$e > tests/tmp/$$base.out 2>&1; then \
+	    if diff -u $$exp tests/tmp/$$base.out; then \
+	      echo "ok"; \
+	    else \
+	      echo "OUTPUT CHANGED: $$e" >&2; fail=1; \
+	    fi; \
+	  else \
+	    echo "EXAMPLE FAILED TO RUN: $$e" >&2; \
+	    cat tests/tmp/$$base.out >&2; fail=1; \
+	  fi; \
+	done; \
+	if [ $$fail -eq 0 ]; then echo "ALL EXAMPLES PASSED"; \
+	else echo "EXAMPLES FAILED"; fi; \
+	exit $$fail

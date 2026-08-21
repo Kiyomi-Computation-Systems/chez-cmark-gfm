@@ -24,9 +24,11 @@
 ;;; Chez's default condition report, which does name the condition type
 ;;; for a record-based condition like this one (confirmed directly: a
 ;;; raw dlopen failure prints "Exception: (while loading ...) dlopen(...)",
-;;; while (raise (make-cmark-shim-unavailable path)) uncaught prints
-;;; "Exception occurred with condition components: 0. &cmark-shim-
-;;; unavailable: ..."). The in-process tests in tests/test-native.sps
+;;; while (raise (make-cmark-shim-unavailable path 'missing)) uncaught
+;;; prints "Exception occurred with condition components: 0. &cmark-shim-
+;;; unavailable: ..."). make-cmark-shim-unavailable is 2-arg (path reason);
+;;; the reason field post-dates this comment's original 1-arg example. The
+;;; in-process tests in tests/test-native.sps
 ;;; additionally call resolve-shim-path and load-shim directly, which is
 ;;; the more precise way to check condition types; this suite exists to
 ;;; confirm the real default-path/override wiring in native.sls actually
