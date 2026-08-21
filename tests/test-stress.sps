@@ -35,9 +35,22 @@
 (define runner (test-runner-simple))
 (test-runner-current runner)
 
+;; Unset or unparseable: the low-by-default 50. Parsed but not a positive
+;; integer -- 0 is truthy in Scheme, so (or (and raw (string->number raw)) 50)
+;; previously let CMARK_STRESS_ITERATIONS=0 through as 0 itself, which turns
+;; the loop below into a zero-iteration no-op that still reports 4/4, exit 0
+;; without checking a single counter after a single call; a negative value
+;; made the loop's (= i iterations) test never true, looping forever. Clamped
+;; up to 1 instead: a caller who sets a non-positive count still gets a
+;; suite that actually exercises the loop body at least once, rather than
+;; one that silently either skips it or never returns.
 (define iterations
-  (let ((raw (getenv "CMARK_STRESS_ITERATIONS")))
-    (or (and raw (string->number raw)) 50)))
+  (let* ((raw (getenv "CMARK_STRESS_ITERATIONS"))
+         (n (and raw (string->number raw))))
+    (cond
+      ((not n) 50)
+      ((and (integer? n) (>= n 1)) n)
+      (else 1))))
 
 (define opts (default-cmark-options))
 
@@ -94,19 +107,40 @@
 
 ;; A seeded control, and it must demand the counters MOVE -- not merely that
 ;; they start at zero. A prod shim compiles the counters away and freezes all
-;; three at 0 (cmark-gfm-shim.c:67-69), which satisfies "starts at (0 0 0)"
-;; and "returns to (0 0 0)" alike, so without this every assertion below
-;; passes vacuously against `make prod`. Same shape and same reason as
+;; THREE at 0 (cmark-gfm-shim.c:67-69), which satisfies "starts at (0 0 0)"
+;; and "returns to (0 0 0)" alike, so without checking all three, a prod
+;; build with a genuinely broken live-buffers getter (frozen, or wired to
+;; the wrong counter) would pass this control and every assertion below it
+;; vacuously against `make prod`. Same shape and same reason as
 ;; tests/test-lifecycle.sps:53, which is where this pattern comes from;
 ;; reaching a live document needs (cmark gfm private scope), because no
 ;; public entry point exposes one.
+;;
+;; live-parsers and live-roots move for free inside call-with-native-
+;; document's own scope, but live-buffers does not -- no renderer buffer is
+;; allocated by parsing alone (scope.sls's call-with-render-buffer is what
+;; counts one, and only render.sls's renderers call it). So this control
+;; renders through the live handle directly, using the same primitives
+;; call-with-render-buffer composes (render-html, count-buffer-new!,
+;; free-buffer, count-buffer-free!, all exported by native.sls and already
+;; imported here), to observe the counter between allocation and free rather
+;; than only before and after -- call-with-render-buffer's own dynamic-wind
+;; frees before returning, so nothing outside it ever sees the buffer alive.
 (test-assert "the counters actually move while a document is live"
   (let ((before (live-counts)))
     (call-with-native-document "# probe\n" (options->bits opts) gfm-extension-names
       (lambda (h)
-        (let ((during (live-counts)))
-          (and (> (car during)  (car before))       ; live-parsers
-               (> (cadr during) (cadr before))))))))  ; live-roots
+        (let* ((during-doc (live-counts))
+               (buf (render-html (doc-root h) (doc-option-bits h) (doc-extensions h))))
+          (and (not (zero? buf))
+               (begin
+                 (count-buffer-new!)
+                 (let ((during-buf (live-counts)))
+                   (free-buffer buf)
+                   (count-buffer-free!)
+                   (and (> (car during-doc)   (car before))    ; live-parsers
+                        (> (cadr during-doc)  (cadr before))    ; live-roots
+                        (> (caddr during-buf) (caddr before))))))))))) ; live-buffers
 
 (test-equal "counters are zero before the loop"
   '(0 0 0) (live-counts))
