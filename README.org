@@ -221,6 +221,12 @@ precedence rather than leaving the combination undefined, so this is a
 deliberate policy: honouring one of two explicit requests and silently
 dropping the other would hide a caller's mistake.
 
+Input is always a Scheme string, encoded internally with ~string->utf8~, which
+cannot produce invalid UTF-8 from a valid Scheme string — so cmark's
+~validate-utf8?~ (its replace-invalid-bytes-with-U+FFFD behavior) has no
+effect reachable through this API; it exists for byte-oriented callers, not
+this one. An embedded NUL character is rejected outright, at any position.
+
 ** Memory ownership
 
 The contract a caller depends on. Rationale is in the design spec §5.

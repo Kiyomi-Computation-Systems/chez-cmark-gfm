@@ -342,30 +342,77 @@ it. Nothing to drift, so nothing to check.
 
 ## 8. Acceptance-criteria audit
 
-Plan §16 lists fifteen criteria as the stated bar for 1.0, and they have never been
-checked as a set. Producing this table is a Stage 6 deliverable: each criterion maps
-to the suite that proves it, or is marked unmet with what is missing. **Rows marked
-`verify` are unconfirmed at design time and must be confirmed during
-implementation; a criterion found unmet becomes Stage 6 work rather than something
-1.0 ships past.**
+**Audited 2026-08-21, Task 11, against `feat/stage-6-packaging-release` at commit
+`5a8bb1c`.** Plan §16's fifteen criteria had never been checked as a set. Every
+`verify` row below has been replaced with the actual assertion that backs it —
+opened and read, not inferred from its name — or marked short of `MET` with exactly
+what is missing. Baseline before auditing: `make clean && make build && make deps &&
+make check-pins && make check-config && make check-purity && make test && make
+examples` — all green, 17 suites, `ALL SUITES PASSED`, `ALL EXAMPLES PASSED`.
+`make test-memory` was also run (see criterion 13). This branch has no upstream
+(`git rev-parse @{u}` fails) and has never been pushed, so neither CI job has run
+against this code; where a criterion's strongest evidence is a CI job rather than a
+local command, that is stated rather than credited as if it had run.
 
-| # | Criterion (plan §16) | Expected evidence | Status |
+Two criteria are not a clean `MET`, found by this audit rather than asserted going
+in: **13** (the leak-checking half is real but CI-gated and unexercised on this
+branch) and **15** (true today, but nothing would notice it stop being true). Both
+are detailed in the notes after the table.
+
+| # | Criterion (plan §16) | Evidence | Status |
 |---|---|---|---|
-| 1 | Five GFM extensions selectable, on by default | `test-options.sps`, `test-native.sps` | verify |
-| 2 | Four renderers through named options | `test-render.sps`, `test-differential.sps` | verify |
-| 3 | Safe mode unless `unsafe-html?` | `test-render.sps`, `test-differential.sps` | verify |
-| 4 | Renderer buffers copied and freed | `test-lifecycle.sps` counters | verify |
-| 5 | `markdown->ast` returns only Scheme-owned objects | `test-ast.sps` post-free traversal | verify |
-| 6 | Borrowed strings copied before root cleanup | `test-convert.sps`, `test-ast.sps` | verify |
-| 7 | Every owned allocation freed exactly once, both paths | `test-lifecycle.sps` | verify |
-| 8 | Embedded NUL rejected; UTF-8 documented | `test-lifecycle.sps:23-26`; README | verify docs |
-| 9 | Input-size, node-count, depth limits enforced | `test-convert.sps`, `test-lifecycle.sps` | verify |
-| 10 | CommonMark and GFM node types represented and tested | `test-ast-differential.sps` | verify |
-| 11 | SXML escapes or rejects raw HTML; validates URLs | `test-sxml*.sps` | verify |
-| 12 | Version incompatibility fails clearly | `test-native.sps`, `test-conditions.sps` | verify |
-| 13 | Native tests pass under ASan and a leak checker | `make test-memory`, both CI jobs | verify |
-| 14 | Chez, platform, cmark versions documented | §5.1 matrix + its CI check | **unmet; this stage** |
-| 15 | No dependency on a documentation-site framework | `Akku.manifest`, `make check-purity` | verify |
+| 1 | Five GFM extensions selectable, on by default | `options.sls:54` (the five); `test-options.sps:22-24,167-169` (default and `supported-extensions` pinned as literal values, not compared to themselves); `test-differential.sps:152-179` (each of the five, individually, discrimination-guarded against the real CLI); `:182-189` (defaults — which enable all five — byte-match the CLI in all four formats) | MET |
+| 2 | Four renderers through named options | `test-render.sps:138-151` (`markdown->html`/`->commonmark`/`->plaintext`/`->xml`, each directly); `test-differential.sps:223,249,256` (48-combination × 2-fixture × 4-format sweep against the real CLI, seeded at :249 to prove the detector isn't vacuous before trusting its empty result) | MET |
+| 3 | Safe mode unless `unsafe-html?` | `test-render.sps:237` (raw HTML omitted by default); `:243` (`javascript:` href emptied by default); `:257` (`unsafe-html? #t` required to emit it — deliberately run with `extensions '()` so the default tagfilter extension cannot produce the same result by a different route, per the AGENTS.md trap of an assertion two rules can both satisfy) | MET |
+| 4 | Renderer buffers copied and freed | `test-render.sps:45-49` (output survives the buffer free and a GC pass — not merely non-empty); `:72-83` (counters balance after success and after the body raises); `test-stress.sps:129-138` (all four renderers plus `markdown->ast`/`->sxml`, balance re-checked after *every* one of N iterations, not just once — design spec §4's point: a per-call leak of one buffer satisfies every single-shot assertion above and fails only this one) | MET |
+| 5 | `markdown->ast` returns only Scheme-owned objects | `src/cmark/gfm/parse.sls:37-53` (the public function is exactly `call-with-native-document` → `convert-document`, the same composition the driver below exercises); `test-convert.sps:226-240` (literals and a URL read correctly *after* the scope — and its allocation — closed); `:245-257` (every documented string-valued property really is a Scheme string, not a borrowed integer address); `:413-418` (same, for extension node types); `:570-614` (the public `markdown->ast` entry point directly, end to end, `(0 0 0)` after) | MET |
+| 6 | Borrowed strings copied before root cleanup | `test-native.sps:76-90` — the decisive test: converts a real C buffer, then mutates the source bytes and asserts the Scheme string is unchanged, ruling out aliasing directly rather than by inference; `test-convert.sps:245-257` corroborates at the AST level | MET |
+| 7 | Every owned allocation freed exactly once, both paths | `test-lifecycle.sps:61-72` (success and raising body); `:76-82` (non-local exit via `call/1cc`, proving `dynamic-wind`, not mere sequencing); `:156-161,182-187,200-206,218-224` (extension-attach failure, bad extension name, explicit and default input-size rejection); `test-render.sps:122-131` (checked accessors make the ADR-0005 ordering bug — parser freed before the renderer's extension list is used — structurally unreachable, not just avoided by convention); `test-stress.sps:129-138` (balance across iterations, all six public entry points) | MET |
+| 8 | Embedded NUL rejected; UTF-8 documented | Rejection: `test-lifecycle.sps:23-26`, comparing the actual raised reason (`'embedded-nul`) against a sentinel, not truthiness. Documentation: **was absent** — `README.org` said nothing about UTF-8 behavior beyond an options-table row with no prose. Fixed by this task: a sentence added after the options table (see notes) stating that input is always a Scheme string encoded via `string->utf8` (`scope.sls:57`), which cannot produce invalid UTF-8, so `validate-utf8?` has no reachable effect through this API — the exact fact `test-native.sps`'s own comment at the option's only test site already establishes | MET (doc gap closed by this task) |
+| 9 | Input-size, node-count, depth limits enforced | `test-convert.sps:266-269` (depth, exactly-at/one-past), `:275-283` (node count, same shape), `:571-586` (all three, through the public options record and `markdown->ast` itself, not just the internal driver); `test-lifecycle.sps:211-224` (default 5 MiB byte ceiling, counters balance on rejection) | MET |
+| 10 | CommonMark and GFM node types represented and tested | `test-convert.sps:218-225` (all 18 reachable CommonMark type strings present); `:378-386` (all 6 reachable GFM extension type strings present); `:384` (exactly 24 total — no extra, no missing, not just "some covered"); `test-ast-differential.sps:293-296,316,364-421` (independent XML-oracle cross-check of types, attributes, and properties, in-process and against the pinned CLI, across curated core/gfm/smart/hostile fixtures, 25-level nesting, and the four escaped characters) | MET |
+| 11 | SXML escapes or rejects raw HTML; validates URLs | `test-options.sps:295-296` (default `raw-html` is `'omit`, the only two valid values being `'omit`/`'escape` — never passthrough); `test-sxml.sps:110-115` (default: both block and inline raw HTML become a comment); `:187-197` (four dangerous schemes, case-insensitive, all four fixtures asserted, not just one); `:199-210` (`data:` rejected except exactly the four allowed image subtypes, all four asserted); `:221-226` (all-unsafe-byte URL fully percent-encoded); `:248-256` (image `src` takes the same policy as link `href`) | MET |
+| 12 | Version incompatibility fails clearly | `src/cmark/gfm/private/native.sls:267-279` (the real, wired-in check: `ensure-native-loaded!` raises `make-cmark-version-incompatible` when `version-compatible?` fails); `test-native.sps:143-169` (the pure predicate, at both range boundaries, both arguments independently — this file's own comment explains why the raise site itself has no integration test: it runs against the real, always-compatible library, so only synthetic values can exercise the boundary); `test-conditions.sps:17-34` (the condition is a `cmark-error?`, carries `compiled` and `runtime`, distinguishable from `dead-document`) | MET |
+| 13 | Native tests pass under ASan and a leak checker | ASan: run today, `make test-memory`, macOS, exit 0, all 16 memory-eligible suites (`test-differential.sps` excluded by design — see Makefile:129) — real output in this task's report. Leak checking: **only Linux Valgrind can support that claim (ADR-0003)**, and that job (`.github/workflows/ci.yml`, `linux`) has never run against this branch — no upstream configured, never pushed. The mechanism is real and well-formed (read directly, not assumed), but is CI evidence not yet produced for this code | MET, locally, for ASan only — the leak-checking half is unverified on this branch pending a CI run |
+| 14 | Chez, platform, cmark versions documented | `README.org:28-46` (the matrix); `.github/workflows/ci.yml` "Check the README matrix names the Chez this job ran" (both `linux` and `macos` jobs) anchors on the exact table cell text and fails the build on drift — checked character-for-character against the current table, not merely present. Confirmed on this machine: `chez --version` → `10.4.1`, matching the macOS row exactly | MET (Task 8) |
+| 15 | No dependency on a documentation-site framework | True today, checked by direct inspection: `Akku.manifest` declares zero runtime `depends` and exactly two `depends/dev` (`chez-srfi`, `wak-sxml-tools`), neither a documentation tool; no `docs/` directory or site-generator config (`mkdocs.yml`, `conf.py`, `package.json`, etc.) exists anywhere in the repository. **No runnable check protects this.** `make check-purity` (the design spec's own suggested evidence) tests something else entirely — that specific pure suites import no *native/FFI* code — and does not read `Akku.manifest` or notice a new dependency of any kind. Nothing would fail if one were added tomorrow | PARTLY MET — true, but by inspection only; see notes |
+
+### Notes
+
+**Criterion 8.** The missing UTF-8 sentence was added to `README.org` by this audit
+task, immediately after the options table (§ Options). It states a fact already
+established by code and by `test-native.sps`'s own comment on `validate-utf8?`
+(the option is untestable through this API precisely *because* `string->utf8`
+always emits valid UTF-8), rather than asserting new behavior.
+
+**Criterion 13.** This is not the same kind of gap as criterion 15: the Valgrind job
+exists, is correctly wired (`make HAVE_PKG=no test-memory` after a vendored build,
+`--leak-check=full --show-leak-kinds=definite`, blocking on any nonzero exit), and
+there is no reason to expect it would fail — but "well-designed and unexercised" is
+not the same evidence as "ran and passed," and this audit reports what it can
+verify, not what it expects. Resolved by pushing the branch and letting CI run, not
+by anything this task can do locally on macOS/ARM64, which cannot run Valgrind at
+all and cannot detect leaks even with ASan (ADR-0003).
+
+**Criterion 15.** This is a genuine audit finding, not a rounding-down of something
+close enough: the property is real but sits on prose and repository-layout
+inspection alone. Per AGENTS.md ("prefer a check to a comment"), Task 11a has been
+added to the Stage 6 implementation plan to give it one — a small check reading
+`Akku.manifest` as data and asserting its dependency set is exactly the expected
+one, with a mutation (add a bogus dependency, confirm the check names it, revert).
+Writing that check is construction, not audit, so it is scoped as a task rather than
+done inline here.
+
+**On "MET" as used throughout.** A row is `MET` only where this audit opened the
+cited assertion, confirmed what it actually compares (a real value or sentinel, not
+truthiness — the class of empty test AGENTS.md documents happening five times
+already in this project), and where the surrounding file's own comments (several
+suites here narrate their own discrimination guards and isolation reasoning)
+corroborate that the property, not just the name, is what is being checked. It does
+not mean this audit re-ran every mutation from scratch: Stage 6's own inline
+mutation evidence (per-task, e.g. progress.md's Task 7 entries; consolidated by the
+still-pending Task 13) was treated as standing evidence where it directly covers the
+same assertion cited here, and is additionally corroborating for criteria 4 and 7.
 
 ## 9. Invariants enforced as checks, not comments
 

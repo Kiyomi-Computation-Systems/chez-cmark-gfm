@@ -56,7 +56,9 @@ Every task's requirements implicitly include these.
 | `examples/coverage-exemptions.scm` | CREATE — declared-uncoverable exports, with reasons | 6 |
 | `tests/test-stress.sps` | CREATE — accumulation across iterations | 7 |
 | `packaging/debian-prereqs.txt` | CREATE — single copy of the prerequisite list | 8 |
-| `README.org` | MODIFY — matrix, ownership, linking, licensing, Akku caveat | 8, 9 |
+| `README.org` | MODIFY — matrix, ownership, linking, licensing, Akku caveat, UTF-8 sentence | 8, 9, 11 |
+| `.plans/2026-08-18-stage-6-packaging-design.md` | MODIFY — §8 audit table filled in with evidence | 11 |
+| `tests/test-manifest-deps.sps` | CREATE — `Akku.manifest`'s dependency set, checked not just declared | 11a |
 | `NOTICE` | CREATE — cmark-gfm license notice | 9 |
 | `.github/workflows/ci.yml` | MODIFY — check-config, matrix check, clean-install job | 3, 8, 10 |
 | `Makefile` | MODIFY — `CHEZ_LIBDIRS`, `examples`, `check-config`, stress iterations | 2, 3, 4, 7 |
@@ -2013,6 +2015,179 @@ with what the code actually shows."
 
 ---
 
+### Task 11a: `Akku.manifest`'s dependency set becomes a check
+
+Task 11's audit found plan §16 criterion 15 ("the core library has no dependency
+on a documentation-site framework") true today but resting on prose and
+repository-layout inspection alone: `Akku.manifest` happens to declare only
+`chez-srfi` and `wak-sxml-tools`, and no `docs/` tree or site-generator config
+exists anywhere in the repo, but nothing would notice either fact stop being
+true. `make check-purity` — the design spec's own suggested evidence for this
+row — tests a different property (that specific pure suites pull in no
+native/FFI code) and never reads `Akku.manifest` at all. Per AGENTS.md ("prefer
+a check to a comment"), this task gives the criterion an actual check, in the
+shape `check-pins` and `check-config` already established: two things that must
+stay in agreement, verified rather than commented.
+
+**Files:**
+- Create: `tests/test-manifest-deps.sps`
+
+**Interfaces:**
+- Consumes: `Akku.manifest`, read as data, the same way `tests/test-example-coverage.sps` reads `src/cmark/gfm.sls` as data rather than scanning it as text.
+- Produces: one more suite `make test` and `make check-purity` pick up automatically (it is pure — no import reaches a shared object — so it belongs in `check-purity`'s list alongside `test-example-coverage.sps`, not treated as a `check-config`-style special case: unlike the fallback-vs-generated comparison, `Akku.manifest` needs no built tree to exist).
+
+- [ ] **Step 1: Write the failing test**
+
+Create `tests/test-manifest-deps.sps`:
+
+```scheme
+#!r6rs
+;;; Plan 16, criterion 15: the core library has no dependency on a
+;;; documentation-site framework. True today by construction -- Akku.manifest
+;;; names two Scheme libraries and nothing else -- but nothing was checking
+;;; it, which is exactly the shape of bug check-pins and check-config already
+;;; exist for: two things that must agree, with nothing noticing if they stop.
+;;;
+;;; Two assertions, not one, and they guard different regressions:
+;;;   1. No declared dependency's name matches a known documentation-site
+;;;      tool. This is what the criterion is actually ABOUT -- naming the
+;;;      class of thing that must never appear.
+;;;   2. The declared set is exactly the current known-good set. This is
+;;;      strictly stronger and catches everything (1) would miss (an
+;;;      unanticipated dependency of any other kind), the same total-drift
+;;;      posture check-pins takes for the submodule/lock pair.
+;;;
+;;; Read as DATA, not scanned as text, for the same reason
+;;; test-example-coverage.sps reads gfm.sls that way: a text scan is satisfied
+;;; by a name that appears only in a comment, which documents nothing.
+;;;
+;;; Pure: imports only (rnrs), so it runs under `make check-purity` with
+;;; CHEZ_CMARK_GFM_SHIM poisoned.
+(import (rnrs) (srfi :64))
+
+(define runner (test-runner-simple))
+(test-runner-current runner)
+
+(define manifest-path "Akku.manifest")
+
+;; Akku.manifest opens with a #!r6rs pragma line, exactly like gfm.sls, and
+;; (like test-example-coverage.sps's file-symbols) more than one top-level
+;; datum follows it -- (import ...) THEN (akku-package ...). Loop to EOF and
+;; keep the one whose head is akku-package, rather than assuming it is first.
+(define (find-package-form path)
+  (call-with-input-file path
+    (lambda (port)
+      (let loop ()
+        (let ((d (read port)))
+          (cond
+            ((eof-object? d)
+             (error 'find-package-form "no akku-package form found" path))
+            ((and (pair? d) (eq? (car d) 'akku-package)) d)
+            (else (loop))))))))
+
+;; (akku-package (name version) (key ...) ...) -- depends/depends-dev are
+;; optional clauses among the rest; each entry is (pkg-name version-constraint).
+(define (clause form key)
+  (cond
+    ((assq key (cddr form)) => cdr)
+    (else '())))
+
+(define package-form (find-package-form manifest-path))
+
+(define (dep-names key)
+  (map car (clause package-form key)))
+
+(define all-deps
+  (append (dep-names 'depends) (dep-names 'depends/dev)))
+
+;; Substring match, case-insensitive-by-construction (package names on Akku
+;; are conventionally lowercase already) -- catches "sphinx" whether it shows
+;; up as a bare name or, e.g., "chez-sphinx".
+(define doc-site-markers
+  '("sphinx" "mkdocs" "docusaurus" "jekyll" "hugo" "gatsby" "vitepress"
+    "docsify" "gitbook" "docsaurus" "antora" "docfx" "hexo"))
+
+(define (contains-substring? hay needle)
+  (let ((hl (string-length hay)) (nl (string-length needle)))
+    (let loop ((i 0))
+      (cond ((> (+ i nl) hl) #f)
+            ((string=? needle (substring hay i (+ i nl))) #t)
+            (else (loop (+ i 1)))))))
+
+(define (names-a-doc-site-tool? name)
+  (exists (lambda (marker) (contains-substring? name marker)) doc-site-markers))
+
+(test-begin "manifest-deps")
+
+;; SEED FIRST: prove the marker check can fire at all, against a synthetic
+;; name, before trusting it never fires against the real manifest. An
+;; always-#f predicate would pass the real assertion below vacuously.
+(test-assert "the doc-site marker check fires on a synthetic offender"
+  (names-a-doc-site-tool? "chez-mkdocs-bridge"))
+
+(test-equal "no declared dependency names a documentation-site tool"
+  '()
+  (filter names-a-doc-site-tool? all-deps))
+
+;; Stronger and independent of the marker list above: the whole set must be
+;; exactly what is expected today. Update this list in the SAME commit as any
+;; deliberate new dependency -- that is the point, not friction to route
+;; around.
+(test-equal "the declared dependency set is exactly the current known-good set"
+  '("chez-srfi" "wak-sxml-tools")
+  (list-sort string<? all-deps))
+
+(test-end "manifest-deps")
+
+(exit (if (zero? (test-runner-fail-count runner)) 0 1))
+```
+
+- [ ] **Step 2: Run to verify it fails, then passes**
+
+```bash
+CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez --program tests/test-manifest-deps.sps
+```
+
+Expected on a correct implementation: 3 expected passes, exit 0, immediately —
+there is nothing to make it fail first here, since this task adds no production
+code. The seeded-marker assertion is what stands in for "watched it fail" per
+AGENTS.md: it fails if `names-a-doc-site-tool?` is ever accidentally written to
+return `#f` unconditionally.
+
+- [ ] **Step 3: Mutation — confirm the check has teeth**
+
+```bash
+cp Akku.manifest /tmp/Akku.manifest.bak
+# add a bogus dependency
+sed -i.bak 's/(depends\/dev/(depends\/dev ("sphinx" "^1.0.0")\n               /' Akku.manifest
+chez --program tests/test-manifest-deps.sps; echo "exit=$?"
+mv /tmp/Akku.manifest.bak Akku.manifest
+```
+
+Expected: both the marker assertion and the exact-set assertion fail, naming
+`"sphinx"` in the reported list — not merely "a test failed somewhere". Revert,
+confirm 3/3 passes again.
+
+- [ ] **Step 4: Add to `check-purity`**
+
+In `Makefile`, add `tests/test-manifest-deps.sps` to `check-purity`'s suite
+list (`Makefile:250`), alongside `test-example-coverage.sps`.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add tests/test-manifest-deps.sps Makefile
+git commit -m "test: check Akku.manifest's dependency set, not just assert it
+
+Plan 16 criterion 15 (no dependency on a documentation-site framework) was
+true only by inspection -- Akku.manifest happened to name two Scheme
+libraries and nothing checked it. Mirrors check-pins/check-config's posture:
+two things that must agree, enforced rather than commented. Confirmed by
+mutation: a bogus dependency is named in the failure, not just detected."
+```
+
+---
+
 ### Task 12: Release 1.0.0
 
 **Files:**
@@ -2290,6 +2465,7 @@ AGENTS.md: a test is finished when you have watched it fail. This task is the co
 | Skip one `free-buffer` in the render path | `no native resource accumulates` — **Task 7 Step 3** | 7 |
 | Build a prod shim (`make prod`), whose counters are frozen at 0 | `the counters actually move while a document is live` — without it the whole stress suite is vacuous — **Task 7 Step 2** | 7 |
 | Edit one README matrix version | the CI matrix check | 8 |
+| Add a bogus dependency to `Akku.manifest` | `test-manifest-deps.sps`'s marker and exact-set assertions, naming it — **not yet run: Task 11a is planned, not implemented** | 11a |
 
 - [ ] **Step 2: Record any mutation that could not break its assertion**
 
