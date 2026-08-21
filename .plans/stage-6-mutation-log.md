@@ -49,7 +49,7 @@ the free-buffer entry (Task 7) below, both flagged inline.
 | 2 | Fallback `shim-path` `#f` → a real built shim path | 2 | `an unbuilt tree reports reason not-built` | **FAIL** — and two more besides, wider than predicted | re-run in Task 13 |
 | 3 | Delete `resolve-shim-path`'s `not-built` clause | 2 | same assertion, via a loader error | **FAIL**, named, no collateral | Task 2 fix-pass report |
 | 4 | `CHEZ_LIBDIRS` reordered to `fallback:src` | 2 | `a built src/ ahead of fallback/ loads the real shim` | **FAIL** — crashes `test-native.sps` outright, plus 2 collateral in `test-shim-loading.sps`, plus `make test` itself fails | Task 2 report |
-| 5 | Remove one export from the fallback config | 3 | `make check-config` | **FAIL**, `check-config: FAILED`, exit 1/2 | Task 3 report (run as a version-range divergence, see note) |
+| 5 | Remove one export from the fallback config | 3 | `make check-config` | **FAIL**, `the two files export different names`, exit 1 | run directly during Task 13 review — transcript below |
 | 6 | Change the fallback's version-range literal | 3 | `make check-config` | **FAIL**, named diagnostic, exit 1/2; reconfirmed through the real `make check-config` target | Task 3 report |
 | 7 | Append a line to an expected output file | 4 | `make examples` | **FAIL**, diff shown, `EXAMPLES FAILED`, exit 2 | Task 4 report |
 | 8 | Add `(srfi :64)` to an example's imports | 4 | `make examples` | **FAIL**, `EXAMPLE FAILED TO RUN`, library-not-found, exit 2 | Task 4 report |
@@ -356,31 +356,39 @@ too.
 
 ### Row 5 — remove one export from the fallback config
 
-Not run as a literally separate experiment in Task 3's report — the report
-covers it implicitly through the same mechanism (`library-name` equality
-and `same-set?` on the export lists, both compared as datums by
-`tests/check-config.sps` alongside the version range), and Task 3's
-"Extra verification" section separately confirms the checker's
-missing-file failure mode is a clean diagnostic (`check-config:
-src/cmark/gfm/private/config.sls is missing; run \`make build\` first`,
-exit 1) rather than an unhandled exception. Since dropping an export and
-diverging the version range exercise the identical `equal?`/`same-set?`
-comparison machinery in the identical checker, and that mechanism was
-watched to fail cleanly above, this row is covered by the same evidence,
-not re-run separately. Flagging this rather than silently treating it as
-identically re-verified: if a future reviewer wants a assertion-for-
-assertion confirmation of the export-set branch specifically (as opposed
-to the version-range branch), that is the one gap in this section's
-first-party transcripts.
+Task 3's report covered this row by *mechanism* rather than by transcript:
+dropping an export and diverging the version range exercise the same
+`equal?`/`same-set?` comparison in the same checker, and the version-range
+form was watched failing. That is a reasonable inference, but it is an
+inference, and this log records observations. So it was run directly:
 
-**Covered** (row 6 directly; row 5 by the same mechanism, not independently
-transcripted).
+```text
+$ chez --program tests/check-config.sps
+check-config: fallback and generated config agree
+exit=0
 
----
+# mutation: drop cmark-library-paths from the fallback's export list
+$ chez --program tests/check-config.sps
+check-config: FAILED
+  - the two files export different names
 
-## Task 4 — `make examples` (rows 7, 8)
+Both files declare (cmark gfm private config). The generated one
+is written by the Makefile recipe; the fallback is checked in at
+fallback/cmark/gfm/private/config.sls.
+Bring them back into agreement -- a consumer of an unbuilt tree
+sees the fallback, and it must be substitutable.
+exit=1
 
-Evidence from `task-4-report.md`, Steps 6-7.
+# revert
+$ chez --program tests/check-config.sps
+check-config: fallback and generated config agree
+exit=0
+```
+
+The failure is the predicted one, reached through the asserted property —
+the export-set comparison, not the version range and not the missing-file
+precondition — and it names which of the three compared properties diverged.
+`git status --porcelain` was empty after the revert.
 
 ### Row 7 — append a line to an expected output file
 
