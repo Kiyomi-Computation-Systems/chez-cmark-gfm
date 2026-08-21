@@ -1144,8 +1144,6 @@ Create `examples/coverage-exemptions.scm`:
    exactly this reason.")
  (cmark-render-failed?
   "Predicate, unreachable for the same reason as its accessor below.")
- (cmark-unsupported-node?
-  "Predicate, unreachable for the same reason as its accessor below.")
  (cmark-version-incompatible-compiled
   "Accessor on a condition raised only when the runtime cmark-gfm is outside
    the supported range. An example cannot arrange that without a second,
