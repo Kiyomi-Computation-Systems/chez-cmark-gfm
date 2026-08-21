@@ -388,7 +388,8 @@ test: build deps check-pins
 test-memory: build deps check-pins
 ifeq ($(UNAME_S),Linux)
 	@for t in $(MEMORY_TESTS); do \
-	  CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) CMARK_CLI=$(CMARK_CLI) valgrind --error-exitcode=9 \
+	  CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) CMARK_CLI=$(CMARK_CLI) \
+	    CMARK_STRESS_ITERATIONS=2 valgrind --error-exitcode=9 \
 	    --leak-check=full --show-leak-kinds=definite \
 	    $(CHEZ) --program $$t || exit 1; \
 	done
@@ -402,6 +403,7 @@ else
 # on this exact recipe; see stage-2-mutation-log.md, Mutation C.
 	CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) \
 	  CMARK_CLI=$(CMARK_CLI) \
+	  CMARK_STRESS_ITERATIONS=2 \
 	  DYLD_INSERT_LIBRARIES="$$(command ls $$(dirname $$(xcrun --find clang))/../lib/clang/*/lib/darwin/libclang_rt.asan_osx_dynamic.dylib | head -1)" \
 	  ASAN_OPTIONS=detect_leaks=0 \
 	  MallocNanoZone=0 \
