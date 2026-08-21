@@ -51,7 +51,10 @@ Two alternatives were rejected:
   and runs in CI right after `make build`.
 - The documented library path gains an entry: `CHEZSCHEMELIBDIRS=src:fallback`.
 - Reversing those two entries breaks every native suite against a good build.
-  `tests/test-fallback-config.sps` asserts the ordering directly.
+  `tests/test-fallback-config.sps` covers the documented order only — that the
+  fallback engages when the entry ahead of it has no config, and that a built
+  `src` shadows it. It does not exercise the reversed order failing against a
+  good build; that property rests on the other suites breaking collaterally.
 - The fallback names no cmark libraries, so `CHEZ_CMARK_GFM_SHIM` in an unbuilt tree
   works on macOS and fails on Linux, whose loader does not put a dlopen'd library's
   dependencies in the global symbol namespace. Documented in the README, not fixed.

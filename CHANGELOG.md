@@ -77,10 +77,24 @@ behavior changed: 1.0 freezes the API. The one public-API change is additive.
 - **`CHEZSCHEMELIBDIRS` is now `src:fallback`.** The order is the mechanism:
   Chez resolves a library from the first entry that has it.
 - **The documented Chez floor is 9.5.8, not 10.4.1.** The old claim recorded
-  one developer's machine and was never tested; 9.5.8 is what Ubuntu CI runs
-  green under Valgrind. A CI step now asserts the README matrix against the
+  one developer's machine and was never tested; 9.5.8 is the version Ubuntu CI
+  has run green under Valgrind on earlier commits (see Verification status above
+  for what that does and does not establish about this release). A CI step now asserts the README matrix against the
   version each job actually ran, so a runner-image bump fails the build rather
   than letting the claim go stale.
+
+### Verification status
+
+- **Leak-checking has not run against this release.** Plan §16 names "native
+  tests pass under AddressSanitizer *and* a leak checker" as a v1 acceptance
+  criterion, and only half of that is satisfied here. ASan re-ran clean against
+  this branch, but on macOS/ARM64 it runs with leak detection disabled, because
+  LeakSanitizer does not exist there (ADR-0003). The Linux Valgrind job is this
+  project's sole source of leak-freedom evidence, and it has not yet run against
+  this branch. The mechanism is in place and unchanged; the evidence for *this*
+  code is not yet produced. Recorded rather than glossed: the acceptance audit
+  in the Stage 6 design spec §8 marks criteria 4, 7, and 13 with this same
+  caveat.
 
 ### Fixed
 
