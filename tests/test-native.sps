@@ -273,7 +273,7 @@
 ;; This is the only coverage validate-utf8? can have: the public API takes a
 ;; Scheme string and string->utf8 always emits valid UTF-8, so
 ;; CMARK_OPT_VALIDATE_UTF8 has no observable effect on any reachable input
-;; and no differential cell can discriminate it (design spec 10.1). Testing
+;; and no differential cell can discriminate it (design spec §5.6). Testing
 ;; the BIT is honest; testing the behaviour would be an assertion that
 ;; passes either way.
 (define (all-distinct? xs)

@@ -2162,11 +2162,19 @@ cp Akku.manifest /tmp/Akku.manifest.bak
 sed -i.bak 's/(depends\/dev/(depends\/dev ("sphinx" "^1.0.0")\n               /' Akku.manifest
 chez --program tests/test-manifest-deps.sps; echo "exit=$?"
 mv /tmp/Akku.manifest.bak Akku.manifest
+# sed -i.bak's own backup lands in the repo root, not /tmp -- separate from
+# the /tmp copy above and never otherwise removed. .gitignore has no *.bak
+# rule, so left alone it is a stray untracked file after every run of this
+# recipe. Confirmed by running it: `git status --porcelain` showed
+# `?? Akku.manifest.bak` after the mv above, with the working manifest
+# already back to its original content.
+rm -f Akku.manifest.bak
 ```
 
 Expected: both the marker assertion and the exact-set assertion fail, naming
 `"sphinx"` in the reported list — not merely "a test failed somewhere". Revert,
-confirm 3/3 passes again.
+confirm 3/3 passes again, and confirm `git status --porcelain` is empty --
+the `rm -f` above is load-bearing, not cosmetic.
 
 - [ ] **Step 4: Add to `check-purity`**
 
