@@ -1162,10 +1162,7 @@ Create `examples/coverage-exemptions.scm`:
   "As above.")
  (cmark-render-failed-format
   "Accessor on a condition raised only when a cmark renderer returns NULL,
-   which the pinned version does not do for valid input.")
- (cmark-unsupported-node-type
-  "Accessor on a condition raised only for a node type the adapter does not
-   know. Unreachable while the adapter covers every type the parser emits."))
+   which the pinned version does not do for valid input."))
 ```
 
 - [ ] **Step 2: Write the failing test**
