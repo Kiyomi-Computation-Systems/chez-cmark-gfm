@@ -49,6 +49,11 @@ akku/
 # Executables
 *.exe
 *.out
+# The clean-install CI job's probe writes probe.out and probe.err into the
+# checkout root. *.out above already covers the first; .err has no rule, and
+# a contributor re-running that step by hand would otherwise see it as
+# untracked. CI itself runs in a throwaway container and never notices.
+/probe.err
 # Not a bare extension wildcard in practice: *.out above is meant for
 # `cc -o a.out`-style output, but it also matches examples/expected/NN.out
 # -- make examples's committed golden files -- silently dropping them from
