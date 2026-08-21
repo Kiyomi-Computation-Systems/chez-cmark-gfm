@@ -29,11 +29,15 @@ jobs:
         with:
           submodules: recursive
 
+      # packaging/debian-prereqs.txt is the single source for the build/test
+      # package list (see its header comment). valgrind is added here rather
+      # than in that file because it is needed only by this job's memory
+      # step below, not to build or use the library.
       - name: Install toolchain
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            chezscheme valgrind cmake pkg-config build-essential
+            valgrind $(rg -v '^(#|$)' packaging/debian-prereqs.txt)
 
       # Recorded rather than asserted: the project's documented Chez floor came
       # from one developer's machine, not from testing. Whatever this prints is
