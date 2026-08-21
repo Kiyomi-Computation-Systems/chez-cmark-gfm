@@ -10,6 +10,16 @@
 
 **Spec:** [.plans/2026-08-18-stage-6-packaging-design.md](2026-08-18-stage-6-packaging-design.md)
 
+## Reading this plan after the fact
+
+Each task's Step 1 code block is the code **as drafted**, not as shipped. Where a
+block and the file in the tree disagree, **the tree is authoritative**: several
+blocks were corrected during implementation after being run for the first time,
+and those corrections are recorded in the task's own steps and in
+`.superpowers/sdd/progress.md`, not retrofitted into the drafts. Task 7's Step 1
+block, for one, omits the `iota` import and the `options->bits` helper that the
+shipped `tests/test-stress.sps` needs in order to run at all.
+
 ## Global Constraints
 
 Every task's requirements implicitly include these.
