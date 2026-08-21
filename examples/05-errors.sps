@@ -64,6 +64,19 @@
           #f))
         'no-condition))
 
+;; A node type the SXML adapter has no HTML vocabulary for.
+;; markdown-ast->sxml accepts an arbitrary caller-built tree, not only what
+;; markdown->ast produces, and make-markdown-node validates nothing -- so a
+;; caller can construct an `extension` node naming a native type cmark-gfm
+;; never registered. The adapter covering every type the real parser emits
+;; does not make this unreachable: it is reached from the tree side, not
+;; the parser side.
+(line "bad node type:  "
+      (guard (e ((cmark-unsupported-node? e) (cmark-unsupported-node-type e)))
+        (markdown-ast->sxml
+         (make-markdown-node 'extension '((native-type . "made-up-thing")) '() #f))
+        'no-condition))
+
 ;; Catching the family rather than a member. Every condition above also
 ;; satisfies cmark-error?.
 (line "whole family:   "

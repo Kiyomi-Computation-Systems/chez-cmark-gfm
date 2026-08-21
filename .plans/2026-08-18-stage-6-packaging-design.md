@@ -204,9 +204,11 @@ Three properties keep the gate honest:
 - **Exemptions are themselves checked.** The gate fails if an exemption names an
   identifier that *is* used in an example (stale) or one the library does not export
   (typo). Without this the list rots into a permanent excuse.
-- **The residual gap is stated, not hidden:** an identifier appearing inside a string
-  literal still counts as covered. Closing it means a scope analyzer, which is not
-  worth its cost here.
+- **The residual gap is stated, not hidden:** a symbol counts as "used" whenever it
+  appears anywhere in an example's datum tree — inert quoted data, a bound variable
+  name, anything in non-call position — not only in a genuine invocation. Closing it
+  means a scope analyzer distinguishing reference position from literal data, which
+  is not worth its cost here.
 
 ### 3.4 What the golden files do and do not prove
 
@@ -403,8 +405,9 @@ failure is the predicted one, named.
 
 ## 11. Deliberate coverage gaps
 
-- **An export mentioned only inside a string literal counts as covered** (§3.3).
-  Cost of closing it exceeds the risk.
+- **A symbol counts as covered from any position in an example's datum tree, not
+  only a genuine invocation** — inert quoted data or a bound variable name both
+  count (§3.3). Cost of closing it (a scope analyzer) exceeds the risk.
 - **Golden example output is partly self-certified** (§3.4). Only the HTML paths have
   an independent oracle.
 - **`CHEZ_CMARK_GFM_SHIM` in an unbuilt tree is macOS-only** (§2.4). Documented,

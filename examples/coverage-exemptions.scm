@@ -48,8 +48,6 @@
    exactly this reason.")
  (cmark-render-failed?
   "Predicate, unreachable for the same reason as its accessor below.")
- (cmark-unsupported-node?
-  "Predicate, unreachable for the same reason as its accessor below.")
  (cmark-version-incompatible-compiled
   "Accessor on a condition raised only when the runtime cmark-gfm is outside
    the supported range. An example cannot arrange that without a second,
@@ -68,7 +66,4 @@
   "As above.")
  (cmark-render-failed-format
   "Accessor on a condition raised only when a cmark renderer returns NULL,
-   which the pinned version does not do for valid input.")
- (cmark-unsupported-node-type
-  "Accessor on a condition raised only for a node type the adapter does not
-   know. Unreachable while the adapter covers every type the parser emits."))
+   which the pinned version does not do for valid input."))

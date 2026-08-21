@@ -8,8 +8,11 @@
 ;;; Examples are read as DATUMS, not scanned as text. A text scan is satisfied
 ;;; by an identifier that appears only inside a comment, which documents
 ;;; nothing; `read` discards comments by construction. One residual gap is
-;;; accepted and recorded in the design spec 11: an identifier inside a string
-;;; literal still counts. Closing that needs a scope analyzer.
+;;; accepted and recorded in the design spec 11: a symbol counts as "used"
+;;; whenever it appears anywhere in an example's datum tree -- inert quoted
+;;; data, a bound variable name, anything in non-call position -- not only in
+;;; a genuine invocation. Closing that needs a scope analyzer distinguishing
+;;; reference position from literal data, which is not worth its cost here.
 ;;;
 ;;; Pure: imports no library that reaches a shared object, so it runs under
 ;;; `make check-purity` with CHEZ_CMARK_GFM_SHIM poisoned.

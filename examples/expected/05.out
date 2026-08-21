@@ -4,4 +4,5 @@ contradiction:  contradictory
 embedded NUL:   embedded-nul
 depth limit:    (too-deep 4)
 malformed tree: header-row-not-first
+bad node type:  made-up-thing
 whole family:   caught-as-cmark-error
