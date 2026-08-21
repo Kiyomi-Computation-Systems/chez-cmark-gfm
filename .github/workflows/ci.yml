@@ -56,8 +56,18 @@ jobs:
         run: |
           set -eu
           actual=$( (chezscheme --version 2>&1 || scheme --version 2>&1) | tr -d '[:space:]')
+          if [ -z "$actual" ]; then
+            echo "::error::Could not read a Chez version from this runner (chezscheme --version and scheme --version both produced nothing usable). That is a broken check, not a passing one -- fix version detection instead of letting this step pass silently."
+            exit 1
+          fi
           echo "this job ran Chez: $actual"
-          if ! rg -qF "| Linux/x86-64 (apt)    | $actual" README.org; then
+          # Anchored on both ends: the row prefix fixes the left edge, and
+          # requiring a space or the column's closing '|' immediately after
+          # $actual fixes the right edge, so neither an empty/truncated
+          # $actual nor a corrupted table cell with trailing garbage can
+          # satisfy this as a substring match would.
+          prefix="| Linux/x86-64 (apt)    | $actual"
+          if ! rg -qF -e "$prefix " -e "$prefix|" README.org; then
             echo "::error::README.org's Supported matrix does not name Chez $actual for the Linux row."
             echo "This runner now ships a different Chez than the table documents."
             echo "Fix: edit the 'Supported matrix' table in README.org to say $actual."
@@ -163,8 +173,14 @@ jobs:
         run: |
           set -eu
           actual=$(chez --version 2>&1 | tr -d '[:space:]')
+          if [ -z "$actual" ]; then
+            echo "::error::Could not read a Chez version from this runner (chez --version produced nothing usable). That is a broken check, not a passing one -- fix version detection instead of letting this step pass silently."
+            exit 1
+          fi
           echo "this job ran Chez: $actual"
-          if ! rg -qF "| macOS/ARM64 (Homebrew)| $actual" README.org; then
+          # Anchored on both ends: see the equivalent linux-job comment above.
+          prefix="| macOS/ARM64 (Homebrew)| $actual"
+          if ! rg -qF -e "$prefix " -e "$prefix|" README.org; then
             echo "::error::README.org's Supported matrix does not name Chez $actual for the macOS row."
             echo "This runner now ships a different Chez than the table documents."
             echo "Fix: edit the 'Supported matrix' table in README.org to say $actual."
