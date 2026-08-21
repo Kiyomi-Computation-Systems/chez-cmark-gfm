@@ -7,7 +7,8 @@ CommonMark GFM for Chez Sceme
 #+end_quote
 -----
 
-© [[https://kiyomicomputation.systems/][Kiyomi Computation Systems LLC]], all rights reserved.
+© [[https://kiyomicomputation.systems/][Kiyomi Computation Systems LLC]]. Licensed under BSD 3-Clause — see
+[[file:LICENSE][LICENSE]], and [[file:NOTICE][NOTICE]] for cmark-gfm's own bundled licenses.
 
 * Requirements and Build
 
@@ -29,12 +30,13 @@ CommonMark GFM for Chez Sceme
 
 Two rows, because two rows are what CI proves. Between them, both
 acquisition paths (ADR-0001) are exercised — macOS runs pkg-config and
-vendored; Linux runs vendored only.
+vendored; Linux runs vendored only. *Windows is not supported for v1*
+(ADR-0004); the position is stated here rather than left implied.
 
-| Platform              | Chez   | Memory evidence                  |
-|-----------------------+--------+----------------------------------|
-| macOS/ARM64 (Homebrew)| 10.4.1 | ASan only — *no leak claim*      |
-| Linux/x86-64 (apt)    | 9.5.8  | Valgrind clean                   |
+| Platform              | Chez   | Memory evidence                                  |
+|-----------------------+--------+--------------------------------------------------|
+| macOS/ARM64 (Homebrew)| 10.4.1 | ASan only — *no leak claim*                      |
+| Linux/x86-64 (apt)    | 9.5.8  | Valgrind clean, historically — *unverified here* |
 
 The floor is *9.5.8*, established by test rather than assumption: earlier
 revisions of this file said "10.4.1 or later", which recorded one
@@ -55,8 +57,13 @@ compiles the C shim and writes ~src/cmark/gfm/private/config.sls~ — the
 shim's absolute path, the absolute paths of the cmark shared libraries to
 load before it, and the version range above. *This file is generated and
 gitignored*, not part of the repository, so a fresh clone has to run
-~make build~ before ~(import (cmark gfm))~ can resolve; skip it and the
-import fails on ~library (cmark gfm private config) not found~.
+~make build~ before ~(cmark gfm)~ is usable. Skipping it does *not* raise
+Chez's raw ~library (cmark gfm private config) not found~ under the
+documented install below (~CHEZSCHEMELIBDIRS=src:fallback~): ~fallback/~
+provides a checked-in stand-in for exactly this case, so importing instead
+raises the structured ~&cmark-shim-unavailable~ condition — reason
+~not-built~, path ~#f~ — naming the remedy instead of an opaque loader
+error. See ADR-0014.
 
 Where the C library comes from depends on ~pkg-config --exists
 libcmark-gfm~:
@@ -138,7 +145,8 @@ make dev
 does this for interactive use. It runs ~build~ and ~deps~ first — the
 latter vendors ~chez-srfi~ into ~build/scheme-libs~ for the test suites;
 ~(cmark gfm)~ itself needs none of it — then starts a REPL with
-~CHEZSCHEMELIBDIRS=src:build/scheme-libs~.
+~CHEZSCHEMELIBDIRS=src:fallback:tests:build/scheme-libs~ — the Makefile's
+~CHEZ_LIBDIRS~, the same one ~make test~ uses.
 
 ** ~CHEZ_CMARK_GFM_SHIM~
 
