@@ -33,11 +33,23 @@ jobs:
       # package list (see its header comment). valgrind is added here rather
       # than in that file because it is needed only by this job's memory
       # step below, not to build or use the library.
+      #
+      # grep, not rg: ripgrep is NOT installed on GitHub-hosted runners. This
+      # line used rg once, the substitution collapsed to nothing, apt installed
+      # valgrind alone, chezscheme was never present, and every later step
+      # failed for reasons pointing nowhere near here. A substitution that
+      # fails open is worse than one that errors, so the result is checked.
       - name: Install toolchain
         run: |
+          set -eu
+          pkgs=$(grep -v -e '^#' -e '^$' packaging/debian-prereqs.txt | tr '\n' ' ')
+          if [ -z "$pkgs" ]; then
+            echo "::error::packaging/debian-prereqs.txt yielded no packages. That is a broken step, not an empty list -- do not install valgrind alone and cascade."
+            exit 1
+          fi
+          echo "installing: valgrind $pkgs"
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
-            valgrind $(rg -v '^(#|$)' packaging/debian-prereqs.txt)
+          sudo apt-get install -y --no-install-recommends valgrind $pkgs
 
       # Recorded rather than asserted: the project's documented Chez floor came
       # from one developer's machine, not from testing. Whatever this prints is
@@ -71,13 +83,19 @@ jobs:
           # $actual nor a corrupted table cell with trailing garbage can
           # satisfy this as a substring match would.
           prefix="| Linux/x86-64 (apt)    | $actual"
-          if ! rg -qF -e "$prefix " -e "$prefix|" README.org; then
+          # grep, not rg: ripgrep is absent from GitHub-hosted runners. When this
+          # used rg, `if ! rg ...` could not tell a missing tool from a real
+          # mismatch, so it reported the table as wrong while naming the very
+          # version the table already contained -- a false diagnosis sending the
+          # reader to edit correct prose.
+          command -v grep >/dev/null || { echo "::error::grep is unavailable; this check cannot run."; exit 1; }
+          if ! grep -qF -e "$prefix " -e "$prefix|" README.org; then
             echo "::error::README.org's Supported matrix does not name Chez $actual for the Linux row."
             echo "This runner now ships a different Chez than the table documents."
             echo "Fix: edit the 'Supported matrix' table in README.org to say $actual."
             echo "Do not pin the toolchain and do not delete this check -- the table is"
             echo "supposed to track whatever CI actually runs, not the other way around."
-            rg -n 'Linux/x86-64' README.org || true
+            grep -n 'Linux/x86-64' README.org || true
             exit 1
           fi
 
@@ -184,13 +202,19 @@ jobs:
           echo "this job ran Chez: $actual"
           # Anchored on both ends: see the equivalent linux-job comment above.
           prefix="| macOS/ARM64 (Homebrew)| $actual"
-          if ! rg -qF -e "$prefix " -e "$prefix|" README.org; then
+          # grep, not rg: ripgrep is absent from GitHub-hosted runners. When this
+          # used rg, `if ! rg ...` could not tell a missing tool from a real
+          # mismatch, so it reported the table as wrong while naming the very
+          # version the table already contained -- a false diagnosis sending the
+          # reader to edit correct prose.
+          command -v grep >/dev/null || { echo "::error::grep is unavailable; this check cannot run."; exit 1; }
+          if ! grep -qF -e "$prefix " -e "$prefix|" README.org; then
             echo "::error::README.org's Supported matrix does not name Chez $actual for the macOS row."
             echo "This runner now ships a different Chez than the table documents."
             echo "Fix: edit the 'Supported matrix' table in README.org to say $actual."
             echo "Do not pin the toolchain and do not delete this check -- the table is"
             echo "supposed to track whatever CI actually runs, not the other way around."
-            rg -n 'macOS/ARM64' README.org || true
+            grep -n 'macOS/ARM64' README.org || true
             exit 1
           fi
 
@@ -272,6 +296,14 @@ jobs:
             echo "::error::an unbuilt tree still reports a missing library"
             exit 1
           fi
+
+      # `make build` runs `git submodule update` on the vendored path, and git
+      # refuses a working tree whose owner differs from the current user --
+      # `fatal: detected dubious ownership`, exit 128. In a container job the
+      # checkout is made by the runner and the steps run as root, so that is
+      # always true here. Scoped to this throwaway container, never the host.
+      - name: Let git operate on the runner-owned checkout
+        run: git config --global --add safe.directory '*'
 
       # CHEZ=chezscheme because Debian names the binary that way and the
       # Makefile defaults to `chez`.
