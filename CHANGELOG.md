@@ -3,7 +3,7 @@
 All notable changes to this project are documented here. This project follows
 [Semantic Versioning](https://semver.org).
 
-## [1.0.0] — 2026-08-18
+## [1.0.0] — 2026-08-21
 
 Packaging, documentation, and release. No parsing, rendering, or mapping
 behavior changed: 1.0 freezes the API. The one public-API change is additive.
@@ -55,8 +55,9 @@ behavior changed: 1.0 freezes the API. The one public-API change is additive.
   MacFarlane); the `houdini`-, `buffer`/`chunk`-, and `utf8proc`-derived code
   (three separate MIT grants); `normalize.py` (MIT, Karl Dubost); and the
   CommonMark spec text itself (CC-BY-SA 4.0). Plan §14 requires license
-  notices for the binding and its native dependency; this repository had
-  neither before.
+  notices for the binding and its native dependency. `LICENSE` (the
+  binding's own) predates this branch; `NOTICE`, covering the native
+  dependency, is new here — closing the half of §14 that was still open.
 - **A clean-machine CI job** in a bare `ubuntu:24.04` container that runs only
   the steps the README documents. It never runs `make deps`.
 - **`make check-config`** and **`make examples`**.
@@ -78,7 +79,7 @@ behavior changed: 1.0 freezes the API. The one public-API change is additive.
   Chez resolves a library from the first entry that has it.
 - **The documented Chez floor is 9.5.8, not 10.4.1.** The old claim recorded
   one developer's machine and was never tested; 9.5.8 is the version Ubuntu CI
-  has run green under Valgrind on earlier commits (see Verification status above
+  has run green under Valgrind on earlier commits (see Verification status below
   for what that does and does not establish about this release). A CI step now asserts the README matrix against the
   version each job actually ran, so a runner-image bump fails the build rather
   than letting the claim go stale.
