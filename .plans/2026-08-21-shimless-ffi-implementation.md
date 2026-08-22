@@ -1546,6 +1546,20 @@ above `build` if Task 4 did not:
 # worth one command.
 ```
 
+**Fix the `examples:` target's hardcoded path.** `Makefile:497` still runs each example
+under `CHEZSCHEMELIBDIRS=src:fallback`, and `fallback/` was deleted in Task 4 — so it now
+names a directory that does not exist. It passes only because Chez tolerates a missing
+entry.
+
+Do **not** replace it with `$(CHEZ_LIBDIRS)`. The comment above it (`Makefile:478-482`)
+explains why the path is minimal: `build/scheme-libs`, `chez-srfi`, and the `wak-*`
+libraries are excluded on purpose, so that an example which reached for a dev dependency
+would fail this target. That is the only thing keeping the 0.3.0 CHANGELOG's "a consumer
+acquires no dev dependency" claim true rather than merely written down.
+
+The property survives; only the path shrinks. Change it to `src`, and update the comment's
+opening clause from "src:fallback and NOTHING ELSE" to "src and NOTHING ELSE".
+
 Update `.PHONY`:
 
 ```make
