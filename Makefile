@@ -14,6 +14,15 @@ VENDOR_BUILD:= $(BUILD_DIR)/vendor
 # PATH is not the one to test against.
 CMARK_CLI ?= cmark-gfm
 
+# Install prefix for `make install`. Chez has NO system-wide R6RS library
+# directory -- (library-directories) is (("." . ".")) with nothing set --
+# so installing here does not make CHEZSCHEMELIBDIRS unnecessary. What it
+# buys is one canonical location and one stable variable instead of a path
+# into a source checkout.
+PREFIX  ?= /usr/local
+LIBDIR  ?= $(PREFIX)/lib/chez-cmark-gfm
+DESTDIR ?=
+
 SRFI_SRC     := vendor/chez-srfi
 SXMLT_SRC    := vendor/wak-sxml-tools
 COMMON_SRC   := vendor/wak-common
@@ -56,7 +65,12 @@ TESTS        := $(wildcard tests/test-*.sps)
 # work that would be lost".
 MEMORY_TESTS := $(filter-out tests/test-differential.sps,$(TESTS))
 
-.PHONY: all build deps check-pins check-purity check-help examples dev help test test-memory vendor clean deps-info
+# MUST stay on one physical line. check-help extracts targets with
+# `awk '/^\.PHONY:/ ...'`, which matches one physical line and has no
+# continuation handling -- a backslash-wrapped .PHONY hides every
+# continuation-line target from that check and adds a bogus `\`
+# pseudo-target. Found and fixed once already; see the mutation log.
+.PHONY: all build deps check-pins check-purity check-help check-install examples dev help install uninstall test test-memory vendor clean deps-info
 
 help: ## Show this help message
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_.-]+:.*?## / \
@@ -346,3 +360,50 @@ examples: build ## Run every examples/*.sps and diff against examples/expected/
 	if [ $$fail -eq 0 ]; then echo "ALL EXAMPLES PASSED"; \
 	else echo "EXAMPLES FAILED"; fi; \
 	exit $$fail
+
+# CHEZ_CMARK_GFM_LIBS is UNSET here, not set empty. `(getenv "X")` returns
+# "" for an empty-but-set variable, and "" is truthy in Scheme, so
+# resolve-cmark-libraries would take the override branch and raise
+# &cmark-library-unavailable reason invalid-override -- a failure that
+# looks like a broken install but is really a broken check.
+check-install: ## Install to a temp prefix and prove (cmark gfm) loads from it alone
+	@set -eu; \
+	tmp="$$(mktemp -d)"; \
+	trap 'rm -rf "$$tmp"' EXIT INT TERM; \
+	$(MAKE) --no-print-directory install PREFIX="$$tmp" >/dev/null; \
+	echo "=== check-install: importing from $$tmp/lib/chez-cmark-gfm alone ==="; \
+	if env -u CHEZ_CMARK_GFM_LIBS \
+	     CHEZSCHEMELIBDIRS="$$tmp/lib/chez-cmark-gfm" \
+	     $(CHEZ) --program tests/install-probe.sps; then \
+	  echo "check-install: an installed tree imports and renders"; \
+	else \
+	  echo "check-install: FAILED -- the tree installed at $$tmp could not" >&2; \
+	  echo "render a document with CHEZSCHEMELIBDIRS naming only that" >&2; \
+	  echo "directory. Check the install target's copy step." >&2; \
+	  exit 1; \
+	fi
+
+# Copies .sls files and nothing else. 2.0 compiles nothing (ADR-0015), and
+# the install path must not quietly acquire a build step.
+install: ## Copy src/cmark/**.sls into $(DESTDIR)$(LIBDIR) and print the export line
+	@set -eu; \
+	dest="$(DESTDIR)$(LIBDIR)"; \
+	find src/cmark -name '*.sls' | while read -r f; do \
+	  rel="$${f#src/}"; \
+	  mkdir -p "$$dest/$$(dirname "$$rel")"; \
+	  cp "$$f" "$$dest/$$rel"; \
+	done; \
+	echo "installed to $$dest"; \
+	echo; \
+	echo "Add this to your shell profile. The TRAILING COLON matters:"; \
+	echo "without it Chez replaces its search path outright and drops"; \
+	echo "\".\", so relative imports stop resolving."; \
+	echo; \
+	echo "    export CHEZSCHEMELIBDIRS=$(LIBDIR):"
+
+uninstall: ## Remove the tree installed by `make install`
+	@set -eu; \
+	dest="$(DESTDIR)$(LIBDIR)"; \
+	rm -rf "$$dest/cmark"; \
+	rmdir "$$dest" 2>/dev/null || true; \
+	echo "removed $$dest/cmark"
