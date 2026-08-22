@@ -199,7 +199,22 @@
           ((string=? needle (substring hay i (+ i n))) #t)
           (else (loop (+ i 1)))))))
 
-  (define (extensions-path? p) (substring-search "cmark-gfm-extensions" p))
+  ;; Classify by BASENAME, not the whole path. A core library sitting in a
+  ;; directory whose name happens to contain "cmark-gfm-extensions" would
+  ;; otherwise be classified as the extensions library and silently swapped
+  ;; with its partner -- both files exist and both are absolute, so nothing
+  ;; downstream would notice. Demonstrated: whole-path matching accepts
+  ;; "/home/u/cmark-gfm-extensions-cache/renamed-core.so:/home/u/other/renamed-ext.so"
+  ;; as valid with the pair reversed.
+  (define (basename p)
+    (let loop ((i (- (string-length p) 1)))
+      (cond
+        ((< i 0) p)
+        ((char=? #\/ (string-ref p i)) (substring p (+ i 1) (string-length p)))
+        (else (loop (- i 1))))))
+
+  (define (extensions-path? p)
+    (substring-search "cmark-gfm-extensions" (basename p)))
 
   ;; -> (values 'ok (core . ext)) | (values 'invalid #f)
   ;;

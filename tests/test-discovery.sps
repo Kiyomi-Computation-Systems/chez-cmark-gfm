@@ -143,5 +143,18 @@
 (test-equal "nonexistent file" '(invalid #f)
   (ov "/a/libcmark-gfm.so:/a/libcmark-gfm-extensions.so" (lambda (p) #f)))
 
+;; Classification reads the BASENAME only. Matching the whole path lets a
+;; directory name decide which library is which: the second case below is
+;; accepted as valid with the pair REVERSED under whole-path matching, which
+;; loads the core as the extensions library and vice versa.
+(test-equal "a directory named ...cmark-gfm-extensions... does not reclassify the core"
+  '(ok ("/opt/cmark-gfm-extensions-build/libcmark-gfm.so"
+        . "/opt/other/libcmark-gfm-extensions.so"))
+  (ov "/opt/cmark-gfm-extensions-build/libcmark-gfm.so:/opt/other/libcmark-gfm-extensions.so"))
+
+(test-equal "neither basename identifies itself -> refused, never guessed"
+  '(invalid #f)
+  (ov "/home/u/cmark-gfm-extensions-cache/renamed-core.so:/home/u/other/renamed-ext.so"))
+
 (test-end "discovery")
 (exit (if (zero? (test-runner-fail-count runner)) 0 1))
