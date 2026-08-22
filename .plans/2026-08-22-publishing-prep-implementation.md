@@ -45,6 +45,11 @@ same commit that gives them a new target.
   check fail by name, record it in
   `.plans/publishing-prep-mutation-log.md`. A check nobody has watched fail
   is assumed broken (AGENTS.md trap 1).
+- **`.PHONY` MUST stay on ONE physical line.** `check-help` extracts targets
+  with `awk '/^\.PHONY:/ ...'`, which matches a single physical line and has
+  no continuation handling. A backslash-wrapped `.PHONY` yields
+  ` alpha beta \` — every target on a continuation line becomes invisible to
+  the check, and `\` becomes a bogus pseudo-target. Verified during Task 1.
 - **Conventional Commits**, branch `docs/publishing-prep`.
 
 ## File Structure
@@ -133,8 +138,7 @@ check-help: ## Fail if any .PHONY target is undocumented in `make help`
 Update the `.PHONY` line at `Makefile:59` to:
 
 ```make
-.PHONY: all build deps check-pins check-purity check-help examples dev help \
-        test test-memory vendor clean deps-info
+.PHONY: all build deps check-pins check-purity check-help examples dev help test test-memory vendor clean deps-info
 ```
 
 - [ ] **Step 2: Run the check to verify it fails**
@@ -357,9 +361,7 @@ uninstall: ## Remove the tree installed by `make install`
 Extend `.PHONY`:
 
 ```make
-.PHONY: all build deps check-pins check-purity check-help check-install \
-        examples dev help install uninstall test test-memory vendor clean \
-        deps-info
+.PHONY: all build deps check-pins check-purity check-help check-install examples dev help install uninstall test test-memory vendor clean deps-info
 ```
 
 - [ ] **Step 4: Run the checks to verify they pass**
