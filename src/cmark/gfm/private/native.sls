@@ -15,6 +15,10 @@
           resolve-shim-path load-shim
           c-string->string
           option-bits
+          cmark-opt-default cmark-opt-sourcepos cmark-opt-hardbreaks
+          cmark-opt-nobreaks cmark-opt-validate-utf8 cmark-opt-smart
+          cmark-opt-unsafe
+          shim-option-bits
           live-counts
           count-parser-new! count-parser-free!
           count-root-new!   count-root-free!
@@ -285,8 +289,35 @@
 
   (define (bool->int x) (if x 1 0))
 
+  ;; cmark's option bits, transcribed from vendor/cmark-gfm/src/cmark-gfm.h.
+  ;; tests/test-option-bits.sps asserts every one of these against that header;
+  ;; five of the six are additionally covered behaviourally by
+  ;; tests/test-differential.sps. Do not "tidy" these into a sequence -- the
+  ;; values are not contiguous (UNSAFE is bit 17, not bit 5).
+  (define cmark-opt-default       0)
+  (define cmark-opt-sourcepos     (bitwise-arithmetic-shift-left 1 1))
+  (define cmark-opt-hardbreaks    (bitwise-arithmetic-shift-left 1 2))
+  (define cmark-opt-nobreaks      (bitwise-arithmetic-shift-left 1 4))
+  (define cmark-opt-validate-utf8 (bitwise-arithmetic-shift-left 1 9))
+  (define cmark-opt-smart         (bitwise-arithmetic-shift-left 1 10))
+  (define cmark-opt-unsafe        (bitwise-arithmetic-shift-left 1 17))
+
   (define (option-bits validate-utf8? sourcepos? hardbreaks?
                        nobreaks? smart? unsafe-html?)
+    (let ((add (lambda (acc on? bit) (if on? (bitwise-ior acc bit) acc))))
+      (add (add (add (add (add (add cmark-opt-default
+                                    validate-utf8? cmark-opt-validate-utf8)
+                               sourcepos?    cmark-opt-sourcepos)
+                          hardbreaks?   cmark-opt-hardbreaks)
+                     nobreaks?     cmark-opt-nobreaks)
+                smart?        cmark-opt-smart)
+           unsafe-html?  cmark-opt-unsafe)))
+
+  ;; TRANSITIONAL (deleted in Task 4 with the shim): the C implementation the
+  ;; table above replaces, kept only so tests/test-option-bits.sps can prove
+  ;; the two agree across all 64 combinations.
+  (define (shim-option-bits validate-utf8? sourcepos? hardbreaks?
+                            nobreaks? smart? unsafe-html?)
     (raw-option-bits (bool->int validate-utf8?)
                      (bool->int sourcepos?)
                      (bool->int hardbreaks?)
