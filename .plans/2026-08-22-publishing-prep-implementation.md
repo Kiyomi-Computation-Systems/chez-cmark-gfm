@@ -51,6 +51,10 @@ same commit that gives them a new target.
   ` alpha beta \` — every target on a continuation line becomes invisible to
   the check, and `\` becomes a bogus pseudo-target. Verified during Task 1.
 - **Conventional Commits**, branch `docs/publishing-prep`.
+- **Every commit ends with the trailer**
+  `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`, on its own line
+  after a blank line. The task commit-message templates below omit it; append
+  it anyway.
 
 ## File Structure
 
