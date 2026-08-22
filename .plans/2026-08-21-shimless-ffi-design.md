@@ -261,6 +261,53 @@ Three independent properties keep it out, and each is worth preserving deliberat
 `native.sls` must carry a comment saying so, because the natural "simplification" of
 falling back to `(load-shared-object "libcmark-gfm.dylib")` silently reintroduces it.
 
+### 3.8 The version floor, and why `index` was redefined
+
+The declared range `(#x001d0000 . #x001dffff)` claims support from `0.29.0.gfm.0`. As
+written for 1.0 that was **false**, and 2.0 inherited it: `native.sls` bound
+`cmark_node_get_item_index`, which upstream added in commit `f040422` and first tagged in
+**0.29.0.gfm.11**. On any older library the import died with
+`Exception in foreign-procedure: no entry for "cmark_node_get_item_index"` — a raw Chez
+error, not a structured condition. Reproduced in a bare `ubuntu:24.04` container.
+
+1.0 shipped the same defect but rarely hit it, because its documented install was
+clone-plus-`make build` against a vendored, pinned `gfm.13`. 2.0 documents
+`apt install cmark-gfm`, which walks straight into it: Debian 11 (gfm.0), Ubuntu 22.04 LTS
+(gfm.3), Debian 12 and Ubuntu 24.04 LTS (both gfm.6) — the four largest installed bases.
+
+**Decision: drop the binding and compute `index` in Scheme**, so the declared floor becomes
+true rather than raising it to gfm.11 and dropping those platforms.
+
+That is a redefinition, not a reimplementation, and the difference is the point:
+
+| | before | after |
+|---|---|---|
+| `1. 2. 3.` | `(1 2 3)` | `(1 2 3)` |
+| `1. 1. 1.` | `(1 1 1)` | `(1 2 3)` |
+| `1. 5. 9.` | `(1 5 9)` | `(1 2 3)` |
+| bullets, tasks | `(0 0 0)` | `(0 0 0)` |
+
+`cmark_node_get_item_index` returns `node->as.list.start` **for an item**, which the parser
+sets to the literal number typed in the source. That value is not derivable from position
+and start, so this genuinely discards information. Three things make the trade acceptable:
+
+- **cmark itself does not treat it as durable.** `render.c:188-190` overwrites it with
+  `start`, then `previous + 1`, whenever it renders to commonmark, man, or plaintext — so
+  `markdown->commonmark` already renumbers `1. 1. 1.` to `1. 2. 3.` today. The ordinal is
+  cmark's own rendering semantics, not an invention.
+- **`1. 1. 1.` is a common idiom**, and reporting `(1 1 1)` tells a consumer what was typed
+  rather than which item it is. The ordinal is the more useful of the two for most callers.
+- **Nothing depends on the old meaning.** There are no users of this library.
+
+The cost is stated rather than hidden: `1. 5. 9.` and `1. 2. 3.` are now indistinguishable
+in the AST, with no other route to the literal numbers. §8's "what the SXML mapping drops"
+table must lose its `item index` → `markdown->ast` row, because index no longer survives —
+it is replaced.
+
+No new FFI surface: `convert-children` already threads a 0-based sibling index for
+`table_cell` alignment, and the parent node it walks *is* the list, so `node-list-start`
+and `node-list-type` supply the rest.
+
 ## 4. Version checking
 
 Two checks, at different times, for different reasons.
