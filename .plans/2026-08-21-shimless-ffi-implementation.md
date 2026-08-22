@@ -1018,7 +1018,7 @@ git commit -m "feat: bind cmark directly, drop the shim's five entry points"
 
 **Files:**
 - Modify: `src/cmark/gfm/private/native.sls:36-105` (resolution and loading)
-- Delete: `src/cmark-gfm-shim.c`, `src/cmark-gfm-shim.h`, `src/cmark/gfm/private/config.sls`, `fallback/`, `tests/check-config.sps`, `tests/test-fallback-config.sps`, `tests/test-shim-loading.sps`
+- Delete: `src/cmark-gfm-shim.c`, `src/cmark-gfm-shim.h`, `src/cmark/gfm/private/config.sls`, `fallback/`, `tests/check-config.sps`, `tests/test-fallback-config.sps`, `tests/test-shim-loading.sps`, `tests/check-prod.sps`, `tests/shim-load-probe.sps`
 - Create: `tests/test-library-loading.sps`, `tests/preflight.sps`
 - Modify: `Makefile:144` (`build` target) and `Makefile:97` (`CHEZ_LIBDIRS`) — the minimum
   to keep `make test` working; the cleanup is Task 6
@@ -1172,10 +1172,32 @@ git rm src/cmark-gfm-shim.c src/cmark-gfm-shim.h
 git rm -r fallback
 git rm src/cmark/gfm/private/config.sls 2>/dev/null || rm -f src/cmark/gfm/private/config.sls
 git rm tests/check-config.sps tests/test-fallback-config.sps tests/test-shim-loading.sps
+git rm tests/check-prod.sps tests/shim-load-probe.sps
 ```
 
 `config.sls` is gitignored, so `git rm` may report it as untracked; the `||` branch
 handles that.
+
+**Why `check-prod.sps` and `shim-load-probe.sps` die here and not in Task 6.** Task 6
+removes the Makefile *targets* `prod` and `check-prod`; these are the *files*, and they
+follow the split already used for `check-config.sps` — file deleted here, `check-config`
+target deleted in Task 6. Two reasons neither can wait:
+
+- Task 3 already made `tests/check-prod.sps` fail unconditionally. Its premise is that a
+  prod shim freezes `live-counts` at `(0 0 0)`; with the counters a Scheme box
+  (`native.sls:154-166`) no build flag can freeze them, nothing in Scheme binds
+  `chez_cmark_live_*` any more, and its diagnostic — "The shim was linked with dev flags"
+  — is now false. Observed: `check-prod: FAIL: counters moved during a live scope:
+  (0 1 0)`. Design §6 lists the file for deletion; no task previously did it.
+- Task 5 Step 5 gates on `grep -rn 'shim' src tests examples` returning **no** matches.
+  `check-prod.sps` carries 7 and `shim-load-probe.sps` 6, so leaving them until Task 6
+  would send Task 5's implementer to carefully rewrite comments in two files that are
+  about to be deleted.
+
+`shim-load-probe.sps` has no callers once this step runs: only `test-fallback-config.sps`
+and `test-shim-loading.sps` invoked it, and both are deleted above. It is a subprocess
+probe, not a suite, so the `tests/test-*.sps` wildcard never reached it either — left in
+place it would rot silently.
 
 (The transitional block in `tests/test-option-bits.sps` was already deleted in Task 3,
 in the same step that removed `shim-option-bits`. Nothing to do here.)
@@ -1287,6 +1309,14 @@ git commit -m "feat: resolve libcmark-gfm at runtime; delete the C shim and fall
 - Modify: `src/cmark/gfm/private/native.sls` (all raise sites)
 - Modify: `tests/test-conditions.sps:19-31,52-53,72`, `tests/test-native.sps:202-204`, `tests/test-library-loading.sps`
 - Modify: `examples/coverage-exemptions.scm:21,45,51,61,65`
+- Modify: `tests/test-stress.sps:108-113`, `tests/test-render.sps:51-54` — **comments
+  only.** Both narrate the "a prod shim compiles the counters away and freezes all
+  three at 0" scenario that Task 3 made impossible. No assertion depends on either
+  and both suites pass, so they are not defects; they are named here so Step 5's grep
+  gate has a known answer instead of a surprise. Rewrite them to the property that
+  still holds: the counters are Scheme-side and always on, so these movement checks
+  guard against a getter wired to the wrong counter or frozen, not against a build
+  flavor that no longer exists.
 
 **Interfaces:**
 - Consumes: everything from Task 4.

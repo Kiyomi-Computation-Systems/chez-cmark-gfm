@@ -326,6 +326,7 @@ exactly the drift this project's ADRs exist to prevent.
 | `tests/check-config.sps` | compared two config files; there is one, checked in |
 | `tests/test-fallback-config.sps` | tested `not-built`, now unreachable |
 | `tests/test-shim-loading.sps` | replaced by §7.1–7.2 |
+| `tests/shim-load-probe.sps` | subprocess probe; its only callers are the two suites above |
 | `tests/check-prod.sps` | discriminated shim flavors; see §6.2 |
 | Makefile: `check-config`, `mode-flip-relink`, `prod`, `check-prod`, `FLAVOR`, shim/vendor-link machinery | no C artifact to build, flavor, or relink |
 
