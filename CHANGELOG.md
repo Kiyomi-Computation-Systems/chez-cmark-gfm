@@ -77,9 +77,12 @@ FFI surface was added to remove one. See design spec §3.8.
   replaced the shim's job of reading them from the header.
 - **`tests/preflight.sps`** — what `make build` runs.
 - **CI jobs `no-library` and `akku-install`.** The first installs Chez and
-  deliberately no cmark-gfm, asserting `make build` fails with a message
-  naming the remedy; without it, nothing would ever exercise the `not-found`
-  branch, because every other job installs the package.
+  deliberately no cmark-gfm, asserting `make build` fails, reports reason
+  `not-found`, and names the remedy; without it, nothing would ever exercise
+  the `not-found` branch, because every other job installs the package. Both
+  greps are needed: `tests/preflight.sps`'s catch-all clause prints the same
+  remedy for any condition, so the reason symbol is the only half of the
+  assertion that discriminates.
 
 ### Removed
 
@@ -130,6 +133,17 @@ FFI surface was added to remove one. See design spec §3.8.
   library built from an unpatched upstream `0.29.0.gfm.0` checkout would
   still fail at import. The source-build instructions in `README.org` pin
   `0.29.0.gfm.13`, so nothing this project documents reaches it.
+- **The supported-range check is what an out-of-range library hits, and it is
+  a version check only.** `cmark_version()` is read in `native.sls`'s library
+  body, immediately after the two loads and ahead of every other
+  `foreign-procedure` definition, so an unsupported version raises
+  `&cmark-version-incompatible` at import — on the discovery path and on the
+  `CHEZ_CMARK_GFM_LIBS` override alike, the latter doing no filename version
+  parsing at all. It cannot help with the case in the bullet above: a library
+  *inside* the range that is missing a symbol still dies at whichever binding
+  it cannot satisfy, with a raw Chez `no entry for …`. Keeping the declared
+  range honest about the symbols actually bound is a review obligation, not
+  something this check enforces.
 - **"`free` is the third `void*` in `struct cmark_mem`" is an ABI
   assumption**, where the shim had a compiler-checked member access. It is
   stable across the pinned 0.29 range and is covered by an allocator

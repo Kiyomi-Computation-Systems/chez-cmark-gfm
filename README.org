@@ -54,9 +54,12 @@ than left implied.
 | Linux/x86-64 (apt)    | 9.5.8  | ~apt~          | Valgrind clean, historically — *unverified here* |
 
 Two further CI jobs cover what neither row does: ~no-library~ installs Chez
-and deliberately no cmark-gfm, asserting ~make build~ fails with a message
-naming the remedy; ~akku-install~ installs from ~Akku.manifest~ and calls
-into ~(cmark gfm)~ with nothing set in the environment.
+and deliberately no cmark-gfm, asserting ~make build~ fails, reports reason
+~not-found~, and names the remedy — the reason symbol is what tells that
+failure apart from any other, since the diagnostic's catch-all clause prints
+the same remedy for every condition; ~akku-install~ installs from
+~Akku.manifest~ and calls into ~(cmark gfm)~ with nothing set in the
+environment.
 
 The floor is *9.5.8*, established by test rather than assumption: earlier
 revisions of this file said "10.4.1 or later", which recorded one

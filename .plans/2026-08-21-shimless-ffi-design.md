@@ -313,10 +313,41 @@ and `node-list-type` supply the rest.
 Two checks, at different times, for different reasons.
 
 1. **At selection**, from the filename, so an out-of-range library is diagnosed by name
-   before anything is loaded.
+   before anything is loaded. Discovery path only — `CHEZ_CMARK_GFM_LIBS` does no version
+   parsing whatsoever (§3.5).
 2. **After loading**, from `cmark_version()`, because a filename is a claim and distros
-   patch. This is the authoritative check and it is never skipped — including on the
-   override path, where no filename check happened at all.
+   patch. This is the authoritative check, and it runs on **both** paths, override
+   included, because it lives in `native.sls`'s library body: `cmark_version` is bound
+   alone immediately after the two `load-shared-object` calls
+   (`native.sls:134`) and checked there (`native.sls:157`), ahead of every other
+   `foreign-procedure` definition.
+
+That position is load-bearing, not stylistic. Chez resolves a foreign entry point when
+the `foreign-procedure` expression is **evaluated**, and a library body evaluates its
+definitions in order, so any binding placed above the check would abort the import first
+if its symbol were missing. The check is written as a *definition* — an R6RS body admits
+no expression among the definitions that follow it — the same idiom the two loads already
+use. Written any later, notably in `ensure-native-loaded!`, which runs at first *use*, it
+is unreachable for exactly the libraries it exists to reject; that is how it was built
+until this was corrected.
+
+**What it covers, exactly.** A library whose `cmark_version()` falls outside
+`cmark-supported-version-range` raises `&cmark-version-incompatible` at import, on either
+path. Nothing else.
+
+**What it does not cover.** A library *inside* the range that is missing a symbol this
+binding declares still dies at import with a raw
+`Exception in foreign-procedure: no entry for "…"`, because those declarations are
+evaluated after the check; so does a library that does not export `cmark_version` at all,
+one definition earlier. §3.8's `cmark_node_get_item_index` defect was precisely that
+shape — in range, symbol absent — and no version check of any placement could have
+diagnosed it. The remedy for that class is to stop binding the symbol, which is what §3.8
+does.
+
+`ensure-native-loaded!` keeps a second copy of the range check. Under the ordering above
+it cannot fire — same library, same constant, same answer — so it is redundant
+re-verification kept for its price (one foreign call, once per process, behind a mutex
+that is taken anyway), not for coverage.
 
 `version-compatible?` loses its `compiled` argument and collapses to `version-supported?`.
 

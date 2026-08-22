@@ -262,14 +262,70 @@ jobs:
           make build
           make test
 
-      # The point of this job: a Homebrew-only machine compiles nothing.
-      # build/lib was the shim's own output directory in 1.0 (a different
-      # path from build/vendor, the vendored submodule's -- and nothing on
-      # this job runs `make vendor` to populate that one either). If this
-      # ever exists here, something compiled C, and the premise that Akku can
-      # install this package with no compiler is false.
+      # The point of this job: a Homebrew-only machine compiles nothing. That
+      # is half the evidence for the release's headline "no compiler required"
+      # claim; the akku-install job is the other half.
+      #
+      # REPLACES a `test ! -e build/lib` guard that could not fail. build/lib
+      # was the 1.0 shim's own output directory, and 2.0 deleted the Makefile
+      # rules that wrote it -- `build/lib` now appears nowhere in the Makefile,
+      # so no target this job runs (or any other) can create it. The step
+      # passed unconditionally and asserted nothing.
+      #
+      # What is asserted instead: after this job's own `make build && make
+      # test` above, no compiled object or shared library exists anywhere in
+      # the working tree.
+      #
+      # vendor/ is excluded DELIBERATELY, and the exclusion is the reason this
+      # is scoped to a tree walk rather than to one path. `make vendor`
+      # legitimately cmake-builds the pinned cmark-gfm submodule as a
+      # DEVELOPMENT dependency -- the differential suites' CLI oracle, the
+      # 744-example corpus, the header tests/test-option-bits.sps parses (see
+      # the linux job's "Build vendored cmark-gfm" step). That is upstream C,
+      # built on purpose, and it is not ours. This job never runs `make vendor`
+      # -- "Install toolchain" above installs no cmake -- so vendor/ should
+      # hold no artifact here either; excluding it is what keeps this exact
+      # command truthful for a developer running it locally after `make vendor`
+      # instead of tempting someone to weaken the pattern list.
+      #
+      # Classified by CONTENT, not by filename: tests/test-library-loading.sps
+      # deliberately writes tests/tmp/libcmark-gfm.so and
+      # tests/tmp/libcmark-gfm-extensions.so as 20-byte TEXT decoys, to drive
+      # discovery's 'load-failed branch. A name-only check trips on those, and
+      # the obvious repair -- excluding tests/tmp as well -- would punch a hole
+      # in the one writable directory the suite already writes to. file(1)
+      # separates a real Mach-O/ELF artifact from a decoy with no second
+      # exclusion, and its absence is treated as a broken check rather than a
+      # passing one.
       - name: assert no C artifact was produced
-        run: test ! -e build/lib || { echo "a shared object was built; 2.0 compiles nothing" >&2; exit 1; }
+        run: |
+          set -eu
+          command -v file >/dev/null \
+            || { echo "::error::file(1) is unavailable; this check cannot run."; exit 1; }
+          list="${RUNNER_TEMP:-/tmp}/c-artifact-candidates.txt"
+          find . -path ./vendor -prune -o -path ./.git -prune -o -type f \
+            \( -name '*.o' -o -name '*.a' -o -name '*.so' -o -name '*.so.*' \
+               -o -name '*.dylib' -o -name '*.bundle' \) -print > "$list"
+          rc=0
+          # read -r, not `for f in $(...)`: a path containing a space must not
+          # split into two unexamined halves and pass.
+          while IFS= read -r f; do
+            desc=$(file -b "$f")
+            case "$desc" in
+              *Mach-O*|*ELF*|*'ar archive'*)
+                echo "::error::compiled artifact present: $f ($desc)"
+                rc=1 ;;
+              *) echo "  examined, not a binary: $f -- $desc" ;;
+            esac
+          done < "$list"
+          if [ "$rc" -ne 0 ]; then
+            echo "2.0 compiles nothing on this path. If something here now builds C, the"
+            echo "'no compiler required' claim -- README.org's Installing section, and the"
+            echo "akku-install job's exit criterion -- is false, and this step is the only"
+            echo "place in CI that would notice."
+            exit 1
+          fi
+          echo "no compiled object or shared library outside vendor/: nothing compiled C"
 
       # ASan only. LeakSanitizer is unsupported on macOS/ARM64, so this catches
       # use-after-free and overflows but CANNOT support a leak claim. Do not
@@ -381,13 +437,28 @@ jobs:
       # the grep below would then fail for the WRONG reason: exactly the
       # "green/red for reasons unrelated to what the job claims" trap this
       # file's header warns about, just landing on red instead of green.
-      - name: build must fail with a message naming the remedy
+      # BOTH greps are required, and the reason one is not decoration. The
+      # remedy text alone cannot discriminate this failure from any other:
+      # tests/preflight.sps's catch-all `else` clause prints the SAME two
+      # install one-liners for any condition at all, so a job that greps only
+      # for `apt install cmark-gfm` goes green on a raw FFI crash, an
+      # unreadable candidate directory, or an out-of-range library just as
+      # readily as on the not-found branch it claims to test. Observed exactly
+      # that on ubuntu:24.04. The reason symbol is what the not-found clause
+      # prints and the catch-all does not, so it is the discriminating half;
+      # the remedy grep stays because naming the remedy is the other, separate
+      # promise (ADR-0014). Design spec 7.6 asked for this and it was not built.
+      - name: build must fail with not-found, and name the remedy
         run: |
           set +e
           out=$(make CHEZ=chezscheme build 2>&1); status=$?
           set -e
           echo "$out"
           test $status -ne 0 || { echo "expected failure, got success" >&2; exit 1; }
+          # Matches the clause AND the reason in one string, so a different
+          # clause that happened to mention not-found could not satisfy it.
+          echo "$out" | grep -q 'no usable libcmark-gfm (not-found)' \
+            || { echo "diagnostic did not report reason not-found; this job cannot tell which failure it got" >&2; exit 1; }
           echo "$out" | grep -q 'apt install cmark-gfm' \
             || { echo "diagnostic did not name the remedy" >&2; exit 1; }
 

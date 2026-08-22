@@ -134,9 +134,12 @@ Rejected alternatives:
   deliberately not discriminated (`conditions.sls:97-100`).
 - **`not-found` does not say where it looked.** The condition carries `path` `#f` and
   the reason symbol and nothing else (`conditions.sls:101-104`); the diagnostic
-  `tests/preflight.sps:26-30` prints names the *remedy* — the two install one-liners and
-  the override — which is what CI asserts (`.github/workflows/ci.yml`, step
-  "build must fail with a message naming the remedy"). The design spec asked
+  `tests/preflight.sps` prints both the reason symbol and the *remedy* — the two install
+  one-liners and the override — and CI asserts both (`.github/workflows/ci.yml`, step
+  "build must fail with not-found, and name the remedy"). Asserting the remedy alone was
+  not enough: the program's catch-all `else` clause prints the same one-liners for *any*
+  condition, so that grep passed on a raw FFI crash or an unreadable directory just as
+  readily as on `not-found`. The reason symbol is the discriminating half. The design spec asked
   for a message naming the candidate directories and that was not
   built. For the common case, a machine with no cmark-gfm, the remedy is the more useful
   answer; for the uncommon one, a library present in a directory the search does not
@@ -150,12 +153,33 @@ Rejected alternatives:
 - **The override does no version parsing at all** (`discovery.sls:220-243`). An explicit
   `CHEZ_CMARK_GFM_LIBS` may legitimately name the unversioned symlinks from a `-dev`
   package, so selection is the user's. Verification is still ours: `cmark_version()` is
-  read after loading and checked against the supported range on every path, override
-  included (`native.sls:292-300`). Entries are classified by **basename**, not whole
+  read immediately after the two loads and checked against the supported range in
+  `native.sls`'s library body (`native.sls:134`, `:157`), so it runs on every path, the
+  override included. That covers the version and only the version — see the last two
+  Consequences. Entries are classified by **basename**, not whole
   path, so a directory named `…cmark-gfm-extensions-cache…` cannot silently swap the
   pair (`discovery.sls:203-218`, `tests/test-discovery.sps:150-157`); order in the
   variable therefore does not matter.
-- **Two checks now run at different times for different reasons**, and both are needed:
-  the filename check diagnoses an out-of-range library *by name, before loading it*,
-  and the post-load `cmark_version()` check is authoritative because a filename is a
-  claim and distros patch.
+- **Two checks run at different times for different reasons**, and both are needed: the
+  filename check diagnoses an out-of-range library *by name, before loading it*, on the
+  discovery path only; the post-load `cmark_version()` check is authoritative — a
+  filename is a claim and distros patch — and runs on both paths. The second is reachable
+  only because of where it sits. Chez resolves a foreign entry point when the
+  `foreign-procedure` expression is *evaluated*, and a library body evaluates its
+  definitions in order, so `native.sls` binds `cmark_version` alone straight after the
+  loads and checks it there (`native.sls:134`, `:157`), ahead of every other
+  `foreign-procedure`. Placed any later — in `ensure-native-loaded!`, which runs at first
+  *use*, as it originally was — the check is unreachable for precisely the libraries it
+  exists to reject, because an unsupported library aborts the import at whichever binding
+  it cannot satisfy. `ensure-native-loaded!` still re-runs it; under this ordering that
+  copy cannot fire, and it is kept as cheap redundancy rather than as coverage.
+- **The version check is not a symbol check and must not be read as one.** It rejects a
+  library whose `cmark_version()` is out of range, and nothing else. A library *inside*
+  the range that is missing one of the symbols bound below the check still dies at import
+  with a raw `Exception in foreign-procedure: no entry for "…"`, and so does a library
+  that does not export `cmark_version` at all. The design spec §3.8 defect —
+  `cmark_node_get_item_index`, absent before `0.29.0.gfm.11`, under a range that claims
+  `gfm.0` — was exactly that shape: no version check of any placement could have
+  diagnosed it, and the remedy was to stop binding the symbol. Keeping the declared range
+  honest about the symbols actually bound is a review obligation, not something this
+  machinery enforces.

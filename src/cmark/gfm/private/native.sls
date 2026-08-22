@@ -9,6 +9,25 @@
 ;;; Library bodies evaluate their definitions in order, so the load is
 ;;; written as a definition placed ahead of them. Moving it later fails at
 ;;; IMPORT time with an unresolved-entry error, not at first use.
+;;;
+;;; That same property is why the VERSION GATE sits where it does. Because
+;;; every `foreign-procedure` below resolves at import, a library that lacks
+;;; any one of those symbols aborts the import with a raw
+;;;   Exception in foreign-procedure: no entry for "..."
+;;; and `ensure-native-loaded!` -- which runs at first USE -- is never
+;;; reached, so its version check cannot diagnose what went wrong. Therefore
+;;; `cmark_version` is bound ALONE, straight after the loads, and checked
+;;; there, before the bulk of the bindings are created. These run in this
+;;; order and none of them may move:
+;;;   resolved-libraries -> the two loads -> cmark_version ->
+;;;   the supported-range check -> everything else.
+;;; NOTE what this does and does not buy. It converts an out-of-RANGE library
+;;; into &cmark-version-incompatible on both resolution paths. It cannot help
+;;; a library that is IN range but missing a symbol bound below: that still
+;;; dies raw, at whichever definition it cannot satisfy. Keeping
+;;; cmark-supported-version-range honest about the symbols actually bound here
+;;; is a review obligation, not something this gate enforces (design spec 3.8
+;;; is the worked example).
 (library (cmark gfm private native)
   (export ensure-native-loaded!
           version-supported? version-compatible?
@@ -115,8 +134,39 @@
   (define core-loaded (load-library (car resolved-libraries)))
   (define extensions-loaded (load-library (cdr resolved-libraries)))
 
-  ;; --- version, straight from the library ------------------------------
+  ;; --- version, straight from the library, and the gate it feeds --------
+  ;; ALONE here, ahead of every other foreign-procedure in this body: see the
+  ;; ORDERING NOTE at the top of the file for why the position is load-bearing
+  ;; rather than stylistic.
   (define cmark-runtime-version (foreign-procedure "cmark_version" () int))
+
+  (define (version-supported? runtime)
+    (let ((lo (car cmark-supported-version-range))
+          (hi (cdr cmark-supported-version-range)))
+      (and (>= runtime lo) (<= runtime hi))))
+
+  ;; There is no compile step any more, so there is no compiled-vs-runtime skew
+  ;; to detect: the only question is whether the library we loaded is one this
+  ;; binding supports. version-compatible? is retained as a one-argument alias
+  ;; so callers and tests keep a single name for the question.
+  (define (version-compatible? runtime) (version-supported? runtime))
+
+  ;; A DEFINITION, not a bare expression, for the same R6RS reason the two
+  ;; loads above are definitions: a library body may not place an expression
+  ;; among the definitions that follow it. The bound value is never read --
+  ;; binding it is only what lets the check occupy this exact position -- so
+  ;; do not "tidy" it into a bare `(unless (version-supported? ...) (raise ...))`.
+  ;;
+  ;; This is the check that makes &cmark-version-incompatible reachable at all
+  ;; for an unsupported library. It fires on BOTH resolution paths, including
+  ;; the CHEZ_CMARK_GFM_LIBS override, where discovery does no filename
+  ;; version parsing whatsoever (discovery.sls's parse-library-override).
+  (define version-checked
+    (let ((runtime (cmark-runtime-version)))
+      (if (version-supported? runtime)
+          runtime
+          (raise (make-cmark-version-incompatible
+                  cmark-supported-version-range runtime)))))
 
   ;; --- buffer release through cmark's own allocator ---------------------
   ;; cmark_get_default_mem_allocator returns a pointer to
@@ -278,17 +328,16 @@
   (define init-mutex (make-mutex))
   (define initialized? #f)
 
-  (define (version-supported? runtime)
-    (let ((lo (car cmark-supported-version-range))
-          (hi (cdr cmark-supported-version-range)))
-      (and (>= runtime lo) (<= runtime hi))))
-
-  ;; There is no compile step any more, so there is no compiled-vs-runtime skew
-  ;; to detect: the only question is whether the library we loaded is one this
-  ;; binding supports. version-compatible? is retained as a one-argument alias
-  ;; so callers and tests keep a single name for the question.
-  (define (version-compatible? runtime) (version-supported? runtime))
-
+  ;; The version check below is the SECOND one, not the primary gate: the
+  ;; library body already refused an out-of-range library at instantiation
+  ;; (version-checked, above), so any caller that gets this far has already
+  ;; passed. Under that ordering this one cannot fire -- same library, same
+  ;; constant, same answer -- and it is kept anyway, deliberately: it costs one
+  ;; foreign call once per process behind a mutex that is taken regardless, and
+  ;; it keeps the invariant attached to the procedure the public API actually
+  ;; calls instead of resting entirely on this body's statement order. What it
+  ;; must NOT be mistaken for is coverage: it is not what diagnoses an
+  ;; unsupported library, and it never was -- that is version-checked's job.
   (define (ensure-native-loaded!)
     (with-mutex init-mutex
       (unless initialized?

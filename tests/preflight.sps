@@ -17,9 +17,13 @@
 ;; `exit` comes from (rnrs), NOT (chezscheme) -- importing it from both raises
 ;; "multiple definitions for exit in body". See Global Constraints.
 ;; (cmark gfm private conditions) is pure -- it imports only (rnrs) and reaches
-;; no shared object -- so its predicates are safe to import directly.
+;; no shared object -- so its predicates are safe to import directly. So is
+;; (cmark gfm private discovery), whose own header states the property and
+;; whose imports are (rnrs) plus machine-type; version->string comes from
+;; there, and importing it here does not drag in the loads described above.
 (import (rnrs)
         (only (chezscheme) printf eval environment)
+        (only (cmark gfm private discovery) version->string)
         (cmark gfm private conditions))
 
 (guard (e ((cmark-library-unavailable? e)
@@ -30,8 +34,26 @@
            (printf "  or name both libraries in CHEZ_CMARK_GFM_LIBS.\n")
            (exit 1))
           ((cmark-version-incompatible? e)
-           (printf "chez-cmark-gfm: found cmark-gfm ~x, outside the supported range\n"
-                   (cmark-version-incompatible-runtime e))
+           ;; DECODED, not raw hex, and the bounds are named. `1D0006` is
+           ;; cmark's own integer encoding; nobody reading it can compare it
+           ;; to the version their package manager reports, and a range the
+           ;; reader is never shown is a range they cannot act on.
+           ;; version->string is exported from (cmark gfm private discovery)
+           ;; for exactly this. ADR-0014's "name the remedy" principle is what
+           ;; the design spec (5) delegates to this program for `not-found`;
+           ;; this clause owes the reader the same, and used to give none.
+           (let ((supported (cmark-version-incompatible-supported e)))
+             (printf "chez-cmark-gfm: found cmark-gfm ~a, outside the supported range\n"
+                     (version->string (cmark-version-incompatible-runtime e)))
+             (printf "  this binding supports ~a up to and including ~a.\n"
+                     (version->string (car supported))
+                     (version->string (cdr supported))))
+           (printf "  install one inside that range:  apt install cmark-gfm   (Debian/Ubuntu)\n")
+           (printf "                                  brew install cmark-gfm  (macOS)\n")
+           (printf "  if that IS the package just rejected, build a supported release from\n")
+           (printf "  source -- README.org, \"RHEL, Fedora, and Alpine\", has the cmake recipe --\n")
+           (printf "  and name both libraries in CHEZ_CMARK_GFM_LIBS if they land off the\n")
+           (printf "  default search path.\n")
            (exit 1))
           (else
            ;; Catch-all: e.g. an unreadable candidate directory, where
