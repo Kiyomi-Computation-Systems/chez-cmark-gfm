@@ -1618,6 +1618,28 @@ git commit -m "build: make build a discovery preflight; drop shim and flavor mac
 - Consumes: `make build`, `make test` from Task 6.
 - Produces: nothing consumed by later tasks.
 
+**CI is red from Task 4 until this task lands. Do not push the branch before it.** Task 4's
+review established exactly what breaks, and this task closes all of it:
+
+- **The Linux job dies at its first step.** `ci.yml:123` runs `make HAVE_PKG=no build`,
+  which is now the preflight. Discovery searches only `/usr/local/lib`,
+  `/usr/lib/<triple>`, `/usr/lib`, `/usr/lib64` — and the vendored build lands under
+  `vendor/cmark-gfm/build/`, is never installed system-wide, and no target exports
+  `CHEZ_CMARK_GFM_LIBS`. Result: `not-found`, exit 1, and every later step in that job
+  (check-config, check-purity, test, valgrind, the sabotage check) never runs.
+- **The macOS "vendored path" leg is worse than red — it passes for the wrong reason.**
+  `ci.yml:231-234` claims to exercise the vendored library, but Homebrew's cmark-gfm is
+  installed at `ci.yml:184`, so discovery finds *that* and the job goes green while
+  testing something other than what it names.
+- **Two steps invoke a deleted file.** `ci.yml:129` and `:227` run
+  `make HAVE_PKG=no check-config`, whose program `tests/check-config.sps` was deleted in
+  Task 4. Remove both steps in the same commit as the target.
+
+The root cause of the first two is that **`HAVE_PKG` and the vendored acquisition path no
+longer exist as concepts** — ADR-0001's two paths collapse to "system package" (design
+§1.3). Do not repair those jobs; replace them. `vendor/` survives only as a *development*
+dependency for the CLI oracle, the corpus, and the header-parity test.
+
 - [ ] **Step 1: Replace the acquisition matrix**
 
 The two former rows (pkg-config vs vendored) no longer name distinct code paths. Replace
