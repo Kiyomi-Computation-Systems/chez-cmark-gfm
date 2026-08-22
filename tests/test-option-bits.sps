@@ -1,7 +1,7 @@
 #!r6rs
 ;;; The Scheme option-bit table against its two oracles.
 ;;;
-;;; The shim used to build this mask in C, so the constants could not drift
+;;; A C wrapper used to build this mask, so the constants could not drift
 ;;; from the headers. With the table in Scheme that guarantee becomes a test,
 ;;; and this is it. Five of the six bits are ALSO covered behaviourally by
 ;;; tests/test-differential.sps; validate-utf8 is unreachable through the

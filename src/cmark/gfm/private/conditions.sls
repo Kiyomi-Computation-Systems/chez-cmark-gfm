@@ -9,7 +9,7 @@
 
           &cmark-version-incompatible make-cmark-version-incompatible
           cmark-version-incompatible?
-          cmark-version-incompatible-compiled
+          cmark-version-incompatible-supported
           cmark-version-incompatible-runtime
 
           &cmark-dead-document make-cmark-dead-document cmark-dead-document?
@@ -23,9 +23,9 @@
           &cmark-resource-limit make-cmark-resource-limit
           cmark-resource-limit? cmark-resource-limit-value
 
-          &cmark-shim-unavailable make-cmark-shim-unavailable
-          cmark-shim-unavailable? cmark-shim-unavailable-path
-          cmark-shim-unavailable-reason
+          &cmark-library-unavailable make-cmark-library-unavailable
+          cmark-library-unavailable? cmark-library-unavailable-path
+          cmark-library-unavailable-reason
 
           &cmark-invalid-option make-cmark-invalid-option
           cmark-invalid-option? cmark-invalid-option-key
@@ -44,12 +44,14 @@
   (define-condition-type &cmark-error &error
     make-cmark-error cmark-error?)
 
-  ;; Raised at initialisation when the shim's compile-time version and the
-  ;; runtime library disagree beyond the supported range. Fails closed.
+  ;; Raised when a resolved library's version falls outside the range this
+  ;; binding supports -- either a candidate directory's encoded version, at
+  ;; discovery time, or the loaded library's own runtime version, at first
+  ;; use via ensure-native-loaded!. Fails closed.
   (define-condition-type &cmark-version-incompatible &cmark-error
     make-cmark-version-incompatible cmark-version-incompatible?
-    (compiled cmark-version-incompatible-compiled)
-    (runtime  cmark-version-incompatible-runtime))
+    (supported cmark-version-incompatible-supported)
+    (runtime   cmark-version-incompatible-runtime))
 
   ;; Raised when a native handle is touched after its scope was torn down.
   ;; This is what converts a use-after-free into an ordinary error (ADR-0006).
@@ -82,22 +84,24 @@
     make-cmark-resource-limit cmark-resource-limit?
     (value cmark-resource-limit-value))
 
-  ;; Raised when the shim cannot be resolved or loaded. path is the path that
-  ;; failed, or #f when no path was ever configured. reason is a symbol:
-  ;;   'not-built        -- the fallback config is in force; no `make build`
-  ;;   'missing          -- the generated default path is not a regular file
-  ;;   'invalid-override -- CHEZ_CMARK_GFM_SHIM is set but is not an absolute
-  ;;                        path to an existing regular file
-  ;;   'load-failed      -- load-shared-object raised on a validated file
+  ;; Raised when the cmark shared objects cannot be resolved or loaded.
+  ;;   'not-found        -- no candidate directory held a matched core +
+  ;;                        extensions pair at a supported version, and
+  ;;                        CHEZ_CMARK_GFM_LIBS was not set. `path` is #f:
+  ;;                        there is no single path to name.
+  ;;   'invalid-override -- CHEZ_CMARK_GFM_LIBS is set but is not two absolute
+  ;;                        paths to existing regular files, one core and one
+  ;;                        extensions library
+  ;;   'load-failed      -- load-shared-object raised on a validated path
   ;;
-  ;; 'invalid-override deliberately covers three causes (empty string, not
-  ;; absolute, absolute but absent) because resolve-shim-path's single `else`
-  ;; branch already conflates them. Splitting it would restructure the load
-  ;; path this release exists to freeze; recorded in the design spec 11.
-  (define-condition-type &cmark-shim-unavailable &cmark-error
-    make-cmark-shim-unavailable cmark-shim-unavailable?
-    (path   cmark-shim-unavailable-path)
-    (reason cmark-shim-unavailable-reason))
+  ;; 'invalid-override deliberately covers several causes at once (wrong entry
+  ;; count, a relative path, an absent file, two libraries of the same kind)
+  ;; because the remedy is identical for all of them: name both libraries, by
+  ;; absolute path.
+  (define-condition-type &cmark-library-unavailable &cmark-error
+    make-cmark-library-unavailable cmark-library-unavailable?
+    (path   cmark-library-unavailable-path)
+    (reason cmark-library-unavailable-reason))
 
   ;; Raised by the options layer before any native resource exists. key is a
   ;; field name, or #f when the problem is the argument list as a whole

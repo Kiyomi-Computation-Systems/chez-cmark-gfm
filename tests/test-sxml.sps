@@ -1,7 +1,7 @@
 #!r6rs
 ;; PURE SUITE. This file must never import a library that loads a shared
 ;; object. `make check-purity` enforces it by running this file with
-;; CHEZ_CMARK_GFM_SHIM poisoned. Check transitive imports before adding one
+;; CHEZ_CMARK_GFM_LIBS poisoned. Check transitive imports before adding one
 ;; here or to sxml.sls.
 (import (rnrs)
         (srfi :64)
@@ -47,7 +47,7 @@
 
 ;; html.c:366-374 -- a STRONG directly inside a STRONG emits neither tag; its
 ;; children splice into the enclosing one. Pure adapter logic, but until now
-;; exercised only through the native shim and the CLI
+;; exercised only through the native FFI layer and the CLI
 ;; (test-sxml-differential.sps's "nested strong emits one tag" and its
 ;; siblings), never pinned in this pure suite.
 (test-equal "a strong directly inside a strong collapses to one tag"

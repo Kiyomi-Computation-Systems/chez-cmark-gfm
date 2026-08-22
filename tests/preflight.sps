@@ -7,7 +7,7 @@
 ;;; back. (cmark gfm private native) loads the shared objects in its LIBRARY
 ;;; BODY, and an R6RS program instantiates every library it imports BEFORE its
 ;;; own body runs. Importing it at the top of this file therefore raises
-;;; &cmark-shim-unavailable before the guard below is ever entered, which makes
+;;; &cmark-library-unavailable before the guard below is ever entered, which makes
 ;;; the guard -- and the install advice that is this program's whole reason to
 ;;; exist -- unreachable code. Verified: with a plain import,
 ;;; `CHEZ_CMARK_GFM_LIBS=/nonexistent` printed a raw "Exception occurred with
@@ -22,9 +22,9 @@
         (only (chezscheme) printf eval environment)
         (cmark gfm private conditions))
 
-(guard (e ((cmark-shim-unavailable? e)
+(guard (e ((cmark-library-unavailable? e)
            (printf "chez-cmark-gfm: no usable libcmark-gfm (~a)\n"
-                   (cmark-shim-unavailable-reason e))
+                   (cmark-library-unavailable-reason e))
            (printf "  install it with:  apt install cmark-gfm   (Debian/Ubuntu)\n")
            (printf "                    brew install cmark-gfm  (macOS)\n")
            (printf "  or name both libraries in CHEZ_CMARK_GFM_LIBS.\n")

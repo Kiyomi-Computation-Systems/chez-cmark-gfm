@@ -76,7 +76,7 @@
         (let-values (((status payload) (parse-library-override override regular-file?)))
           (if (eq? status 'ok)
               payload
-              (raise (make-cmark-shim-unavailable override 'invalid-override))))
+              (raise (make-cmark-library-unavailable override 'invalid-override))))
         (let* ((platform (current-platform))
                (candidates (default-candidate-directories
                              platform (current-machine) directory-names directory?)))
@@ -91,7 +91,7 @@
                (raise (make-cmark-version-incompatible
                        cmark-supported-version-range payload)))
               (else
-               (raise (make-cmark-shim-unavailable #f 'not-found))))))))
+               (raise (make-cmark-library-unavailable #f 'not-found))))))))
 
   ;; directory-list yields names; some Chez versions yield (name . type) pairs.
   (define (directory-names dir)
@@ -101,7 +101,7 @@
   (define (directory? path) (file-directory? path))
 
   (define (load-library path)
-    (guard (e (#t (raise (make-cmark-shim-unavailable path 'load-failed))))
+    (guard (e (#t (raise (make-cmark-library-unavailable path 'load-failed))))
       (load-shared-object path)))
 
   (define resolved-libraries
@@ -145,7 +145,7 @@
   ;; `unsigned-8`, not `int`: the entry point returns C _Bool, which occupies
   ;; only the low byte of the return register with the upper bits unspecified.
   ;; Declaring `int` would read whatever happens to be there. This is the job
-  ;; the shim existed to do, done by the type declaration instead.
+  ;; a C wrapper used to do, done by the type declaration instead.
   (define raw-tasklist-checked
     (foreign-procedure "cmark_gfm_extensions_get_tasklist_item_checked"
                        (uptr) unsigned-8))

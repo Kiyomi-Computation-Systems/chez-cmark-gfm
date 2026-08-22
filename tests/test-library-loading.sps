@@ -26,7 +26,7 @@
 ;; Falling back would mean a typo in the variable silently loads a different
 ;; library than the one the user named.
 (define (override-error str)
-  (guard (e ((cmark-shim-unavailable? e) (cmark-shim-unavailable-reason e))
+  (guard (e ((cmark-library-unavailable? e) (cmark-library-unavailable-reason e))
             (#t 'wrong-condition))
     (resolve-cmark-libraries str)
     'no-raise))
@@ -67,7 +67,7 @@
 ;; capture-command raises when the command's exit status is non-zero -- the
 ;; right behaviour for every OTHER caller of it, where a non-zero exit means
 ;; a broken CLI probe. Here it is the opposite: the subprocess is SUPPOSED to
-;; die (an uncaught &cmark-shim-unavailable escaping at import time), so its
+;; die (an uncaught &cmark-library-unavailable escaping at import time), so its
 ;; non-zero exit is expected and guarded away rather than left to propagate.
 ;; The shell redirection into out-path has already happened by the time
 ;; system() returns, regardless of the exit code, so the file holds the

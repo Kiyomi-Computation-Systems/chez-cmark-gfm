@@ -231,7 +231,8 @@
 
 ;; markdown->sxml (Task 8's entry point) belongs here rather than in
 ;; tests/test-options.sps: that suite is a PURE SUITE, and CALLING
-;; markdown->sxml runs (cmark gfm)'s native code, parsing through the shim.
+;; markdown->sxml runs (cmark gfm)'s native code, parsing through
+;; libcmark-gfm itself.
 ;; Not because importing (cmark gfm) alone would do that -- it would not:
 ;; Chez instantiates a library's body only when a binding it defines is
 ;; actually referenced, so an import with no reference to what it exports is
@@ -289,9 +290,9 @@
 ;; --- the corpus ---------------------------------------------------------
 ;; The vendored WORKING TREE, not $(CMARK_CLI). This is the only read of it
 ;; anywhere under tests/ -- every other suite reaches cmark through the CLI
-;; or the shim, both of which the pkg-config acquisition path (ADR-0001)
-;; satisfies with no submodule checked out at all. `make deps` therefore
-;; initialises vendor/cmark-gfm too, checkout only.
+;; or our own native bindings, both of which the pkg-config acquisition path
+;; (ADR-0001) satisfies with no submodule checked out at all. `make deps`
+;; therefore initialises vendor/cmark-gfm too, checkout only.
 ;;
 ;; The guard below exists because the failure without it is illegible.
 ;; `all-examples` is built at TOP LEVEL, outside any test- form, so a missing
@@ -458,10 +459,10 @@
 
 ;; --- the CLI leg --------------------------------------------------------
 ;; Not redundant with the in-process leg. Our SXML path and markdown->html
-;; both consume a document parsed through OUR shim, so a wrong option bit or
-;; a missing extension corrupts the parse feeding both sides -- they would
-;; agree while both being wrong. The pinned CLI is the independent witness
-;; that the parse was configured correctly (ADR-0012).
+;; both consume a document parsed through OUR native bindings, so a wrong
+;; option bit or a missing extension corrupts the parse feeding both sides --
+;; they would agree while both being wrong. The pinned CLI is the independent
+;; witness that the parse was configured correctly (ADR-0012).
 ;;
 ;; It runs the four FIXTURES, not the 744-example corpus the in-process leg
 ;; runs. That is a deliberate reduction on cost, recorded in design spec 10

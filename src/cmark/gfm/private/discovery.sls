@@ -4,7 +4,8 @@
 ;;; PURE. Imports nothing that can reach a shared object, and takes its
 ;;; filesystem access as arguments, so every branch below is unit-testable
 ;;; against synthetic listings with no files on disk. That is the same reason
-;;; resolve-shim-path was an exported procedure rather than a bare expression.
+;;; select-cmark-libraries and parse-library-override are exported procedures
+;;; rather than expressions folded into native.sls's resolve-cmark-libraries.
 ;;;
 ;;; Only VERSIONED filenames are candidates, and core and extensions must pair
 ;;; at the SAME version in the SAME directory. Three separate hazards depend on

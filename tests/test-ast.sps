@@ -3,7 +3,7 @@
 ;; object. That is what makes every assertion below unable to pass by
 ;; accident because of native behaviour -- they exercise Scheme values only.
 ;; `make check-purity` enforces it by running this file with
-;; CHEZ_CMARK_GFM_SHIM poisoned; if the import chain ever reaches
+;; CHEZ_CMARK_GFM_LIBS poisoned; if the import chain ever reaches
 ;; (cmark gfm private native), that target fails. Check transitive imports
 ;; before adding one here or to ast.sls.
 (import (rnrs)

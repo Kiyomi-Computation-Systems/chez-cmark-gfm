@@ -16,7 +16,7 @@
 ;;; which in turn requires (cmark gfm private native)'s body -- the one that
 ;;; resolves and loads the cmark shared objects -- to have already run too.
 ;;; With CHEZ_CMARK_GFM_LIBS pointing at two files that validate but cannot
-;;; load, that forced invocation raises &cmark-shim-unavailable with reason
+;;; load, that forced invocation raises &cmark-library-unavailable with reason
 ;;; 'load-failed, and the process dies with that condition on stderr.
 (import (rnrs) (cmark gfm))
 (display (markdown->html "# x\n" (default-cmark-options)))

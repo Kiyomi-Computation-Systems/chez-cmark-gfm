@@ -38,7 +38,7 @@
 ;;;
 ;;; Pure: imports only (rnrs) and (srfi :64) for the test harness -- no
 ;;; library that loads a shared object, directly or transitively -- so it
-;;; runs under `make check-purity` with CHEZ_CMARK_GFM_SHIM poisoned.
+;;; runs under `make check-purity` with CHEZ_CMARK_GFM_LIBS poisoned.
 (import (rnrs) (srfi :64))
 
 (define runner (test-runner-simple))

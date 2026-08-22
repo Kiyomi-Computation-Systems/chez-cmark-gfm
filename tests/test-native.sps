@@ -266,9 +266,10 @@
 
 ;; --- extension accessors ------------------------------------------------
 ;; These three live in libcmark-gfm-extensions, not libcmark-gfm. They resolve
-;; only because native.sls loads both shared objects explicitly, ahead of the
-;; shim; if that ever regressed these would fail at IMPORT time on Linux while
-;; still passing on macOS, whose loader searches dependencies.
+;; only because native.sls loads the extensions library explicitly, after the
+;; core library; if that ordering ever regressed these would fail at IMPORT
+;; time on Linux while still passing on macOS, whose loader searches
+;; dependencies.
 (define table-md "| a | b |\n|:--|--:|\n| 1 | 2 |\n")
 
 (test-equal "a table's type string is table"
@@ -316,7 +317,7 @@
 (test-equal "alignment-bytes yields the empty list for zero columns"
   '() (alignment-bytes 0 0))
 
-;; --- the allocator slot the shim used to hide ------------------------
+;; --- the allocator slot a C wrapper used to hide -----------------------
 ;; cmark_get_default_mem_allocator returns {calloc, realloc, free}. Freeing a
 ;; renderer buffer with libc free() is NOT equivalent and is documented as
 ;; forbidden; this asserts we are reading the right member. This establishes

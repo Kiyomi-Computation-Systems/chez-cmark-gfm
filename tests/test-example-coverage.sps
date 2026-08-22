@@ -15,7 +15,7 @@
 ;;; reference position from literal data, which is not worth its cost here.
 ;;;
 ;;; Pure: imports no library that reaches a shared object, so it runs under
-;;; `make check-purity` with CHEZ_CMARK_GFM_SHIM poisoned.
+;;; `make check-purity` with CHEZ_CMARK_GFM_LIBS poisoned.
 (import (rnrs) (srfi :64))
 
 (define runner (test-runner-simple))

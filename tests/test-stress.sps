@@ -106,12 +106,12 @@
 (test-begin "stress")
 
 ;; A seeded control, and it must demand the counters MOVE -- not merely that
-;; they start at zero. A prod shim compiles the counters away and freezes all
-;; THREE at 0 (cmark-gfm-shim.c:67-69), which satisfies "starts at (0 0 0)"
-;; and "returns to (0 0 0)" alike, so without checking all three, a prod
-;; build with a genuinely broken live-buffers getter (frozen, or wired to
-;; the wrong counter) would pass this control and every assertion below it
-;; vacuously against `make prod`. Same shape and same reason as
+;; they start at zero. The counters are plain Scheme set!s (native.sls) and
+;; always on, but "starts at (0 0 0)" and "returns to (0 0 0)" are satisfied
+;; just as well by a genuinely broken live-buffers getter (frozen, or wired
+;; to the wrong counter) as by a working one -- so without checking all three
+;; for MOVEMENT, such a getter would pass this control and every assertion
+;; below it vacuously. Same shape and same reason as
 ;; tests/test-lifecycle.sps:53, which is where this pattern comes from;
 ;; reaching a live document needs (cmark gfm private scope), because no
 ;; public entry point exposes one.
