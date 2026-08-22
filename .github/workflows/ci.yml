@@ -5,9 +5,19 @@ name: CI
 # only Valgrind on Linux can support that claim. macOS is still tested because
 # it is the primary development platform.
 #
-# Both acquisition paths are exercised. The vendored path had two build-breaking
-# defects survive to a final review precisely because nothing ever selected it,
-# so it is a first-class job here, not an afterthought.
+# 2.0 has ONE acquisition path, not two: ADR-0001's pkg-config/vendored split
+# collapsed into "the system package" the moment the shim was deleted (design
+# spec 2026-08-21-shimless-ffi-design.md, 1.3). The jobs below now differ in
+# how cmark-gfm was obtained -- Homebrew, apt, or deliberately absent -- which
+# is what they actually vary in; HAVE_PKG and a "vendored path" job are gone.
+#
+# `no-library` and `akku-install` exist for the reason the old vendored job
+# was kept as first-class rather than an afterthought: a path nothing ever
+# selects is a path whose defects survive to review undetected. The old
+# macOS job claimed to exercise the vendored build while Homebrew's own copy
+# silently satisfied discovery first -- green, but for the wrong reason,
+# which is worse than red. Each job below is written to actually fail if the
+# thing it claims to prove stops being true.
 
 on:
   push:
@@ -22,7 +32,7 @@ concurrency:
 
 jobs:
   linux:
-    name: linux (vendored + valgrind)
+    name: linux (apt + valgrind)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -47,6 +57,13 @@ jobs:
             echo "::error::packaging/debian-prereqs.txt yielded no packages. That is a broken step, not an empty list -- do not install valgrind alone and cascade."
             exit 1
           fi
+          # cmark-gfm now comes from packaging/debian-prereqs.txt like everything
+          # else -- it was briefly duplicated on this line while that file still
+          # listed the pre-2.0 toolchain. Do not re-add it here: a package named
+          # both in the file and in this step is exactly the second copy the
+          # file's header rule exists to prevent. valgrind stays here because it
+          # is needed only by this job's memory step below, not to build or use
+          # the library.
           echo "installing: valgrind $pkgs"
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends valgrind $pkgs
@@ -60,9 +77,7 @@ jobs:
           echo "valgrind: $(valgrind --version)"
           echo "cmake:    $(cmake --version | head -1)"
           echo "cc:       $(cc --version | head -1)"
-          echo "--- pkg-config visibility of cmark-gfm ---"
-          pkg-config --exists libcmark-gfm && echo "present: $(pkg-config --modversion libcmark-gfm)" \
-                                           || echo "absent (expected on Ubuntu; the vendored path covers this)"
+          echo "cmark-gfm CLI (apt): $(cmark-gfm --version | head -1)"
 
       # The README matrix decays silently the moment a runner image bumps
       # Chez. This makes that a build failure instead. Deliberately asserts
@@ -116,17 +131,28 @@ jobs:
       - name: Scheme dependencies
         run: make deps
 
-      - name: Build vendored cmark-gfm
-        run: make HAVE_PKG=no vendor
+      # vendor/cmark-gfm is a DEV dependency only now: the differential suites'
+      # CLI oracle, the 744-example corpus, and the header
+      # tests/test-option-bits.sps parses (design spec 1.3, amending
+      # ADR-0001). `make deps` above already checked the submodule out --
+      # that alone is enough for the corpus and the header -- so nothing in
+      # `make test` actually needs this cmake build to have run; $(CMARK_CLI)
+      # defaults to the apt-installed `cmark-gfm` on PATH, not a vendor-built
+      # binary. This step is kept anyway, as a regression guard: README.org's
+      # RHEL/Fedora/Alpine remedy (8.2) tells those readers to build this
+      # exact pinned submodule themselves, and nothing else in CI would
+      # notice if that stopped working. cmake and build-essential are
+      # installed for this, not for anything of ours -- 2.0 compiles no shim
+      # on any platform.
+      - name: Build vendored cmark-gfm (dev dependency -- corpus, header, CLI oracle)
+        run: make vendor
 
-      - name: Build (vendored path)
-        run: make HAVE_PKG=no build
-
-      # Two files declare (cmark gfm private config): the generated one and
-      # fallback/'s checked-in sentinel. They must stay substitutable, and
-      # only a built tree has both to compare.
-      - name: Check the fallback config agrees with the generated one
-        run: make HAVE_PKG=no check-config
+      # This is now THE ONLY build/discovery path -- there is no second one
+      # left to distinguish it from, and HAVE_PKG does not exist any more.
+      # Finds the apt-installed system libcmark-gfm from the toolchain step
+      # above.
+      - name: Build (discovery preflight)
+        run: make build
 
       # options.sls and ast.sls must import no library that loads a shared
       # object, directly or transitively -- that purity is what makes every
@@ -134,16 +160,16 @@ jobs:
       # accident because of native behaviour. See the Makefile's
       # check-purity target for how.
       - name: Check options.sls and ast.sls stay free of native imports
-        run: make HAVE_PKG=no check-purity
+        run: make check-purity
 
-      - name: Test (vendored path)
-        run: make HAVE_PKG=no test
+      - name: Test
+        run: make test
 
       # The reason this job exists. Valgrind needs no instrumentation of Chez or
       # cmark and is the only tool in this project that can substantiate a leak
       # claim. Failure here blocks merge.
       - name: Memory (valgrind)
-        run: make HAVE_PKG=no test-memory
+        run: make test-memory
 
       # `make test` reporting success on a failing suite would silently void
       # every other check in this workflow, so verify the contract itself.
@@ -159,7 +185,7 @@ jobs:
           (test-end "ci-sabotage")
           (exit (if (zero? (test-runner-fail-count runner)) 0 1))
           EOF
-          if make HAVE_PKG=no test > sabotage.log 2>&1; then
+          if make test > sabotage.log 2>&1; then
             echo "::error::make test exited 0 with a failing suite present"
             rm -f tests/test-aaci-sabotage.sps
             exit 1
@@ -173,21 +199,26 @@ jobs:
           echo "test target correctly failed, and no suite was masked"
 
   macos:
-    name: macos (pkg-config + vendored, no leak claim)
+    name: macos (Homebrew only, no leak claim)
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
 
+      # cmake and pkg-config are dropped from this line, deliberately: 2.0
+      # compiles no shim, so there is nothing for cmake to build here and no
+      # pkg-config query in the discovery path (design spec 3). This job used
+      # to also run a "vendored path" leg with `make HAVE_PKG=no vendor`;
+      # that is gone too (see the assert-no-C-artifact step below), so
+      # chezscheme and cmark-gfm are the whole toolchain now.
       - name: Install toolchain
-        run: brew install chezscheme cmark-gfm cmake pkg-config
+        run: brew install chezscheme cmark-gfm
 
       - name: Report versions
         run: |
           echo "chez:  $(chez --version 2>&1)"
           echo "cmark: $(cmark-gfm --version | head -1)"
-          echo "pkg-config libcmark-gfm: $(pkg-config --modversion libcmark-gfm)"
 
       # Equivalent to the linux job's check above (same rationale: the table
       # tracks what "Report versions" printed, and is not a pinned version).
@@ -218,20 +249,83 @@ jobs:
             exit 1
           fi
 
+      # Still needed even with no cmake on this job: vendor/cmark-gfm is
+      # checked out here (not built) for the differential suites' 744-example
+      # corpus and the header tests/test-option-bits.sps parses -- the same
+      # dev-dependency role described in the linux job, minus the cmake build,
+      # since nothing on this job needs the compiled artifact.
       - name: Scheme dependencies
         run: make deps
 
-      - name: Build and test (pkg-config path)
+      - name: Build and test
         run: |
           make build
-          make check-config
           make test
 
-      - name: Build and test (vendored path)
+      # The point of this job: a Homebrew-only machine compiles nothing. That
+      # is half the evidence for the release's headline "no compiler required"
+      # claim; the akku-install job is the other half.
+      #
+      # REPLACES a `test ! -e build/lib` guard that could not fail. build/lib
+      # was the 1.0 shim's own output directory, and 2.0 deleted the Makefile
+      # rules that wrote it -- `build/lib` now appears nowhere in the Makefile,
+      # so no target this job runs (or any other) can create it. The step
+      # passed unconditionally and asserted nothing.
+      #
+      # What is asserted instead: after this job's own `make build && make
+      # test` above, no compiled object or shared library exists anywhere in
+      # the working tree.
+      #
+      # vendor/ is excluded DELIBERATELY, and the exclusion is the reason this
+      # is scoped to a tree walk rather than to one path. `make vendor`
+      # legitimately cmake-builds the pinned cmark-gfm submodule as a
+      # DEVELOPMENT dependency -- the differential suites' CLI oracle, the
+      # 744-example corpus, the header tests/test-option-bits.sps parses (see
+      # the linux job's "Build vendored cmark-gfm" step). That is upstream C,
+      # built on purpose, and it is not ours. This job never runs `make vendor`
+      # -- "Install toolchain" above installs no cmake -- so vendor/ should
+      # hold no artifact here either; excluding it is what keeps this exact
+      # command truthful for a developer running it locally after `make vendor`
+      # instead of tempting someone to weaken the pattern list.
+      #
+      # Classified by CONTENT, not by filename: tests/test-library-loading.sps
+      # deliberately writes tests/tmp/libcmark-gfm.so and
+      # tests/tmp/libcmark-gfm-extensions.so as 20-byte TEXT decoys, to drive
+      # discovery's 'load-failed branch. A name-only check trips on those, and
+      # the obvious repair -- excluding tests/tmp as well -- would punch a hole
+      # in the one writable directory the suite already writes to. file(1)
+      # separates a real Mach-O/ELF artifact from a decoy with no second
+      # exclusion, and its absence is treated as a broken check rather than a
+      # passing one.
+      - name: assert no C artifact was produced
         run: |
-          make HAVE_PKG=no vendor
-          make HAVE_PKG=no build
-          make HAVE_PKG=no test
+          set -eu
+          command -v file >/dev/null \
+            || { echo "::error::file(1) is unavailable; this check cannot run."; exit 1; }
+          list="${RUNNER_TEMP:-/tmp}/c-artifact-candidates.txt"
+          find . -path ./vendor -prune -o -path ./.git -prune -o -type f \
+            \( -name '*.o' -o -name '*.a' -o -name '*.so' -o -name '*.so.*' \
+               -o -name '*.dylib' -o -name '*.bundle' \) -print > "$list"
+          rc=0
+          # read -r, not `for f in $(...)`: a path containing a space must not
+          # split into two unexamined halves and pass.
+          while IFS= read -r f; do
+            desc=$(file -b "$f")
+            case "$desc" in
+              *Mach-O*|*ELF*|*'ar archive'*)
+                echo "::error::compiled artifact present: $f ($desc)"
+                rc=1 ;;
+              *) echo "  examined, not a binary: $f -- $desc" ;;
+            esac
+          done < "$list"
+          if [ "$rc" -ne 0 ]; then
+            echo "2.0 compiles nothing on this path. If something here now builds C, the"
+            echo "'no compiler required' claim -- README.org's Installing section, and the"
+            echo "akku-install job's exit criterion -- is false, and this step is the only"
+            echo "place in CI that would notice."
+            exit 1
+          fi
+          echo "no compiled object or shared library outside vendor/: nothing compiled C"
 
       # ASan only. LeakSanitizer is unsupported on macOS/ARM64, so this catches
       # use-after-free and overflows but CANNOT support a leak claim. Do not
@@ -265,6 +359,14 @@ jobs:
       # The SAME list README.org points readers at -- one copy, so this
       # cannot drift from the documentation. Must follow checkout, which is
       # what puts the file on disk.
+      #
+      # That file carries two COMMENT-LABELLED sections (runtime, then the
+      # dev packages the vendored oracle needs), and this extraction takes
+      # every uncommented line, so the container gets both. The labels are for
+      # the reader; splitting them mechanically would mean this job and the
+      # linux job reading different files, which is the drift the header rule
+      # forbids. The "no compiler required" claim is proved by the
+      # akku-install job and by macos's assert-no-C-artifact step, not here.
       - name: Install the documented prerequisites
         run: |
           set -eu
@@ -276,32 +378,30 @@ jobs:
           echo "chez: $(chezscheme --version 2>&1)"
           echo "cc:   $(cc --version | head -1)"
 
-      # Before building anything: an unbuilt tree must name its own remedy.
-      # This is the one place that runs on a machine which is GENUINELY
-      # unbuilt rather than synthetically so.
-      - name: An unbuilt tree raises not-built, not a missing library
-        run: |
-          set -eu
-          if CHEZSCHEMELIBDIRS=src:fallback chezscheme --script tests/shim-load-probe.sps \
-               > probe.out 2> probe.err; then
-            echo "::error::an unbuilt tree loaded the shim; it must not"
-            exit 1
-          fi
-          cat probe.err
-          grep -q 'cmark-shim-unavailable' probe.err || {
-            echo "::error::an unbuilt tree did not raise cmark-shim-unavailable"; exit 1; }
-          grep -q 'not-built' probe.err || {
-            echo "::error::an unbuilt tree did not report reason not-built"; exit 1; }
-          if grep -q 'library (cmark gfm private config) not found' probe.err; then
-            echo "::error::an unbuilt tree still reports a missing library"
-            exit 1
-          fi
+      # REMOVED: a step here used to run `chezscheme --script
+      # tests/shim-load-probe.sps` with CHEZSCHEMELIBDIRS=src:fallback and
+      # assert a genuinely UNBUILT tree raised &cmark-shim-unavailable,
+      # reason not-built, rather than Chez's raw library-not-found. Task 4
+      # deleted both tests/shim-load-probe.sps and fallback/, and renamed the
+      # condition (&cmark-library-unavailable now); more fundamentally, 2.0
+      # generates no config.sls and compiles nothing, so "unbuilt" is no
+      # longer a distinct state to probe -- importing (cmark gfm) does the
+      # same live discovery whether or not `make build` has ever run,
+      # anywhere. What this step proved -- that an absent native library is
+      # reported with a named remedy, not a raw loader error -- is now the
+      # no-library job's entire purpose (reason not-found, current name),
+      # and does not need proving a second time here.
 
-      # `make build` runs `git submodule update` on the vendored path, and git
-      # refuses a working tree whose owner differs from the current user --
-      # `fatal: detected dubious ownership`, exit 128. In a container job the
-      # checkout is made by the runner and the steps run as root, so that is
-      # always true here. Scoped to this throwaway container, never the host.
+      # Historically needed because `make build`'s vendored path ran `git
+      # submodule update`, which git refuses on a working tree whose owner
+      # differs from the current user -- `fatal: detected dubious
+      # ownership`, exit 128 -- and a container job's checkout is made by
+      # the runner while its steps run as root. 2.0's `make build` is the
+      # discovery preflight and does not touch git at all, so nothing later
+      # in this job strictly needs this any more; left in as a cheap,
+      # harmless default for whichever future step in this job (or a local
+      # reproduction of it) next runs a git command as a different user.
+      # Scoped to this throwaway container, never the host.
       - name: Let git operate on the runner-owned checkout
         run: git config --global --add safe.directory '*'
 
@@ -310,8 +410,158 @@ jobs:
       - name: Build, exactly as the README says
         run: make CHEZ=chezscheme build
 
-      # No `make deps`, deliberately. The examples must run with
-      # CHEZSCHEMELIBDIRS=src:fallback and no dev dependency whatsoever;
-      # omitting deps here is what makes that falsifiable.
+      # No `make deps`, deliberately. The examples run under
+      # CHEZSCHEMELIBDIRS=src alone (Makefile's `examples` target) with no dev
+      # dependency whatsoever; omitting deps here is what makes that
+      # falsifiable. `fallback/` was deleted in 2.0 and is not on that path.
       - name: Run every documented example
         run: make CHEZ=chezscheme examples
+
+  # A path nothing ever selects is a path whose defects go unreviewed -- the
+  # lesson of the old vendored-path job (file header above). Absence of
+  # cmark-gfm is exactly such a path: every other job installs it, so nothing
+  # would ever exercise the not-found branch of discovery without this job.
+  no-library:
+    name: no-library (build must name the remedy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install Chez only, deliberately no cmark-gfm
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends chezscheme
+
+      # CHEZ=chezscheme is not optional here: the Makefile defaults to `chez`,
+      # which Ubuntu does not ship (see the linux job's "Resolve the Chez
+      # binary" step). Without it, `make build` fails at "chez: command not
+      # found" -- true, but not the failure this job exists to prove -- and
+      # the grep below would then fail for the WRONG reason: exactly the
+      # "green/red for reasons unrelated to what the job claims" trap this
+      # file's header warns about, just landing on red instead of green.
+      # BOTH greps are required, and the reason one is not decoration. The
+      # remedy text alone cannot discriminate this failure from any other:
+      # tests/preflight.sps's catch-all `else` clause prints the SAME two
+      # install one-liners for any condition at all, so a job that greps only
+      # for `apt install cmark-gfm` goes green on a raw FFI crash, an
+      # unreadable candidate directory, or an out-of-range library just as
+      # readily as on the not-found branch it claims to test. Observed exactly
+      # that on ubuntu:24.04. The reason symbol is what the not-found clause
+      # prints and the catch-all does not, so it is the discriminating half;
+      # the remedy grep stays because naming the remedy is the other, separate
+      # promise (ADR-0014). Design spec 7.6 asked for this and it was not built.
+      - name: build must fail with not-found, and name the remedy
+        run: |
+          set +e
+          out=$(make CHEZ=chezscheme build 2>&1); status=$?
+          set -e
+          echo "$out"
+          test $status -ne 0 || { echo "expected failure, got success" >&2; exit 1; }
+          # Matches the clause AND the reason in one string, so a different
+          # clause that happened to mention not-found could not satisfy it.
+          echo "$out" | grep -q 'no usable libcmark-gfm (not-found)' \
+            || { echo "diagnostic did not report reason not-found; this job cannot tell which failure it got" >&2; exit 1; }
+          echo "$out" | grep -q 'apt install cmark-gfm' \
+            || { echo "diagnostic did not name the remedy" >&2; exit 1; }
+
+  # The exit criterion release 2.0 exists for (design spec 1, 9): install this
+  # package with Akku alone, no compiler, and import it with nothing set in
+  # the environment.
+  akku-install:
+    name: akku-install (release 2.0 exit criterion)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # chezscheme and cmark-gfm are named here rather than read from
+      # packaging/debian-prereqs.txt, deliberately: that file also carries the
+      # dev packages (cmake, build-essential) the vendored oracle needs, and
+      # installing a compiler on the job whose whole point is "no compiler
+      # required" would make it green for a reason it does not claim. This is
+      # the runtime half of that file, and nothing else.
+      #
+      # akku is NOT a Debian/Ubuntu package -- checked directly
+      # against packages.ubuntu.com and packages.debian.org, no suite in
+      # either carries it -- so it cannot be added to this line; it is
+      # installed from its own upstream release in the next step, rather
+      # than this job being skipped for lack of an apt package.
+      - name: install prerequisites
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends chezscheme cmark-gfm
+
+      # akku 1.1.0's own prebuilt GNU/Linux amd64 release. Runs
+      # unconditionally rather than as a fallback after a failed apt attempt
+      # -- apt has no package to try, so attempting one first would only
+      # waste a step. The URL is GitLab's own upload link for this release
+      # (gitlab.com/akkuscm/akku/-/releases/v1.1.0), confirmed reachable and
+      # hashed when this step was written; the sha256 pin below is checked
+      # against that download, not trusted blind.
+      #
+      # This exact version has a real, known bug: its libcurl FFI declares
+      # the variadic curl_easy_setopt as fixed-arity, which breaks on Apple
+      # arm64, where variadic arguments are passed on the stack. This runner
+      # is x86-64 Linux, where the fixed-arity and variadic calling
+      # conventions agree for the first several arguments, so the bug does
+      # not fire here and is deliberately not worked around.
+      #
+      # Upstream: gitlab.com/akkuscm/akku issue #69, MR !12. The fix (delete
+      # the FFI, shell out to curl(1)) is merged to `dev` and unreleased, so
+      # 1.1.0 is still the newest tarball. Reproduced locally on arm64 macOS:
+      # calling curl_easy_setopt through a fixed-arity function pointer
+      # segfaults, while the correct variadic call returns CURLE_OK.
+      - name: install akku (no apt package exists; upstream release tarball)
+        run: |
+          set -eu
+          curl -fsSL -o /tmp/akku.tar.xz \
+            https://gitlab.com/akkuscm/akku/uploads/094ce726ce3c6cf8c14560f1e31aaea0/akku-1.1.0.amd64-linux.tar.xz
+          echo "40efd832c6b517e37060c3c237499749682e6599a6d906f683e5348ea6f998a4  /tmp/akku.tar.xz" | sha256sum -c -
+          tar -xf /tmp/akku.tar.xz -C /tmp
+          # cd first: install.sh copies with RELATIVE paths (`cp -a lib
+          # ~/.local/`), so invoking it by absolute path from another
+          # directory fails with `cp: cannot stat 'lib'`. Found on this
+          # workflow's first real run.
+          cd /tmp/akku-1.1.0.amd64-linux && ./install.sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      # The exit criterion itself: install from the manifest, then import
+      # with NOTHING set -- no CHEZSCHEMELIBDIRS, no CHEZ_CMARK_GFM_LIBS.
+      # `.akku/bin/activate` is what supplies CHEZSCHEMELIBDIRS (pointing at
+      # .akku/lib, where Akku places both this package's own sources and its
+      # dev dependencies -- Akku.manifest declares no library locations, so
+      # this is entirely inferred from the file tree); native discovery then
+      # finds the apt-installed libcmark-gfm above on its own, the same
+      # search every other job's Build step exercises.
+      - name: install from the manifest and import with nothing set
+        run: |
+          set -eu
+          akku install
+          # akku install itself succeeded above -- it fetched all four
+          # dependencies, installed them and this project, and wrote both
+          # .akku/list and .akku/bin/activate. What akku GENERATES, though,
+          # reads four variables with no default: $R6RS_PATH and $R7RS_PATH
+          # near the top (its first line is `AKKU_CHEZ_PATH="$R6RS_PATH"`),
+          # then $LD_LIBRARY_PATH and $DYLD_LIBRARY_PATH further down, for
+          # .akku/ffi. That is fine under akku's own assumption that an
+          # unset variable expands to empty, but fatal under this step's
+          # `set -eu` the moment any one of the four is actually unset --
+          # confirmed against the real akku 1.1.0 release tarball in a real
+          # ubuntu:24.04 container: guarding only the first two still dies
+          # one line later, at "LD_LIBRARY_PATH: unbound variable". This is
+          # akku's quirk, not a bug in anything installed above, so all four
+          # are accommodated here rather than by dropping set -u for the
+          # whole step, which would just as easily hide a real
+          # unbound-variable mistake in the exit-criterion command below.
+          : "${R6RS_PATH:=}"
+          : "${R7RS_PATH:=}"
+          : "${LD_LIBRARY_PATH:=}"
+          : "${DYLD_LIBRARY_PATH:=}"
+          export R6RS_PATH R7RS_PATH LD_LIBRARY_PATH DYLD_LIBRARY_PATH
+          . .akku/bin/activate
+          # (rnrs) is imported for display alone: chezscheme --program holds
+          # a top-level program to strict R6RS import discipline, and
+          # (cmark gfm) does not re-export display. Also confirmed against
+          # the real ubuntu:24.04 container: without it, this line fails
+          # with "unbound identifier display", independently of the set -u
+          # accommodation above -- the two are separate latent bugs in this
+          # step that both had to clear before the exit criterion could run.
+          echo '(import (rnrs) (cmark gfm)) (display (markdown->html "# ok\n" (default-cmark-options)))' > /tmp/t.sps
+          chezscheme --program /tmp/t.sps | grep -q '<h1>ok</h1>'

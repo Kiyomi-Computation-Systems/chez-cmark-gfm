@@ -9,12 +9,38 @@
 ;;; Library bodies evaluate their definitions in order, so the load is
 ;;; written as a definition placed ahead of them. Moving it later fails at
 ;;; IMPORT time with an unresolved-entry error, not at first use.
+;;;
+;;; That same property is why the VERSION GATE sits where it does. Because
+;;; every `foreign-procedure` below resolves at import, a library that lacks
+;;; any one of those symbols aborts the import with a raw
+;;;   Exception in foreign-procedure: no entry for "..."
+;;; and `ensure-native-loaded!` -- which runs at first USE -- is never
+;;; reached, so its version check cannot diagnose what went wrong. Therefore
+;;; `cmark_version` is bound ALONE, straight after the loads, and checked
+;;; there, before the bulk of the bindings are created. These run in this
+;;; order and none of them may move:
+;;;   resolved-libraries -> the two loads -> cmark_version ->
+;;;   the supported-range check -> everything else.
+;;; NOTE what this does and does not buy. It converts an out-of-RANGE library
+;;; into &cmark-version-incompatible on both resolution paths. It cannot help
+;;; a library that is IN range but missing a symbol bound below -- that still
+;;; dies raw, at whichever definition it cannot satisfy -- EXCEPT for the one
+;;; symbol known to be absent from a library inside the range, which carries a
+;;; `guard` of its own at raw-tasklist-checked (design spec 3.10). The gate
+;;; covers the RANGE; that guard covers the one known hole in the CONTENTS.
+;;; Keeping cmark-supported-version-range honest about the symbols actually
+;;; bound here is still a review obligation, not something either check
+;;; enforces (design spec 3.8 is the worked example).
 (library (cmark gfm private native)
   (export ensure-native-loaded!
           version-supported? version-compatible?
-          resolve-shim-path load-shim
+          resolve-cmark-libraries cmark-supported-version-range
+          resolved-libraries
           c-string->string
           option-bits
+          cmark-opt-default cmark-opt-sourcepos cmark-opt-hardbreaks
+          cmark-opt-nobreaks cmark-opt-validate-utf8 cmark-opt-smart
+          cmark-opt-unsafe
           live-counts
           count-parser-new! count-parser-free!
           count-root-new!   count-root-free!
@@ -22,11 +48,12 @@
           parser-new parser-feed parser-finish parser-free
           node-free find-extension attach-extension
           parser-get-syntax-extensions render-html free-buffer
-          runtime-version-string shim-compiled-version shim-runtime-version
+          allocator-slots
+          runtime-version-string cmark-runtime-version
           render-xml render-commonmark render-plaintext
           node-first-child node-next node-type-string node-literal
           node-heading-level node-list-type node-list-delim node-list-start
-          node-list-tight node-item-index node-fence-info
+          node-list-tight node-fence-info
           node-url node-title
           node-start-line node-start-column node-end-line node-end-column
           table-columns table-alignments table-row-is-header tasklist-checked
@@ -37,99 +64,192 @@
   ;; conflict class already documented for `exit` (Task 8).
   (import (rnrs)
           (only (chezscheme)
-                load-shared-object foreign-procedure foreign-ref
-                file-regular? make-mutex with-mutex getenv)
-          (cmark gfm private config)
+                load-shared-object foreign-procedure foreign-ref foreign-sizeof
+                file-regular? file-directory? directory-list
+                make-mutex with-mutex getenv)
+          (cmark gfm private discovery)
           (cmark gfm private conditions))
 
-  ;; --- shim resolution --------------------------------------------------
-  ;; The override exists because config-in-the-environment is 12-factor. It
-  ;; is validated, never searched: an absolute path to an existing regular
-  ;; file, or nothing at all. There is no fallback search and the working
-  ;; directory is never consulted (design spec 6.2). "Existing" alone is
-  ;; not enough: file-exists? is also true of a directory, which would
-  ;; otherwise reach load-shared-object directly and escape as a raw
-  ;; dlopen error instead of a structured condition -- and the same is
-  ;; true of the default, generated path if the built shim is corrupt.
+  ;; --- library resolution ------------------------------------------------
+  ;; Fixes cmark's major/minor at 0.29 and leaves the patch and gfm-patch
+  ;; numbers free. A runtime library outside this range raises
+  ;; &cmark-version-incompatible before any parse happens.
+  (define cmark-supported-version-range '(#x001d0000 . #x001dffff))
+
+  ;; ABSOLUTE PATHS ONLY, NEVER LEAFNAMES. `(load-shared-object
+  ;; "libcmark-gfm.dylib")` resolves to macOS's own copy in the dyld shared
+  ;; cache at /usr/lib/libcmark-gfm.dylib -- a different build, with no headers
+  ;; shipped anywhere, that Apple may change on any OS update, and which
+  ;; currently reports the same version as the pinned one so nothing would
+  ;; notice. Three properties keep it unreachable: it has no filesystem entry,
+  ;; its name is unversioned, and there is no extensions library beside it.
+  ;; Do not "simplify" this into a soname fallback.
   ;;
-  ;; Both steps below (path validation, and wrapping the load itself) are
-  ;; ordinary, exported procedures rather than bare expressions, so they
-  ;; can be unit-tested directly with synthetic paths from a single
-  ;; process. The shim itself still loads exactly once per process either
-  ;; way; see tests/test-shim-loading.sps for why the actual default-path
-  ;; / override wiring below still needs a subprocess on top of that.
+  ;; "Existing" alone is not enough: file-exists? is also true of a
+  ;; directory, and a directory handed to load-shared-object escapes as a
+  ;; raw dlopen error instead of a structured condition. file-regular? is
+  ;; what rules a directory out, so do not simplify this into file-exists?
+  ;; alone.
   (define (regular-file? path)
     (and (file-exists? path) (file-regular? path)))
 
-  (define (resolve-shim-path default-path override)
-    (cond
-      ;; The fallback config's sentinel: shim-path is #f because no build has
-      ;; run, so there is no path to report. Guarded on (not override) so an
-      ;; explicit CHEZ_CMARK_GFM_SHIM still wins in an unbuilt tree.
-      ((and (not override) (not (string? default-path)))
-       (raise (make-cmark-shim-unavailable #f 'not-built)))
-      ((not override)
-       (if (regular-file? default-path)
-           default-path
-           (raise (make-cmark-shim-unavailable default-path 'missing))))
-      ((and (> (string-length override) 0)
-            (char=? (string-ref override 0) #\/)
-            (regular-file? override))
-       override)
-      (else (raise (make-cmark-shim-unavailable override 'invalid-override)))))
+  (define (resolve-cmark-libraries override)
+    (if override
+        (let-values (((status payload) (parse-library-override override regular-file?)))
+          (if (eq? status 'ok)
+              payload
+              (raise (make-cmark-library-unavailable override 'invalid-override))))
+        (let* ((platform (current-platform))
+               (candidates (default-candidate-directories
+                             platform (current-machine) directory-names directory?)))
+          (let-values (((status payload)
+                        (select-cmark-libraries directory-names directory?
+                                                candidates
+                                                cmark-supported-version-range
+                                                platform)))
+            (cond
+              ((eq? status 'found) payload)
+              ((eq? status 'out-of-range)
+               (raise (make-cmark-version-incompatible
+                       cmark-supported-version-range payload)))
+              (else
+               (raise (make-cmark-library-unavailable #f 'not-found))))))))
 
-  (define (load-shim path)
-    (guard (e (#t (raise (make-cmark-shim-unavailable path 'load-failed))))
+  ;; directory-list yields names; some Chez versions yield (name . type) pairs.
+  (define (directory-names dir)
+    (map (lambda (entry) (if (pair? entry) (car entry) entry))
+         (directory-list dir)))
+
+  (define (directory? path) (file-directory? path))
+
+  (define (load-library path)
+    (guard (e (#t (raise (make-cmark-library-unavailable path 'load-failed))))
       (load-shared-object path)))
 
-  (define shim-file
-    (resolve-shim-path shim-path (getenv "CHEZ_CMARK_GFM_SHIM")))
+  (define resolved-libraries
+    (resolve-cmark-libraries (getenv "CHEZ_CMARK_GFM_LIBS")))
 
-  ;; cmark's own shared objects are loaded EXPLICITLY, and before the shim.
-  ;; On Linux the symbols of a dlopen'd library's dependencies are not placed
-  ;; in the global namespace, so resolving cmark_* entry points through the
-  ;; shim alone fails there -- `no entry for
-  ;; "cmark_gfm_core_extensions_ensure_registered"` -- while succeeding on
-  ;; macOS, whose loader searches dependencies. CI caught exactly this: green
-  ;; on macOS, red on Linux. The Stage 0 spikes loaded both libraries
-  ;; explicitly and were right to; this restores that.
-  (define cmark-loaded
-    (for-each (lambda (path)
-                (unless (regular-file? path)
-                  (raise (make-cmark-shim-unavailable path 'missing)))
-                (load-shim path))
-              cmark-library-paths))
+  ;; These two are DEFINITIONS, not expressions, so they run before every
+  ;; foreign-procedure definition below -- see the ORDERING NOTE at the top of
+  ;; this file. Core before extensions: on Linux the symbols of a dlopen'd
+  ;; library's dependencies are not placed in the global namespace, so the
+  ;; extensions library must find an already-loaded core.
+  (define core-loaded (load-library (car resolved-libraries)))
+  (define extensions-loaded (load-library (cdr resolved-libraries)))
 
-  ;; A definition, not a bare expression, so it is legal at this position in
-  ;; an R6RS library body while still running before every binding below.
-  (define shim-loaded (load-shim shim-file))
+  ;; --- version, straight from the library, and the gate it feeds --------
+  ;; ALONE here, ahead of every other foreign-procedure in this body: see the
+  ;; ORDERING NOTE at the top of the file for why the position is load-bearing
+  ;; rather than stylistic.
+  (define cmark-runtime-version (foreign-procedure "cmark_version" () int))
 
-  ;; --- shim bindings ----------------------------------------------------
-  (define shim-compiled-version
-    (foreign-procedure "chez_cmark_shim_compiled_version" () int))
-  (define shim-runtime-version
-    (foreign-procedure "chez_cmark_runtime_version" () int))
-  (define raw-option-bits
-    (foreign-procedure "chez_cmark_option_bits" (int int int int int int) int))
+  (define (version-supported? runtime)
+    (let ((lo (car cmark-supported-version-range))
+          (hi (cdr cmark-supported-version-range)))
+      (and (>= runtime lo) (<= runtime hi))))
+
+  ;; There is no compile step any more, so there is no compiled-vs-runtime skew
+  ;; to detect: the only question is whether the library we loaded is one this
+  ;; binding supports. version-compatible? is retained as a one-argument alias
+  ;; so callers and tests keep a single name for the question.
+  (define (version-compatible? runtime) (version-supported? runtime))
+
+  ;; A DEFINITION, not a bare expression, for the same R6RS reason the two
+  ;; loads above are definitions: a library body may not place an expression
+  ;; among the definitions that follow it. The bound value is never read --
+  ;; binding it is only what lets the check occupy this exact position -- so
+  ;; do not "tidy" it into a bare `(unless (version-supported? ...) (raise ...))`.
+  ;;
+  ;; This is the check that makes &cmark-version-incompatible reachable at all
+  ;; for an unsupported library. It fires on BOTH resolution paths, including
+  ;; the CHEZ_CMARK_GFM_LIBS override, where discovery does no filename
+  ;; version parsing whatsoever (discovery.sls's parse-library-override).
+  (define version-checked
+    (let ((runtime (cmark-runtime-version)))
+      (if (version-supported? runtime)
+          runtime
+          (raise (make-cmark-version-incompatible
+                  cmark-supported-version-range runtime)))))
+
+  ;; --- buffer release through cmark's own allocator ---------------------
+  ;; cmark_get_default_mem_allocator returns a pointer to
+  ;; struct cmark_mem { calloc; realloc; free; } -- three function pointers in
+  ;; that order. The third is the ONLY correct way to release a renderer
+  ;; buffer; libc free() is not equivalent and cmark's own header says so.
+  ;;
+  ;; Chez accepts an integer address where a name string normally goes, which
+  ;; is what makes calling through a struct member possible at all. The offset
+  ;; is an ABI assumption, checked by tests/test-native.sps "allocator exposes
+  ;; three distinct non-null function pointers".
+  (define default-mem-allocator
+    (foreign-procedure "cmark_get_default_mem_allocator" () uptr))
+
+  (define (allocator-slots)
+    (let ((mem (default-mem-allocator))
+          (w (foreign-sizeof 'void*)))
+      (list (foreign-ref 'uptr mem 0)
+            (foreign-ref 'uptr mem w)
+            (foreign-ref 'uptr mem (* 2 w)))))
+
   (define free-buffer
-    (foreign-procedure "chez_cmark_free_buffer" (uptr) void))
+    (foreign-procedure (caddr (allocator-slots)) (uptr) void))
 
-  (define count-parser-new!
-    (foreign-procedure "chez_cmark_count_parser_new" () void))
-  (define count-parser-free!
-    (foreign-procedure "chez_cmark_count_parser_free" () void))
-  (define count-root-new!
-    (foreign-procedure "chez_cmark_count_root_new" () void))
-  (define count-root-free!
-    (foreign-procedure "chez_cmark_count_root_free" () void))
-  (define count-buffer-new!
-    (foreign-procedure "chez_cmark_count_buffer_new" () void))
-  (define count-buffer-free!
-    (foreign-procedure "chez_cmark_count_buffer_free" () void))
+  ;; --- tasklist checked state -------------------------------------------
+  ;; `unsigned-8`, not `int`: the entry point returns C _Bool, which occupies
+  ;; only the low byte of the return register with the upper bits unspecified.
+  ;; Declaring `int` would read whatever happens to be there. This is the job
+  ;; a C wrapper used to do, done by the type declaration instead.
+  ;;
+  ;; GUARDED, and it is the only binding in this file that is. This entry
+  ;; point first shipped in 0.29.0.gfm.1; unpatched upstream 0.29.0.gfm.0
+  ;; spells it `char *cmark_gfm_extensions_get_tasklist_state`. Both report a
+  ;; version INSIDE cmark-supported-version-range, so version-checked above
+  ;; cannot tell them apart -- and raising the floor to gfm.1 is not the fix
+  ;; either: Debian 11 backports the rename into its gfm.0 (its own
+  ;; libcmark-gfm-extensions0.symbols lists this symbol at @Base
+  ;; 0.29.0.gfm.0) while still reporting 0.29.0.gfm.0 from cmark_version().
+  ;; A gfm.0 floor admits the upstream build that then crashes; a gfm.1 floor
+  ;; rejects the Debian build that works. The constraint is the PRESENCE OF
+  ;; THE SYMBOL, which distributions patch independently of the version they
+  ;; report, so the symbol is what gets probed. See design spec 3.10.
+  ;;
+  ;; Without this guard the import dies with a raw
+  ;;   Exception in foreign-procedure: no entry for "cmark_gfm_extensions_..."
+  ;; -- exactly the failure the ORDERING NOTE at the top says the version gate
+  ;; structurally cannot convert. A failed foreign-procedure resolution is
+  ;; catchable because the entry point is looked up when the expression is
+  ;; EVALUATED, which is inside this guard's dynamic extent.
+  ;;
+  ;; The path named is the EXTENSIONS library -- the cdr, not the car. This
+  ;; symbol lives there, and naming the core would send the reader to a file
+  ;; that was never going to hold it.
+  (define raw-tasklist-checked
+    (guard (e (#t (raise (make-cmark-library-unavailable
+                          (cdr resolved-libraries) 'missing-entry-point))))
+      (foreign-procedure "cmark_gfm_extensions_get_tasklist_item_checked"
+                         (uptr) unsigned-8)))
 
-  (define live-parsers (foreign-procedure "chez_cmark_live_parsers" () long))
-  (define live-roots   (foreign-procedure "chez_cmark_live_roots" () long))
-  (define live-buffers (foreign-procedure "chez_cmark_live_buffers" () long))
+  (define (tasklist-checked node) (not (zero? (raw-tasklist-checked node))))
+
+  ;; --- allocation counters ----------------------------------------------
+  ;; Always on. Three fixnum increments per document is not a cost worth a
+  ;; build mode, and the C versions existed only so a prod build could compile
+  ;; them out -- which is what `make prod` and the flavor machinery were for.
+  ;; These count acquisitions THIS library makes; they were never a measure of
+  ;; the C heap. tests/test-lifecycle.sps reads them to prove pairing.
+  (define live-parser-count 0)
+  (define live-root-count 0)
+  (define live-buffer-count 0)
+
+  (define (count-parser-new!)  (set! live-parser-count (+ live-parser-count 1)))
+  (define (count-parser-free!) (set! live-parser-count (- live-parser-count 1)))
+  (define (count-root-new!)    (set! live-root-count   (+ live-root-count 1)))
+  (define (count-root-free!)   (set! live-root-count   (- live-root-count 1)))
+  (define (count-buffer-new!)  (set! live-buffer-count (+ live-buffer-count 1)))
+  (define (count-buffer-free!) (set! live-buffer-count (- live-buffer-count 1)))
+
+  (define (live-counts)
+    (list live-parser-count live-root-count live-buffer-count))
 
   ;; --- cmark bindings ---------------------------------------------------
   ;; Accessors returning `const char *` are declared `uptr`, not `string`,
@@ -189,8 +309,6 @@
     (foreign-procedure "cmark_node_get_list_start" (uptr) int))
   (define node-list-tight
     (foreign-procedure "cmark_node_get_list_tight" (uptr) int))
-  (define node-item-index
-    (foreign-procedure "cmark_node_get_item_index" (uptr) int))
   (define node-start-line
     (foreign-procedure "cmark_node_get_start_line" (uptr) int))
   (define node-start-column
@@ -202,8 +320,8 @@
 
   ;; --- extension accessors ----------------------------------------------
   ;; These live in libcmark-gfm-extensions. They resolve only because
-  ;; cmark-loaded above loads both cmark shared objects explicitly, before the
-  ;; shim: on Linux a dlopened library's dependencies are not placed in the
+  ;; extensions-loaded above loads that shared object explicitly, after the
+  ;; core: on Linux a dlopened library's dependencies are not placed in the
   ;; global symbol namespace, so a missing explicit load fails HERE, at import
   ;; time, and only on Linux.
   ;;
@@ -218,10 +336,6 @@
     (foreign-procedure "cmark_gfm_extensions_get_table_alignments" (uptr) uptr))
   (define table-row-is-header
     (foreign-procedure "cmark_gfm_extensions_get_table_row_is_header" (uptr) int))
-  ;; Via the shim, NOT the cmark entry point directly: the underlying function
-  ;; returns C _Bool and binding it as int would read unspecified upper bits.
-  (define tasklist-checked
-    (foreign-procedure "chez_cmark_tasklist_checked" (uptr) int))
 
   ;; Copies `count` bytes out of a borrowed uint8_t array. Kept here rather
   ;; than in convert.sls so foreign-ref appears in exactly one library. A NULL
@@ -243,56 +357,49 @@
   (define init-mutex (make-mutex))
   (define initialized? #f)
 
-  (define (version-supported? runtime)
-    (let ((lo (car cmark-supported-version-range))
-          (hi (cdr cmark-supported-version-range)))
-      (and (>= runtime lo) (<= runtime hi))))
-
-  ;; design spec 6.3: initialisation compares the version the shim was
-  ;; COMPILED against to the version cmark_version() reports at RUNTIME. In
-  ;; an ordinary build these are identical -- the shim links directly
-  ;; against the library its own headers came from -- so any mismatch means
-  ;; the two have come apart, e.g. a shim built against one cmark-gfm
-  ;; checkout now loading a different library's runtime object because it
-  ;; was never rebuilt after an in-place library upgrade. The range check
-  ;; is kept alongside equality, not replaced by it: a compiled/runtime
-  ;; pair that agrees with itself but both predate what this binding
-  ;; supports must still be rejected.
-  ;; Compatible when BOTH the compile-time and runtime versions fall inside the
-  ;; supported range. Deliberately not `(= compiled runtime)`: the range spans
-  ;; 0.29.0.gfm.x, so exact equality would reject a runtime the project declares
-  ;; supported and force a shim rebuild on every upstream patch release. Checking
-  ;; `compiled` too catches a shim built against an unsupported header, which the
-  ;; runtime check alone would miss.
-  (define (version-compatible? compiled runtime)
-    (and (version-supported? compiled)
-         (version-supported? runtime)))
-
-  ;; Idempotent. Fails closed on a compiled/runtime mismatch or an
-  ;; out-of-range version.
+  ;; The version check below is the SECOND one, not the primary gate: the
+  ;; library body already refused an out-of-range library at instantiation
+  ;; (version-checked, above), so any caller that gets this far has already
+  ;; passed. Under that ordering this one cannot fire -- same library, same
+  ;; constant, same answer -- and it is kept anyway, deliberately: it costs one
+  ;; foreign call once per process behind a mutex that is taken regardless, and
+  ;; it keeps the invariant attached to the procedure the public API actually
+  ;; calls instead of resting entirely on this body's statement order. What it
+  ;; must NOT be mistaken for is coverage: it is not what diagnoses an
+  ;; unsupported library, and it never was -- that is version-checked's job.
   (define (ensure-native-loaded!)
     (with-mutex init-mutex
       (unless initialized?
-        (let ((compiled (shim-compiled-version))
-              (runtime  (shim-runtime-version)))
-          (unless (version-compatible? compiled runtime)
-            (raise (make-cmark-version-incompatible compiled runtime))))
+        (let ((runtime (cmark-runtime-version)))
+          (unless (version-supported? runtime)
+            (raise (make-cmark-version-incompatible
+                    cmark-supported-version-range runtime))))
         (ensure-extensions-registered)
         (set! initialized? #t))))
 
-  (define (live-counts)
-    (list (live-parsers) (live-roots) (live-buffers)))
-
-  (define (bool->int x) (if x 1 0))
+  ;; cmark's option bits, transcribed from vendor/cmark-gfm/src/cmark-gfm.h.
+  ;; tests/test-option-bits.sps asserts every one of these against that header;
+  ;; five of the six are additionally covered behaviourally by
+  ;; tests/test-differential.sps. Do not "tidy" these into a sequence -- the
+  ;; values are not contiguous (UNSAFE is bit 17, not bit 5).
+  (define cmark-opt-default       0)
+  (define cmark-opt-sourcepos     (bitwise-arithmetic-shift-left 1 1))
+  (define cmark-opt-hardbreaks    (bitwise-arithmetic-shift-left 1 2))
+  (define cmark-opt-nobreaks      (bitwise-arithmetic-shift-left 1 4))
+  (define cmark-opt-validate-utf8 (bitwise-arithmetic-shift-left 1 9))
+  (define cmark-opt-smart         (bitwise-arithmetic-shift-left 1 10))
+  (define cmark-opt-unsafe        (bitwise-arithmetic-shift-left 1 17))
 
   (define (option-bits validate-utf8? sourcepos? hardbreaks?
                        nobreaks? smart? unsafe-html?)
-    (raw-option-bits (bool->int validate-utf8?)
-                     (bool->int sourcepos?)
-                     (bool->int hardbreaks?)
-                     (bool->int nobreaks?)
-                     (bool->int smart?)
-                     (bool->int unsafe-html?)))
+    (let ((add (lambda (acc on? bit) (if on? (bitwise-ior acc bit) acc))))
+      (add (add (add (add (add (add cmark-opt-default
+                                    validate-utf8? cmark-opt-validate-utf8)
+                               sourcepos?    cmark-opt-sourcepos)
+                          hardbreaks?   cmark-opt-hardbreaks)
+                     nobreaks?     cmark-opt-nobreaks)
+                smart?        cmark-opt-smart)
+           unsafe-html?  cmark-opt-unsafe)))
 
   (define (runtime-version-string) (c-string->string (raw-version-string)))
 

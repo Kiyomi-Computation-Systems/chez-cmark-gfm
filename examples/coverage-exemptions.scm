@@ -18,7 +18,7 @@
   "Condition type name, as above.")
  (&cmark-invalid-input
   "Condition type name, as above.")
- (&cmark-shim-unavailable
+ (&cmark-library-unavailable
   "Condition type name, as above.")
  (&cmark-invalid-option
   "Condition type name, as above.")
@@ -42,13 +42,13 @@
    a non-condition -- which documents nothing.")
  (cmark-extension-unavailable?
   "Predicate, unreachable for the same reason as its accessor below.")
- (cmark-shim-unavailable?
+ (cmark-library-unavailable?
   "Predicate for a condition raised at import time, before any example code
-   runs. See tests/test-fallback-config.sps, which needs a subprocess for
+   runs. See tests/test-library-loading.sps, which needs a subprocess for
    exactly this reason.")
  (cmark-render-failed?
   "Predicate, unreachable for the same reason as its accessor below.")
- (cmark-version-incompatible-compiled
+ (cmark-version-incompatible-supported
   "Accessor on a condition raised only when the runtime cmark-gfm is outside
    the supported range. An example cannot arrange that without a second,
    deliberately-wrong native library.")
@@ -58,11 +58,11 @@
   "Accessor on a condition raised only when cmark-gfm's registry lacks an
    extension the options record accepted. Unreachable while the pinned
    version ships all five.")
- (cmark-shim-unavailable-path
+ (cmark-library-unavailable-path
   "Accessor on a condition raised at import time, before any example code
-   runs -- see tests/test-fallback-config.sps, which needs a subprocess for
+   runs -- see tests/test-library-loading.sps, which needs a subprocess for
    exactly this reason.")
- (cmark-shim-unavailable-reason
+ (cmark-library-unavailable-reason
   "As above.")
  (cmark-render-failed-format
   "Accessor on a condition raised only when a cmark renderer returns NULL,

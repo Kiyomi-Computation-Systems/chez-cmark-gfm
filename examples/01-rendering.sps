@@ -2,7 +2,7 @@
 ;;; Rendering Markdown in four output formats.
 ;;;
 ;;; Run it:
-;;;   CHEZSCHEMELIBDIRS=src:fallback chez --program examples/01-rendering.sps
+;;;   CHEZSCHEMELIBDIRS=src chez --program examples/01-rendering.sps
 ;;; or run every example and check its output:  make examples
 (import (rnrs) (cmark gfm))
 

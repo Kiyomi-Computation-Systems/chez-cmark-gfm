@@ -91,9 +91,12 @@ None is obvious from reading the code.
   was in fact satisfied by the *last* argument's accessor raising.
 * **A struct tag first named in a prototype's parameter list has prototype scope
   only** (C99 6.2.1p7). Forward-declare it at file scope before the prototype.
-  `cmark-gfm-shim.h` is included before `<cmark-gfm.h>`, so
-  `int f(struct cmark_node *n);` without that line declares a different type
-  than the `.c` definition sees — conflicting types, unrelated to `-Werror`.
+  Learned on the C shim release 2.0 deleted, whose own header was included
+  before `<cmark-gfm.h>`: `int f(struct cmark_node *n);` without that line
+  declares a different type than the `.c` definition sees — conflicting types,
+  unrelated to `-Werror`. This project compiles no C at all now (ADR-0015), so
+  the lesson has no live site here; it is kept for whoever next reaches for a
+  shim, and for reading the history that still contains one.
 * **An SXML serializer that does not know your attribute marker will not reject
   the tree — it renders it wrong.** The specification marks an attribute list
   `@`; both serializers reachable on this platform (`wak-sxml-tools`,

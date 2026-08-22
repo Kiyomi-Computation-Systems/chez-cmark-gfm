@@ -16,19 +16,19 @@
 ;; so callers can choose their granularity.
 (test-assert "version-incompatible is a cmark-error"
   (guard (e ((cmark-error? e) #t) (#t #f))
-    (raise (make-cmark-version-incompatible #x001d0000 #x001e0000))))
+    (raise (make-cmark-version-incompatible '(#x001d0000 . #x001dffff) #x001e0000))))
 
-(test-equal "version-incompatible carries the compiled version"
-  #x001d0000
+(test-equal "version-incompatible carries the supported range"
+  '(#x001d0000 . #x001dffff)
   (guard (e ((cmark-version-incompatible? e)
-             (cmark-version-incompatible-compiled e)))
-    (raise (make-cmark-version-incompatible #x001d0000 #x001e0000))))
+             (cmark-version-incompatible-supported e)))
+    (raise (make-cmark-version-incompatible '(#x001d0000 . #x001dffff) #x001e0000))))
 
-(test-equal "version-incompatible carries the runtime version"
+(test-equal "version-incompatible carries what was actually found"
   #x001e0000
   (guard (e ((cmark-version-incompatible? e)
              (cmark-version-incompatible-runtime e)))
-    (raise (make-cmark-version-incompatible #x001d0000 #x001e0000))))
+    (raise (make-cmark-version-incompatible '(#x001d0000 . #x001dffff) #x001e0000))))
 
 (test-assert "dead-document is distinguishable from version-incompatible"
   (guard (e ((cmark-version-incompatible? e) #f)
@@ -47,10 +47,15 @@
   (guard (e ((cmark-invalid-input? e) (cmark-invalid-input-reason e)))
     (raise (make-cmark-invalid-input 'embedded-nul))))
 
-(test-equal "shim-unavailable carries the attempted path"
-  "/nope/libchezcmarkgfm.dylib"
-  (guard (e ((cmark-shim-unavailable? e) (cmark-shim-unavailable-path e)))
-    (raise (make-cmark-shim-unavailable "/nope/libchezcmarkgfm.dylib" 'missing))))
+(test-equal "library-unavailable carries its path"
+  "/nope/libcmark-gfm.so.0.29.0.gfm.13"
+  (guard (e ((cmark-library-unavailable? e) (cmark-library-unavailable-path e)))
+    (raise (make-cmark-library-unavailable "/nope/libcmark-gfm.so.0.29.0.gfm.13"
+                                           'load-failed))))
+
+(test-equal "library-unavailable carries its reason" 'not-found
+  (guard (e ((cmark-library-unavailable? e) (cmark-library-unavailable-reason e)))
+    (raise (make-cmark-library-unavailable #f 'not-found))))
 
 ;; Every condition must also be catchable as the base type, so a caller can
 ;; choose its granularity. Without these, deriving one of them from &error
@@ -67,9 +72,10 @@
   (guard (e ((cmark-error? e) #t) (#t #f))
     (raise (make-cmark-invalid-input 'embedded-nul))))
 
-(test-assert "shim-unavailable is a cmark-error"
+(test-assert "library-unavailable is a cmark-error"
   (guard (e ((cmark-error? e) #t) (#t #f))
-    (raise (make-cmark-shim-unavailable "/nope/libchezcmarkgfm.dylib" 'missing))))
+    (raise (make-cmark-library-unavailable "/nope/libcmark-gfm.so.0.29.0.gfm.13"
+                                           'load-failed))))
 
 ;; --- Stage 2: invalid option ------------------------------------------
 ;; key is #f for whole-plist problems (odd length), a symbol otherwise.

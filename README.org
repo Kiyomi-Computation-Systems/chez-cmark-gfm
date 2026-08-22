@@ -8,7 +8,7 @@ CommonMark GFM for Chez Sceme
 -----
 
 © [[https://kiyomicomputation.systems/][Kiyomi Computation Systems LLC]]. Licensed under BSD 3-Clause — see
-[[file:LICENSE][LICENSE]], and [[file:NOTICE][NOTICE]] for cmark-gfm's own bundled licenses.
+[[file:LICENSE][LICENSE]], and [[file:NOTICE][NOTICE]] for cmark-gfm's own licenses.
 
 * Requirements and Build
 
@@ -16,27 +16,60 @@ CommonMark GFM for Chez Sceme
 
 - *Chez Scheme* 9.5.8 or later. The binary is ~chez~ on macOS and
   ~chezscheme~ on Debian/Ubuntu.
-- *cmark-gfm*, in the ~0.29.0.gfm.x~ range, pinned to ~0.29.0.gfm.13~ — the
-  range ~make build~ writes into ~cmark-supported-version-range~ in the
-  generated ~src/cmark/gfm/private/config.sls~ (~(#x001d0000 . #x001dffff)~,
-  fixing cmark's major/minor at 0.29 and leaving the patch and gfm-patch
-  numbers free). A runtime library outside that range makes the first parse
-  raise ~&cmark-version-incompatible~. Satisfied either by a system package
-  ~pkg-config~ can see, or by the vendored submodule below.
-- On Debian/Ubuntu, the packages in [[file:packaging/debian-prereqs.txt][packaging/debian-prereqs.txt]] — the same
-  list CI installs from. On macOS: ~brew install chezscheme cmark-gfm cmake pkg-config~.
+- *cmark-gfm*, from your system's package manager. One command, no compiler:
+
+  #+begin_src sh
+  apt install cmark-gfm     # Debian/Ubuntu
+  brew install cmark-gfm    # macOS
+  #+end_src
+
+  Each pulls the core and extensions shared libraries at matching versions,
+  and each also installs the ~cmark-gfm~ CLI the differential suites use as
+  their oracle. [[file:packaging/debian-prereqs.txt][packaging/debian-prereqs.txt]] carries the Debian names in
+  two labelled sections — using the library needs the first one only; the
+  second is for building the vendored test oracle. One copy, which CI
+  installs from and this section points at rather than restating.
+  RHEL, Fedora, and Alpine package no GFM library; see the *RHEL, Fedora,
+  and Alpine* section under Installing.
+
+Supported versions are ~0.29.0.gfm.x~ — the constant
+~cmark-supported-version-range~ in ~src/cmark/gfm/private/native.sls~,
+~(#x001d0000 . #x001dffff)~, fixing cmark's major and minor at 0.29 and
+leaving the patch and gfm-patch numbers free. Nothing is generated and
+nothing is compiled: importing ~(cmark gfm)~ locates a library on this
+machine and loads it, and one outside that range is refused with
+~&cmark-version-incompatible~ rather than used.
+
+The range is not the whole contract, because one entry point this binding
+needs — ~cmark_gfm_extensions_get_tasklist_item_checked~ — arrived in
+~0.29.0.gfm.1~, and a version check cannot stand in for it: Debian 11
+backports the symbol into its ~gfm.0~ and still reports ~gfm.0~, so a floor
+that rejected upstream ~gfm.0~ would reject Debian's working one too. The
+symbol is probed instead. A library that satisfies the range but lacks it
+raises ~&cmark-library-unavailable~ with reason ~missing-entry-point~,
+naming the extensions library, rather than dying with a raw foreign-procedure
+error.
 
 *** Supported matrix
 
-Two rows, because two rows are what CI proves. Between them, both
-acquisition paths (ADR-0001) are exercised — macOS runs pkg-config and
-vendored; Linux runs vendored only. *Windows is not supported for v1*
-(ADR-0004); the position is stated here rather than left implied.
+Two rows, because two rows are what CI proves. 2.0 has *one* acquisition
+path — the system package — so the rows differ in where cmark-gfm came
+from, not in how it was built; ADR-0015 amends ADR-0001's two paths away.
+*Windows is not supported* (ADR-0004); the position is stated here rather
+than left implied.
 
-| Platform              | Chez   | Memory evidence                                  |
-|-----------------------+--------+--------------------------------------------------|
-| macOS/ARM64 (Homebrew)| 10.4.1 | ASan only — *no leak claim*                      |
-| Linux/x86-64 (apt)    | 9.5.8  | Valgrind clean, historically — *unverified here* |
+| Platform              | Chez   | cmark-gfm from | Memory evidence                                  |
+|-----------------------+--------+----------------+--------------------------------------------------|
+| macOS/ARM64 (Homebrew)| 10.4.1 | ~brew~         | ASan only — *no leak claim*                      |
+| Linux/x86-64 (apt)    | 9.5.8  | ~apt~          | Valgrind clean, historically — *unverified here* |
+
+Two further CI jobs cover what neither row does: ~no-library~ installs Chez
+and deliberately no cmark-gfm, asserting ~make build~ fails, reports reason
+~not-found~, and names the remedy — the reason symbol is what tells that
+failure apart from any other, since the diagnostic's catch-all clause prints
+the same remedy for every condition; ~akku-install~ installs from
+~Akku.manifest~ and calls into ~(cmark gfm)~ with nothing set in the
+environment.
 
 The floor is *9.5.8*, established by test rather than assumption: earlier
 revisions of this file said "10.4.1 or later", which recorded one
@@ -47,121 +80,150 @@ A CI step asserts this table against the versions each job actually ran, so
 a runner-image bump fails the build until the table is updated rather than
 letting the claim go stale.
 
+** Installing
+
+|                | 1.0                                         | 2.0                       |
+|----------------+---------------------------------------------+---------------------------|
+| Linux          | clone, submodule init, CMake build (2 min)  | ~apt install cmark-gfm~   |
+| macOS          | clone + ~make build~, Xcode CLT             | ~brew install cmark-gfm~  |
+| Library path   | ~CHEZSCHEMELIBDIRS=src:fallback~            | ~CHEZSCHEMELIBDIRS=src~   |
+| Akku           | not supported                               | supported                 |
+| RHEL / Alpine  | worked (vendored build)                     | source build, below       |
+
+*With Akku.* ~Akku.manifest~ declares the package's name, version, license,
+homepage, and its development-only dependencies; ~Akku.lock~ is committed.
+It names no libraries — Akku infers those from the file tree — and carries
+no ~scripts~ clause, because there is nothing to build (ADR-0017).
+
+#+begin_src sh
+akku install
+. .akku/bin/activate
+#+end_src
+
+puts ~src/cmark/**.sls~ under ~.akku/lib/~ and sets ~CHEZSCHEMELIBDIRS~;
+~(cmark gfm)~ then finds the system libcmark-gfm on its own, with nothing
+else set and no compiler involved. That is the release's exit criterion,
+and CI's ~akku-install~ job is what proves it.
+
+*From a clone.*
+
+#+begin_src sh
+git clone <repo> && cd chez-cmark-gfm && make build
+#+end_src
+
+~--recursive~ is needed only to run the test suite: everything under
+~vendor/~ is a development dependency — the 744-example corpus and the
+header ~tests/test-option-bits.sps~ parses — and ~make deps~ checks those
+out. The differential suites' CLI oracle is ~$(CMARK_CLI)~, which defaults
+to the ~cmark-gfm~ on ~PATH~ that the system package installed.
+
+*** RHEL, Fedora, and Alpine
+
+Neither Fedora/RHEL (including EPEL) nor Alpine packages the cmark-gfm C
+library. Fedora ships only language bindings — ~ghc-cmark-gfm~ and
+~python3-cmarkgfm~ — and ~cmark-devel~ is upstream cmark, not the GFM fork.
+Alpine's ~cmark~ is likewise not the GFM fork.
+
+Build it once from source; the default prefix is on the search path:
+
+#+begin_src sh
+git clone --branch 0.29.0.gfm.13 https://github.com/github/cmark-gfm
+cmake -S cmark-gfm -B cmark-gfm/build \
+      -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMARK_SHARED=ON -DCMARK_TESTS=OFF
+cmake --build cmark-gfm/build --target install   # -> /usr/local/lib
+#+end_src
+
+~-DCMAKE_POLICY_VERSION_MINIMUM=3.5~ is not optional on a current CMake and
+is not decoration: 0.29.0.gfm.13 opens with ~cmake_minimum_required(VERSION
+3.0)~, which CMake 4 refuses outright — /Compatibility with CMake < 3.5 has
+been removed from CMake./ — exit 1, before any target is configured. This
+project's own ~make vendor~ passes the same flag for the same reason.
+
+Any ~0.29.x.gfm.y~ satisfies the supported range. If you install somewhere
+other than a searched directory, name both libraries explicitly:
+
+#+begin_src sh
+export CHEZ_CMARK_GFM_LIBS=/opt/cmark/lib/libcmark-gfm.so.0.29.0.gfm.13:/opt/cmark/lib/libcmark-gfm-extensions.so.0.29.0.gfm.13
+#+end_src
+
+This is a step 1.0 did not require: its vendored build path compiled
+cmark-gfm from the submodule. 2.0 compiles nothing, which is what makes the
+Akku install work, and the cost falls on the platforms with no package.
+
 ** Build
 
 #+begin_src sh
 make build
 #+end_src
 
-compiles the C shim and writes ~src/cmark/gfm/private/config.sls~ — the
-shim's absolute path, the absolute paths of the cmark shared libraries to
-load before it, and the version range above. *This file is generated and
-gitignored*, not part of the repository, so a fresh clone has to run
-~make build~ before ~(cmark gfm)~ is usable. Skipping it does *not* raise
-Chez's raw ~library (cmark gfm private config) not found~ under the
-documented install below (~CHEZSCHEMELIBDIRS=src:fallback~): ~fallback/~
-provides a checked-in stand-in for exactly this case, so importing instead
-raises the structured ~&cmark-shim-unavailable~ condition — reason
-~not-built~, path ~#f~ — naming the remedy instead of an opaque loader
-error. See ADR-0014.
+*compiles nothing.* There is no C shim in 2.0 and no generated
+~config.sls~; ~make build~ is a preflight answering the question the
+install contract actually raises — is a usable libcmark-gfm present, and
+which one would be loaded:
 
-Where the C library comes from depends on ~pkg-config --exists
-libcmark-gfm~:
+#+begin_example
+cmark-gfm 0.29.0.gfm.13
+  core: /opt/homebrew/lib/libcmark-gfm.0.29.0.gfm.13.dylib
+  ext:  /opt/homebrew/lib/libcmark-gfm-extensions.0.29.0.gfm.13.dylib
+#+end_example
 
-- *Succeeds* (e.g. ~brew install cmark-gfm~ on macOS): the shim is compiled
-  directly against that installed copy. Nothing under ~vendor/~ is touched.
-- *Fails* (the common case on a bare Linux box): the Makefile's ~HAVE_PKG~
-  check evaluates to ~no~, which makes the shim target depend on ~vendor~ —
-  so the same ~make build~ first runs
-  ~git submodule update --init --recursive~ and builds the pinned
-  ~vendor/cmark-gfm~ submodule with CMake (shared libraries only), then
-  links the shim against that build instead. Force this path deliberately,
-  even with a system package present — this is what CI's vendored-path job
-  does — with:
+With no usable library it exits non-zero and names the remedy instead of
+dumping a loader error. Running it is optional — importing ~(cmark gfm)~
+performs the same discovery either way — but it is the one command that
+turns a misconfigured machine into a sentence you can act on.
 
-  #+begin_src sh
-  make HAVE_PKG=no build
-  #+end_src
-
-** Static versus dynamic linking
-
-Both acquisition paths link *dynamically*, and there is no static option.
-
-The vendored path builds ~cmark-gfm~ as shared libraries and links the shim
-against them with an explicit ~-Wl,-rpath~ to each — an absolute path
-recorded at build time, not a system-path search (plan §10.7).
-
-Static linking is *impossible* here, not merely unchosen. ~cmark-gfm~ builds
-its static archives with ~CMAKE_C_VISIBILITY_PRESET hidden~ and
-~CMARK_GFM_STATIC_DEFINE~, which hides every cmark symbol from whatever links
-them; ADR-0002 puts AST traversal in Scheme, so Scheme resolves cmark's entry
-points directly at runtime via ~foreign-procedure~. A statically-linked shim
-exports none of them. See ADR-0001, amended.
-
-** Installing
-
-Clone and build. That is the supported install for this release:
-
-#+begin_src sh
-git clone --recursive <repo> && cd chez-cmark-gfm && make build
-#+end_src
-
-then put ~src~ and ~fallback~ on Chez's library path:
-~CHEZSCHEMELIBDIRS=src:fallback~.
-
-~Akku.manifest~ declares this package's name, version, license, and its
-(development-only) dependencies; ~Akku.lock~ is committed. It does *not*
-list libraries — Akku infers those from the file tree. *Akku is not a supported install
-path yet:* it distributes Scheme source and cannot build the native shim, so
-an ~akku install~ leaves a tree that has no compiled shim and no generated
-~config.sls~. Such a tree fails with ~&cmark-shim-unavailable~ and reason
-~not-built~ — which names the remedy rather than reporting a missing library —
-and ~make build~ in a cloned tree is the remedy. See ADR-0014.
-
-One asymmetry worth knowing if you point ~CHEZ_CMARK_GFM_SHIM~ at a prebuilt
-shim in an *unbuilt* tree: it works on macOS and fails on Linux, whose loader
-does not put a dlopen'd library's dependencies in the global symbol
-namespace, and the fallback configuration names no cmark libraries to load
-first.
+Discovery scans a fixed list of system directories, in order, for a *core
+and extensions pair at the same version in the same directory*:
+~/opt/homebrew/lib~, ~/usr/local/lib~, ~/opt/local/lib~ on macOS;
+~/usr/local/lib~, ~/usr/lib/<triple>~, ~/usr/lib~, ~/usr/lib64~ on Linux.
+The first directory holding an in-range pair wins, so a stale
+~/usr/local/lib~ build shadows a newer packaged one — both are in range, so
+both work, and ~CHEZ_CMARK_GFM_LIBS~ is the escape hatch. See ADR-0016.
 
 ** Running
 
-Chez has to be told where the library lives; ~CHEZSCHEMELIBDIRS~ must
-include ~src~ and ~fallback~, in that order:
+Chez has to be told where the library lives:
 
 #+begin_src sh
-CHEZSCHEMELIBDIRS=src:fallback chez --program your-script.sps
+CHEZSCHEMELIBDIRS=src chez --program your-script.sps
 #+end_src
 
-~src~ comes first so a built tree's generated config shadows ~fallback~'s
-checked-in sentinel. Omit ~fallback~ and an unbuilt tree fails with Chez's
-own ~library (cmark gfm private config) not found~ instead of
-~&cmark-shim-unavailable~ naming the remedy.
+~src~ alone: ~fallback/~ is deleted, and there is no generated
+configuration left for it to shadow. Under Akku, ~. .akku/bin/activate~
+sets this for you.
 
 #+begin_src sh
 make dev
 #+end_src
 
-does this for interactive use. It runs ~build~ and ~deps~ first — the
-latter vendors ~chez-srfi~ into ~build/scheme-libs~ for the test suites;
-~(cmark gfm)~ itself needs none of it — then starts a REPL with
-~CHEZSCHEMELIBDIRS=src:fallback:tests:build/scheme-libs~ — the Makefile's
+starts a REPL for interactive use. It runs ~build~ and ~deps~ first — the
+latter vendors ~chez-srfi~ and the ~wak~ libraries into ~build/scheme-libs~
+for the test suites; ~(cmark gfm)~ itself needs none of it — then sets
+~CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs~, the Makefile's
 ~CHEZ_LIBDIRS~, the same one ~make test~ uses.
 
-** ~CHEZ_CMARK_GFM_SHIM~
+** ~CHEZ_CMARK_GFM_LIBS~
 
-Environment override for the shim's absolute path, read once at import time
-by ~resolve-shim-path~ in ~src/cmark/gfm/private/native.sls~ — config in the
-environment is 12-factor. It is validated, never searched:
+Environment override naming both shared objects outright, read once at
+import time by ~resolve-cmark-libraries~ in
+~src/cmark/gfm/private/native.sls~ — config in the environment is
+12-factor. It is *validated, never searched*:
 
-- Unset: the default path ~make build~ recorded in ~config.sls~ is used,
-  and must itself exist as a regular file.
-- Set: must be an *absolute* path (leading ~/~) to an *existing regular
-  file*; that exact file is loaded.
-- Anything else — a relative path, a path that does not exist, a
-  directory — raises ~&cmark-shim-unavailable~ immediately. There is no
-  PATH search, no falling back to the default, and the working directory
-  is never consulted.
+- *Unset*: the directory scan above runs.
+- *Set*: exactly *two* colon-separated *absolute* paths to *existing
+  regular files*, one core and one extensions library; those two are
+  loaded verbatim and the scan never runs. Order does not matter — each
+  entry is classified by basename, so a swapped value is not a footgun —
+  and versioned filenames are not required, so a ~-dev~ package's
+  unversioned symlinks are accepted.
+- *Anything else* — one path, three paths, a relative path, a missing
+  file, a directory, two libraries of the same kind — raises
+  ~&cmark-library-unavailable~ with reason ~invalid-override~. There is no
+  PATH search, no falling back to the scan, and the working directory is
+  never consulted.
+
+Selection is yours; verification is still ours. Whatever gets loaded, its
+~cmark_version()~ is checked against the supported range.
 
 ** Tests
 
@@ -180,6 +242,16 @@ runs them again (minus the differential suite, which only spawns separate
 Linux, or an AddressSanitizer preload on macOS. Only the Linux run can
 support a leak claim — LeakSanitizer does not exist on macOS/ARM64
 (ADR-0003).
+
+#+begin_src sh
+make check-purity
+#+end_src
+
+runs the five pure suites with ~CHEZ_CMARK_GFM_LIBS~ pointed at a
+nonexistent path. Anything whose import chain reaches
+~(cmark gfm private native)~ raises at import time and fails the target, so
+the purity of ~options.sls~, ~ast.sls~, and the SXML adapter is a check
+rather than a comment.
 
 * Usage
 
@@ -293,6 +365,11 @@ distinguishable:
 ~document~, ~paragraph~, ~blockquote~, ~thematic-break~, ~softbreak~,
 ~linebreak~, ~emph~, ~strong~, and ~strikethrough~ carry no properties.
 
+An item's ~index~ is its *ordinal position*: its list's ~start~ plus its
+offset among that list's items, and 0 for every item of a bullet list. It
+is not the number typed in the source, so ~1. 1. 1.~ and ~1. 5. 9.~ both
+index ~1 2 3~.
+
 #+begin_quote
 ⚠️ *The AST is untrusted structured input.* It preserves exactly what the
 document said, including raw HTML and ~javascript:~ URLs. ~unsafe-html?~ does
@@ -340,7 +417,7 @@ Exceeding either raises ~&cmark-resource-limit~, which derives from
 
 ~(cmark gfm sxml)~ is pure: it imports nothing that can reach a shared
 object, and ~make check-purity~ enforces that by running its suite with
-the shim path poisoned. ~markdown->sxml~ lives in ~(cmark gfm)~ rather
+~CHEZ_CMARK_GFM_LIBS~ poisoned. ~markdown->sxml~ lives in ~(cmark gfm)~ rather
 than in the adapter precisely because it parses.
 
 *** Options
@@ -423,7 +500,7 @@ cmark output. ~^~ below is the attribute marker under the default
 | ~paragraph~                    | ~(p …)~, or spliced away inside a tight list                                 | ~html.c:287~                      |
 | ~text~                         | a string, verbatim                                                          | ~html.c:311~                      |
 | ~emph~                         | ~(em …)~                                                                    | ~html.c:376~                      |
-| ~strong~                       | ~(strong …)~; directly inside a ~strong~, spliced away                       | ~html.c:366~                      |
+| ~strong~                       | ~(strong …)~; directly inside a ~strong~, spliced away                       | ~html.c:366~ (gfm.10+)            |
 | ~strikethrough~                | ~(del …)~                                                                   | ~extensions/strikethrough.c:132~  |
 | ~blockquote~                   | ~(blockquote …)~                                                            | ~html.c:151~                      |
 | ~list~, bullet                 | ~(ul …)~                                                                    | ~html.c:170~                      |
@@ -464,6 +541,14 @@ Four details the table compresses:
   ~html-inline~ contribute their literals, ~linebreak~ and ~softbreak~ a
   single space, every other node nothing while still being descended into.
 
+*The ~strong~ splice is the one row with a version qualifier.* cmark gained
+that rule in ~0.29.0.gfm.10~ (upstream ~5c75d23~); ~gfm.0~ through ~gfm.9~
+emit both tags. The mapping above is fixed and deliberately not
+version-aware, so on a cmark-gfm older than ~0.29.0.gfm.10~ ~markdown->sxml~
+splices a ~strong~ directly inside a ~strong~ while that same library's
+~markdown->html~ does not. Both are self-consistent; they are not consistent
+with each other. See design spec §3.9.
+
 ~markdown-ast->sxml~ is public and takes an arbitrary tree, so it also
 raises ~&cmark-malformed-tree~ (reason ~header-row-not-first~) for a table
 whose header row is not the first: cmark's parser cannot produce one, and
@@ -478,7 +563,6 @@ remains the interface for all of it:
 | Dropped                            | Where it survives |
 |------------------------------------+-------------------|
 | ~list~ ~delimiter~ (period vs paren) | ~markdown->ast~ |
-| ~item~ ~index~                       | ~markdown->ast~ |
 | fence info past the first token      | ~markdown->ast~ |
 | image child structure                | ~markdown->ast~ |
 | all source positions                 | ~markdown->ast~ |

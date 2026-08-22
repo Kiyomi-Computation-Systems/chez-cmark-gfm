@@ -2,7 +2,7 @@
 ;;; Which native library is loaded, and what it can do.
 ;;;
 ;;; Run it:
-;;;   CHEZSCHEMELIBDIRS=src:fallback chez --program examples/06-capabilities.sps
+;;;   CHEZSCHEMELIBDIRS=src chez --program examples/06-capabilities.sps
 ;;;
 ;;; Prints properties rather than the version string itself: the version is
 ;;; whatever cmark-gfm this machine has, and a golden file naming it would

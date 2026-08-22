@@ -6,9 +6,17 @@ Licensed under the BSD 3-Clause License; see LICENSE.
 
 
 This package binds cmark-gfm, which carries its own license.
-cmark-gfm is not distributed with this package: it is either found
-via pkg-config or built from the pinned vendor/cmark-gfm submodule
-(ADR-0001). Its notice is reproduced here in full.
+
+cmark-gfm is not distributed with this package, and no copy of it is
+linked into anything this package ships: release 2.0 compiles nothing.
+The library is located on the host at import time and loaded from
+wherever the system package manager put it (ADR-0015, ADR-0016).
+
+cmark-gfm remains a DEVELOPMENT dependency, and that is why its notice
+is reproduced here in full: the pinned vendor/cmark-gfm submodule is
+built and read as the test oracle -- the 744-example corpus, the header
+the option-bit suite parses, and a CLI build the differential suites can
+be pointed at.
 
 cmark-gfm
 ---------

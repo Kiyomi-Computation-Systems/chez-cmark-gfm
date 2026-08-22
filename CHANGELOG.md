@@ -3,6 +3,192 @@
 All notable changes to this project are documented here. This project follows
 [Semantic Versioning](https://semver.org).
 
+## [2.0.0] — 2026-08-22
+
+The C shim is gone. `(cmark gfm)` binds `libcmark-gfm` directly and locates it
+on the host at import time, so installing this package needs no compiler, no
+CMake, and no submodule checkout: `apt install cmark-gfm` or `brew install
+cmark-gfm`, and then `akku install` works — the release's whole reason to
+exist. Parsing, rendering, the AST, and the SXML mapping are unchanged; every
+API change below follows from the shim's disappearance, not from a change of
+behaviour. See ADR-0015, ADR-0016, ADR-0017.
+
+### Breaking changes
+
+| Removed / changed | Replacement |
+|---|---|
+| `&cmark-shim-unavailable`, `cmark-shim-unavailable?`, `-path`, `-reason` | `&cmark-library-unavailable`, `cmark-library-unavailable?`, `-path`, `-reason` — same shape, same two fields |
+| reasons `not-built`, `missing` | `not-found`, whose `path` is `#f`: discovery searched several directories, so there is no single path to name |
+| `cmark-version-incompatible-compiled` | `cmark-version-incompatible-supported`, and it now carries the `(lo . hi)` supported range rather than one encoded version — there is no compile step left to skew against |
+| `CHEZ_CMARK_GFM_SHIM`, one absolute path to the shim | `CHEZ_CMARK_GFM_LIBS`, **two** colon-separated absolute paths — core and extensions, in either order, classified by basename |
+| `CHEZSCHEMELIBDIRS=src:fallback` | `CHEZSCHEMELIBDIRS=src` |
+| `make prod`, `make check-prod`, `make check-config` | removed. `make build` is now a discovery preflight: it compiles nothing and prints the library that would be loaded |
+| `HAVE_PKG`, `FLAVOR`, `CC`, `CFLAGS_*`, and the acquisition/flavor stamp machinery | removed. With no artifact there is no build mode to select and no mode flip to relink across |
+| `item` `index`, the number typed in the source | `item` `index`, the item's **ordinal position** — its list's `start` plus its offset among that list's items, and 0 for every item of a bullet list. `1. 1. 1.` was `(1 1 1)` and is now `(1 2 3)`; `1. 5. 9.` was `(1 5 9)` and is now `(1 2 3)`. `1. 2. 3.` and `5. 6. 7.` are unchanged. The literal numbers are no longer recoverable from the AST |
+
+`invalid-override` and `load-failed` keep their names and meanings.
+`invalid-override` now covers a wider set of causes — wrong entry count, a
+relative path, an absent file, two libraries of the same kind — because the
+remedy is identical for all of them: name both libraries, by absolute path.
+
+A fourth reason, `missing-entry-point`, is new. It is listed here rather than
+under *Added* only so the reasons stay in one place — **it is not a breaking
+change**. Adding a reason is additive for existing `guard` clauses: they
+discriminate on `cmark-library-unavailable?`, and every one of them still
+catches every condition it caught before. Only code that exhaustively
+`case`s on the reason symbol and errors on the default would notice, and
+nothing is obliged to. See the `0.29.0.gfm.0` floor note below for why it
+exists.
+
+`cmark-gfm-version-compatible?` keeps its name and arity. It now answers "is
+the loaded library inside the supported range", which is the only version
+question left once nothing is compiled against a header.
+
+The `index` redefinition is *half* of what makes the declared `0.29.0.gfm.0`
+floor true. `cmark_node_get_item_index`, which returned the literal number, was
+added upstream in `f040422` and first tagged in `0.29.0.gfm.11`; binding it
+killed `(import (cmark gfm))` outright — with a raw Chez
+`no entry for …`, not a structured condition — on every library below that,
+which is Debian 11 and 12 and Ubuntu 22.04 and 24.04. The ordinal is not an
+invention either: cmark's own commonmark, man, and plaintext renderers
+overwrite that field with exactly this number (`render.c:188-190`), so
+`markdown->commonmark` already renumbered `1. 1. 1.` to `1. 2. 3.`. It is
+computed from `cmark_node_get_list_start` and `cmark_node_get_list_type` on
+the parent list, both present since well before 0.29, plus the sibling
+offset `convert-children` already threaded for table-cell alignment — so no
+FFI surface was added to remove one. See design spec §3.8.
+
+The other half is `cmark_gfm_extensions_get_tasklist_item_checked`, and it
+could not be fixed the same way, because it cannot be fixed by a version check
+at all. That entry point first shipped in `0.29.0.gfm.1` — unpatched upstream
+`0.29.0.gfm.0` spells it `cmark_gfm_extensions_get_tasklist_state` — and on
+such a library 11 of the 20 suites died with the same raw
+`no entry for …`. But Debian 11 backports the rename into *its* `gfm.0` (its
+`libcmark-gfm-extensions0.symbols` lists the symbol at `@Base 0.29.0.gfm.0`)
+while still reporting `0.29.0.gfm.0` from `cmark_version()`. A `gfm.0` floor
+therefore admits the upstream build that crashes; a `gfm.1` floor rejects the
+Debian build that works. The two are indistinguishable by version because the
+constraint is not a version — it is the presence of one symbol, which
+distributions patch independently of the version they report. So the symbol is
+probed instead: that one binding is wrapped in a `guard` and raises
+`&cmark-library-unavailable` with reason `missing-entry-point`, naming the
+extensions library. The declared range is unchanged. See design spec §3.10.
+
+### Added
+
+- **Akku install support.** `akku install` places `src/cmark/**.sls` under
+  `.akku/lib/` and needs no post-install step: no generated file, no native
+  artifact, no `scripts` clause. `Akku.manifest` gains `homepage` and still
+  declares no runtime `depends` — `chez-srfi` and `wak-sxml-tools` remain
+  development-only. CI's `akku-install` job installs from the manifest and
+  then *calls into* `(cmark gfm)` with nothing set in the environment; a bare
+  import would not prove it, since Chez instantiates a library's body only
+  when a binding is referenced.
+- **`src/cmark/gfm/private/discovery.sls`** — pure library resolution. It
+  takes its filesystem access as arguments, so every branch is testable
+  against synthetic listings with no files on disk. Core and extensions must
+  pair at the *same version* in the *same directory*, and version comparison
+  is numeric, not lexical: `0.29.0.gfm.9` sorts above `0.29.0.gfm.13` as a
+  string, which would have selected the older library. See ADR-0016.
+- **`tests/test-discovery.sps`** — the discovery algorithm against those
+  synthetic listings: name shapes, pairing, range filtering, first-directory
+  wins, the Linux triple table, and override parsing including the swapped
+  and same-kind cases.
+- **`tests/test-library-loading.sps`** and **`tests/load-failed-probe.sps`** —
+  the override's validation rules, the `load-failed` path, and the
+  `missing-entry-point` path. The last two run in a subprocess because the
+  failure happens at library-instantiation time. `missing-entry-point` is
+  reached without compiling or committing a stub: the decoy extensions
+  library is a symlink to the *resolved core library*, which loads, reports
+  an in-range version, and exports no `cmark_gfm_extensions_*` symbol at all
+  — the same shape as an unpatched `gfm.0`, from a file already on the
+  machine.
+- **`tests/test-option-bits.sps`** — asserts every cmark option constant now
+  built in Scheme against `vendor/cmark-gfm/src/cmark-gfm.h`, which is what
+  replaced the shim's job of reading them from the header.
+- **`tests/preflight.sps`** — what `make build` runs.
+- **CI jobs `no-library` and `akku-install`.** The first installs Chez and
+  deliberately no cmark-gfm, asserting `make build` fails, reports reason
+  `not-found`, and names the remedy; without it, nothing would ever exercise
+  the `not-found` branch, because every other job installs the package. Both
+  greps are needed: `tests/preflight.sps`'s catch-all clause prints the same
+  remedy for any condition, so the reason symbol is the only half of the
+  assertion that discriminates.
+
+### Removed
+
+- **The C shim** — `src/cmark-gfm-shim.c` (71 lines) and
+  `src/cmark-gfm-shim.h` (70). Fourteen `chez_cmark_*` entry points, doing
+  five jobs, are gone: `compiled_version` had nothing left to compare
+  against; `runtime_version` became `cmark_version` bound directly;
+  `option_bits` became six Scheme constants asserted against the header;
+  `free_buffer` became the third
+  `void*` of `cmark_get_default_mem_allocator()`, called via its address;
+  and `tasklist_checked` became a direct binding with an `unsigned-8`
+  result, which reads the one byte `_Bool` actually defines. The debug
+  counters moved into Scheme — they only ever counted this library's own
+  acquisitions, never the C heap.
+- **`fallback/`** and the generated `src/cmark/gfm/private/config.sls`.
+  Nothing is generated, so "unbuilt" is no longer a distinct state and there
+  is no sentinel configuration for a built tree to shadow. ADR-0014's
+  mechanism is retired with them.
+- **The CMake shim build**, and with it `make prod`, `tests/check-prod.sps`,
+  `tests/check-config.sps`, `tests/shim-load-probe.sps`,
+  `tests/test-fallback-config.sps`, and `tests/test-shim-loading.sps`.
+  `make vendor` still builds `vendor/cmark-gfm`, but only as a development
+  dependency: the 744-example corpus, the header `test-option-bits.sps`
+  parses, and a CLI build to point `CMARK_CLI` at. The differential suites'
+  default oracle is the `cmark-gfm` the system package puts on `PATH`.
+
+### Notes
+
+- **RHEL, Fedora, and Alpine regress, and this is accepted rather than
+  mitigated.** None of them packages the cmark-gfm C library — Fedora ships
+  only language bindings, and both distributions' `cmark` is upstream cmark,
+  not the GFM fork. 1.0's vendored path compiled cmark-gfm from the
+  submodule, so those platforms worked with no system package; 2.0 compiles
+  nothing and asks for a one-time source build instead. `README.org` gives
+  the commands. Debian 11+, Ubuntu 22.04+, Arch, openSUSE Tumbleweed, NixOS,
+  Gentoo, Void, and Homebrew all package it; every packaged version falls
+  inside the supported range and exports every entry point this library
+  resolves at import, which is what the `index` redefinition above bought.
+- **The `0.29.0.gfm.0` floor holds for every *packaged* library, with one
+  caveat about an *upstream* `gfm.0` build.** Of the 36 entry points still
+  bound, 35 exist at every upstream 0.29 tag. The exception is
+  `cmark_gfm_extensions_get_tasklist_item_checked`, which first appears in
+  `0.29.0.gfm.1`; upstream `gfm.0` spells it
+  `cmark_gfm_extensions_get_tasklist_state` and returns `char *` instead.
+  This does not reach the documented install path — Debian and Ubuntu
+  backport the rename into their `0.29.0.gfm.0-N` packages, and bullseye's
+  `debian/libcmark-gfm-extensions0.symbols` lists the new name — but a
+  library built from an unpatched upstream `0.29.0.gfm.0` checkout would
+  still fail at import. The source-build instructions in `README.org` pin
+  `0.29.0.gfm.13`, so nothing this project documents reaches it.
+- **The supported-range check is what an out-of-range library hits, and it is
+  a version check only.** `cmark_version()` is read in `native.sls`'s library
+  body, immediately after the two loads and ahead of every other
+  `foreign-procedure` definition, so an unsupported version raises
+  `&cmark-version-incompatible` at import — on the discovery path and on the
+  `CHEZ_CMARK_GFM_LIBS` override alike, the latter doing no filename version
+  parsing at all. It cannot help with the case in the bullet above: a library
+  *inside* the range that is missing a symbol still dies at whichever binding
+  it cannot satisfy, with a raw Chez `no entry for …`. Keeping the declared
+  range honest about the symbols actually bound is a review obligation, not
+  something this check enforces.
+- **"`free` is the third `void*` in `struct cmark_mem`" is an ABI
+  assumption**, where the shim had a compiler-checked member access. It is
+  stable across the pinned 0.29 range and is covered by an allocator
+  round-trip assertion, but it is new fragility. See ADR-0015.
+- **Discovery is a search, and 1.0's `native.sls` said the path was
+  "validated, never searched."** The distinction being drawn is that a fixed
+  list of absolute system directories matched against a versioned filename
+  shape is not what that posture excluded, which was resolving an attacker-
+  or accident-influenced *name* through a loader search path.
+  `CHEZ_CMARK_GFM_LIBS` retains the strict no-search rule.
+- **First directory wins**, so a stale `/usr/local/lib` build shadows a newer
+  packaged one. Both are in range, so both work; this matches conventional
+  loader precedence, and `CHEZ_CMARK_GFM_LIBS` is the escape hatch.
+
 ## [1.0.0] — 2026-08-21
 
 Packaging, documentation, and release. No parsing, rendering, or mapping

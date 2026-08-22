@@ -2,6 +2,8 @@
 (import (rnrs)
         (srfi :64)
         (only (chezscheme) call/1cc collect)  ; NOT exit: (rnrs) exports it
+        (cmark gfm)                    ; markdown->html, default-cmark-options,
+                                        ; for the unconditional counters probe
         (cmark gfm private native)
         (cmark gfm private conditions)
         (cmark gfm private scope))
@@ -43,13 +45,10 @@
     (and (bytevector? bv) (= 2 (bytevector-length bv)))))
 
 ;; --- balanced teardown ------------------------------------------------
-;; C3: built without -DCHEZ_CMARK_DEBUG_COUNTERS, chez_cmark_live_* are
-;; hardcoded to return 0 (src/cmark-gfm-shim.c), so every "counters
-;; balance" test below would compare (0 0 0) to (0 0 0) and pass against a
-;; shim that never counts anything at all. This is the one assertion that
-;; makes those tests mean what they claim to mean: it demands the counters
-;; actually MOVE while a document is live, which fails against a
-;; counters-free shim and passes against a counting one.
+;; The balance assertions below compare before against after, so they all pass
+;; against counters that never count anything: (0 0 0) equals (0 0 0). This is
+;; the assertion that makes them mean what they claim -- it demands the counters
+;; actually MOVE while a document is live.
 (test-assert "live-counts moves during a scope: at least one live parser and root while the body runs"
   (let ((before (live-counts)))
     (call-with-native-document "# hello\n" opts gfm-extensions
@@ -57,6 +56,13 @@
         (let ((during (live-counts)))
           (and (> (car during) (car before))      ; live-parsers
                (> (cadr during) (cadr before)))))))) ; live-roots
+
+;; markdown->html is the only path exercised in this file that moves the buffer
+;; counter; the call-with-native-document assertions below never allocate one.
+(test-assert "counters balance across markdown->html"
+  (let ((before (live-counts)))
+    (markdown->html "# x\n" (default-cmark-options))
+    (equal? before (live-counts))))
 
 (test-assert "counters balance after a successful scope"
   (let ((before (live-counts)))

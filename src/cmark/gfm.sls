@@ -54,13 +54,13 @@
           ;; conditions
           &cmark-error cmark-error?
           &cmark-version-incompatible cmark-version-incompatible?
-          cmark-version-incompatible-compiled cmark-version-incompatible-runtime
+          cmark-version-incompatible-supported cmark-version-incompatible-runtime
           &cmark-dead-document cmark-dead-document?
           &cmark-extension-unavailable cmark-extension-unavailable?
           cmark-extension-unavailable-name
           &cmark-invalid-input cmark-invalid-input? cmark-invalid-input-reason
-          &cmark-shim-unavailable cmark-shim-unavailable? cmark-shim-unavailable-path
-          cmark-shim-unavailable-reason
+          &cmark-library-unavailable cmark-library-unavailable?
+          cmark-library-unavailable-path cmark-library-unavailable-reason
           &cmark-invalid-option cmark-invalid-option?
           cmark-invalid-option-key cmark-invalid-option-reason
           &cmark-render-failed cmark-render-failed? cmark-render-failed-format
@@ -150,7 +150,7 @@
     (runtime-version-string))
 
   (define (cmark-gfm-version-compatible?)
-    (version-compatible? (shim-compiled-version) (shim-runtime-version)))
+    (version-compatible? (cmark-runtime-version)))
 
   ;; Probes rather than enumerates. cmark_list_syntax_extensions would hand
   ;; back a cmark_llist* to traverse and free; find-extension returns a

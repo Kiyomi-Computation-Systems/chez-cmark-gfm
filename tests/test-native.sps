@@ -5,14 +5,11 @@
         (cmark gfm private conditions)
         (cmark gfm private scope)
         ;; foreign-alloc / foreign-set! / foreign-free build and mutate
-        ;; real C buffers for the c-string->string tests below. current-
-        ;; directory anchors the synthetic absolute paths used by the
-        ;; shim-path-validation tests below. None of these names collide
-        ;; with an (rnrs) export, so unlike file-exists? and exit above,
-        ;; this import needs no `only` justification beyond keeping the
-        ;; list minimal.
-        (only (chezscheme) foreign-alloc foreign-set! foreign-free
-              current-directory))
+        ;; real C buffers for the c-string->string tests below. None of
+        ;; these names collide with an (rnrs) export, so unlike
+        ;; file-exists? and exit above, this import needs no `only`
+        ;; justification beyond keeping the list minimal.
+        (only (chezscheme) foreign-alloc foreign-set! foreign-free))
 
 ;; SRFI-64's default runner does not set a process exit code, so a failing
 ;; suite would still exit 0 and `make test` would report success. Hold the
@@ -122,7 +119,7 @@
 
 ;; --- I3: every option flag must move an independent, non-zero bit -----
 ;; The composition test above only ever exercises positions 1 and 2
-;; (validate-utf8, sourcepos) together. A shim where sourcepos aliased
+;; (validate-utf8, sourcepos) together. A table that aliased sourcepos to
 ;; validate-utf8, or where hardbreaks/nobreaks/smart/unsafe_html did
 ;; nothing at all -- including the security-relevant unsafe_html flag --
 ;; would still pass every assertion above this one.
@@ -141,14 +138,13 @@
     (and (for-all (lambda (x) (> x 0)) flags)
          (pairwise-distinct? flags))))
 
-;; --- I4: compiled-vs-runtime version comparison -------------------------
+;; --- I4: version range check -------------------------------------------
 ;; ensure-native-loaded! runs at most once per process (init-mutex plus
-;; the initialized? guard), against the real, matching shim and library,
-;; which always succeeds -- so its raise path is untested by anything
-;; that calls it. version-compatible? is the pure predicate it now gates
-;; on; calling it directly with synthetic values exercises both the
-;; compiled/runtime equality check and the range check independently,
-;; with no need for an actually mismatched library.
+;; the initialized? guard), against the real, matching library, which
+;; always succeeds -- so its raise path is untested by anything that calls
+;; it. version-compatible? is the pure predicate it now gates on; calling
+;; it directly with synthetic values exercises the range check with no
+;; need for an actually unsupported library.
 (test-assert "version-supported? accepts both ends of the configured range"
   (and (version-supported? #x001d0000)
        (version-supported? #x001dffff)))
@@ -159,103 +155,16 @@
 (test-assert "version-supported? rejects a version above the range"
   (not (version-supported? #x001e0000)))
 
-(test-assert "version-compatible? accepts equal compiled/runtime versions inside the range"
-  (version-compatible? #x001d000d #x001d000d))
+;; version-compatible? is now a one-argument alias for version-supported?
+;; (native.sls: there is no separate compiled version to compare any more,
+;; so there is nothing left for it to do beyond the range check already
+;; covered above). These two calls exist only to prove the alias itself is
+;; callable under its own name and agrees with version-supported?.
+(test-assert "version-compatible? accepts a version inside the range"
+  (version-compatible? #x001d000d))
 
-;; A gfm patch bump under a shim compiled against an earlier patch must be
-;; ACCEPTED -- the supported range is 0.29.0.gfm.x, so rejecting it would
-;; contradict the range the project publishes.
-(test-assert "version-compatible? accepts a gfm patch bump inside the range"
-  (version-compatible? #x001d000d #x001d000e))
-
-;; ...but a shim built against an unsupported header is rejected even when the
-;; runtime is fine. This is what checking `compiled` buys over checking runtime
-;; alone; without it this assertion passes vacuously.
-(test-assert "version-compatible? rejects a compiled version outside the range"
-  (not (version-compatible? #x001c0000 #x001d000d)))
-
-(test-assert "version-compatible? rejects an equal compiled/runtime pair outside the range"
-  (not (version-compatible? #x001c0000 #x001c0000)))
-
-;; --- I2: shim-path validation and load wrapping -------------------------
-;; native.sls's own shim-file/shim-loaded top-level bindings run once per
-;; process (see tests/test-shim-loading.sps for subprocess coverage of
-;; that actual default-path/override wiring). resolve-shim-path and
-;; load-shim are the reusable procedures behind them, and are callable
-;; directly here, any number of times, with synthetic paths -- including
-;; a real dlopen call in the load-shim case, which is safe to repeat
-;; against a bogus path even after the real shim has already loaded.
-(define a-real-directory (current-directory))
-(define a-real-non-library-file
-  (string-append (current-directory) "/Makefile"))
-
-;; --- reason discriminates the four resolution failures -------------------
-;; Asserting (list path reason) rather than the path alone is deliberate, and
-;; is a fix, not a flourish. resolve-shim-path RETURNS the path it accepts, so
-;; an assertion expecting just the path is satisfied by the success path:
-;; verified by deleting every rejection from resolve-shim-path, after which
-;; this suite still reported 54 expected passes and exit 0. A two-element list
-;; is a value no success path here produces, and the trailing 'no-condition
-;; closes the other half -- a guard returns its body's value when nothing
-;; raises.
-(define (shim-failure thunk)
-  (guard (e ((cmark-shim-unavailable? e)
-             (list (cmark-shim-unavailable-path e)
-                   (cmark-shim-unavailable-reason e))))
-    (thunk)
-    'no-condition))
-
-(test-equal "a directory override is rejected as invalid-override"
-  (list a-real-directory 'invalid-override)
-  (shim-failure (lambda () (resolve-shim-path "/irrelevant/default" a-real-directory))))
-
-(test-equal "a directory as the default path, with no override, is missing"
-  (list a-real-directory 'missing)
-  (shim-failure (lambda () (resolve-shim-path a-real-directory #f))))
-
-(test-equal "a non-absolute override is rejected as invalid-override"
-  (list "relative/path.dylib" 'invalid-override)
-  (shim-failure (lambda () (resolve-shim-path a-real-non-library-file "relative/path.dylib"))))
-
-(test-equal "a nonexistent override is rejected as invalid-override"
-  (list "/no/such/path.dylib" 'invalid-override)
-  (shim-failure (lambda () (resolve-shim-path a-real-non-library-file "/no/such/path.dylib"))))
-
-;; --- the fifth branch: 'not-built ----------------------------------------
-;; resolve-shim-path's first cond clause fires when there is no override AND
-;; the default path is not a string -- exactly what the checked-in fallback
-;; config (fallback/cmark/gfm/private/config.sls) supplies for shim-path
-;; before any `make build` has run. #f is used here as the default path
-;; because that is literally what the fallback supplies, not a stand-in: the
-;; clause itself raises with a hardcoded #f, and conditions.sls:86 documents
-;; #f as "no path was ever configured". The only prior coverage of this
-;; branch was tests/test-fallback-config.sps, a subprocess suite that greps
-;; a child's stderr for the substring "not-built" -- it cannot see the
-;; condition's path field at all, so a regression that raised 'not-built
-;; with the wrong path would pass there unnoticed.
-(test-equal "a non-string default path with no override is not-built"
-  (list #f 'not-built)
-  (shim-failure (lambda () (resolve-shim-path #f #f))))
-
-(test-assert "a valid absolute, existing, regular-file override is accepted"
-  (string=? a-real-non-library-file
-            (resolve-shim-path "/irrelevant/default" a-real-non-library-file)))
-
-;; An explicit override still wins even when the default path is not built
-;; (not a string): someone holding a prebuilt shim can point
-;; CHEZ_CMARK_GFM_SHIM at it from an otherwise-unbuilt tree. Turns on the
-;; RETURNED PATH matching the override exactly, via string=?, not on bare
-;; truthiness and not on #f -- if the not-built clause above wrongly fired
-;; here too, resolve-shim-path would raise instead of returning, SRFI-64
-;; would turn that raise into #f for this test's actual expression, and
-;; test-assert would correctly fail on that #f rather than accepting it.
-(test-assert "an explicit override wins over a not-built default path"
-  (string=? a-real-non-library-file
-            (resolve-shim-path #f a-real-non-library-file)))
-
-(test-equal "load-shim wraps a real dlopen failure as load-failed"
-  (list a-real-non-library-file 'load-failed)
-  (shim-failure (lambda () (load-shim a-real-non-library-file))))
+(test-assert "version-compatible? rejects a version outside the range"
+  (not (version-compatible? #x001c0000)))
 
 ;; --- Stage 2: version string ------------------------------------------
 ;; Not asserted against a hardcoded "0.29.0.gfm.13", which would only pin the
@@ -271,48 +180,8 @@
    (number->string (bitwise-and v #xff))))
 
 (test-equal "runtime-version-string agrees with the packed runtime version"
-  (decode-version (shim-runtime-version))
+  (decode-version (cmark-runtime-version))
   (runtime-version-string))
-
-(test-assert "the compiled and runtime versions are both in the supported range"
-  (and (version-supported? (shim-compiled-version))
-       (version-supported? (shim-runtime-version))))
-
-;; --- Stage 2: option bits are six DISTINCT bits ------------------------
-;; This is the only coverage validate-utf8? can have: the public API takes a
-;; Scheme string and string->utf8 always emits valid UTF-8, so
-;; CMARK_OPT_VALIDATE_UTF8 has no observable effect on any reachable input
-;; and no differential cell can discriminate it (design spec §5.6). Testing
-;; the BIT is honest; testing the behaviour would be an assertion that
-;; passes either way.
-(define (all-distinct? xs)
-  (cond ((null? xs) #t)
-        ((memv (car xs) (cdr xs)) #f)
-        (else (all-distinct? (cdr xs)))))
-
-(test-assert "each of the six option flags sets a distinct bit"
-  (all-distinct?
-   (list (option-bits #t #f #f #f #f #f)
-         (option-bits #f #t #f #f #f #f)
-         (option-bits #f #f #t #f #f #f)
-         (option-bits #f #f #f #t #f #f)
-         (option-bits #f #f #f #f #t #f)
-         (option-bits #f #f #f #f #f #t))))
-
-(test-assert "validate-utf8? is wired to a real bit even though its behaviour is unreachable"
-  (not (= (option-bits #t #f #f #f #f #f)
-          (option-bits #f #f #f #f #f #f))))
-
-;; Expected value is the sentinel 'differ, not bare #f, for the same reason
-;; documented above the NULL-mapping assertion: bare #f is also what a
-;; swallowed exception from either option-bits call would produce, which
-;; would make this assertion pass whether or not the two masks actually
-;; differ.
-(test-equal "all flags off is the default mask, and differs from all flags on"
-  'differ
-  (let ((a (option-bits #f #f #f #f #f #f))
-        (b (option-bits #t #t #t #f #t #t)))
-    (if (= a b) 'same 'differ)))
 
 ;; --- Stage 3: node accessors -------------------------------------------
 ;; Driven through call-with-native-document rather than a bare parser so the
@@ -383,9 +252,18 @@
     (lambda (r)
       (let ((l (walk r '(0))))
         (list (node-list-type l) (node-list-start l))))))
-(test-equal "node-item-index reads the second item's index"
-  4 (with-root "3. one\n4. two\n" '()
-      (lambda (r) (node-item-index (walk r '(0 1))))))
+;; cmark_node_get_item_index is deliberately NOT bound: it first appears in
+;; 0.29.0.gfm.11, above this library's declared floor, so convert.sls derives
+;; an item's index from its parent list instead (design spec 3.8). What makes
+;; the PARENT the only node that can answer is that both list accessors are
+;; type-guarded (node.c) -- on an ITEM they report CMARK_NO_LIST and start 0,
+;; which would make every list look unordered and zero-based.
+(test-equal "the list accessors answer 0 on an item, not on its list"
+  '(0 0)
+  (with-root "3. one\n4. two\n" '()
+    (lambda (r)
+      (let ((i (walk r '(0 1))))
+        (list (node-list-type i) (node-list-start i))))))
 
 (test-equal "position accessors read the paragraph's span"
   '(3 1 3 4)
@@ -397,9 +275,10 @@
 
 ;; --- extension accessors ------------------------------------------------
 ;; These three live in libcmark-gfm-extensions, not libcmark-gfm. They resolve
-;; only because native.sls loads both shared objects explicitly, ahead of the
-;; shim; if that ever regressed these would fail at IMPORT time on Linux while
-;; still passing on macOS, whose loader searches dependencies.
+;; only because native.sls loads the extensions library explicitly, after the
+;; core library; if that ordering ever regressed these would fail at IMPORT
+;; time on Linux while still passing on macOS, whose loader searches
+;; dependencies.
 (define table-md "| a | b |\n|:--|--:|\n| 1 | 2 |\n")
 
 (test-equal "a table's type string is table"
@@ -435,24 +314,47 @@
 (test-equal "a plain item's type string is item"
   "item" (type-at "- plain\n" '("tasklist") '(0 0)))
 (test-equal "tasklist-checked distinguishes checked from unchecked"
-  '(1 0)
+  '(#t #f)
   (with-root task-md '("tasklist")
     (lambda (r)
       (list (tasklist-checked (walk r '(0 0)))
             (tasklist-checked (walk r '(0 1)))))))
-;; The shim wrapper's reason for existing: the underlying entry point returns
-;; C _Bool, whose upper return-register bits are unspecified. Values other
-;; than exactly 1 and 0 above would be the symptom.
-(test-equal "tasklist-checked returns exactly 1 or 0, never a stray bit pattern"
-  #t
-  (with-root task-md '("tasklist")
-    (lambda (r) (and (memv (tasklist-checked (walk r '(0 0))) '(0 1)) #t))))
 
 ;; alignment-bytes must not read through a NULL pointer.
 (test-equal "alignment-bytes yields zeros for a NULL array"
   '(0 0 0) (alignment-bytes 0 3))
 (test-equal "alignment-bytes yields the empty list for zero columns"
   '() (alignment-bytes 0 0))
+
+;; --- the allocator slot a C wrapper used to hide -----------------------
+;; cmark_get_default_mem_allocator returns {calloc, realloc, free}. Freeing a
+;; renderer buffer with libc free() is NOT equivalent and is documented as
+;; forbidden; this asserts we are reading the right member. This establishes
+;; only that the three slots are present, distinct, and non-null: it catches a
+;; NULL slot, a duplicated slot, and a struct shrunk to fewer members. It does
+;; NOT catch a reordering -- three distinct non-null pointers stay three
+;; distinct non-null pointers under any permutation, so this assertion would
+;; pass unchanged even if slot 3 were not really `free`. That ordering
+;; guarantee instead rests on tests/test-differential.sps, whose renders
+;; exercise the real release path through this exact slot.
+(test-assert "allocator exposes three distinct non-null function pointers"
+  (let ((slots (allocator-slots)))
+    (and (= 3 (length slots))
+         (for-all (lambda (s) (not (zero? s))) slots)
+         (not (= (car slots) (cadr slots)))
+         (not (= (cadr slots) (caddr slots)))
+         (not (= (car slots) (caddr slots))))))
+
+;; The counters are Scheme-side now. They count acquisitions this library
+;; makes, which is what the ownership contract is about; they were never a
+;; measure of the C heap.
+(test-assert "counters are always live"
+  (let ((before (live-counts)))
+    (count-parser-new!)
+    (let ((during (live-counts)))
+      (count-parser-free!)
+      (and (= (+ 1 (car before)) (car during))
+           (equal? before (live-counts))))))
 
 (test-end "native")
 

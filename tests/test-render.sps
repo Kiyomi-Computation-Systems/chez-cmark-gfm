@@ -49,18 +49,20 @@
     s))
 
 ;; --- counter balance and MOVEMENT --------------------------------------
-;; live-buffers is the third element of live-counts. Built WITHOUT
-;; -DCHEZ_CMARK_DEBUG_COUNTERS the shim hardcodes chez_cmark_live_buffers to
-;; return 0 (src/cmark-gfm-shim.c), so every balance test below would compare
-;; 0 to 0 and pass against a shim that counts nothing at all.
+;; live-buffers is the third element of live-counts. The counters are plain
+;; Scheme set!s (native.sls) and always on -- there is no build flavor that
+;; compiles them away any more -- so a balance test alone would pass just as
+;; happily against a getter frozen at 0 as against a working one. That is
+;; what the movement check just below rules out.
 ;;
 ;; Movement is asserted at the PRIMITIVE level, not from inside a render.
 ;; call-with-render-buffer runs no caller code inside its extent -- that is
 ;; the safety property this task is built around -- so there is nowhere for a
 ;; test to observe the counter mid-flight, and a thunk passed as make-buffer
-;; runs BEFORE count-buffer-new! is reached. This form fails against a
-;; counters-free shim and passes against a counting one, which is all the
-;; balance tests below need in order to mean anything.
+;; runs BEFORE count-buffer-new! is reached. This form fails if live-buffers
+;; is wired to the wrong counter or never moves, and passes only when it
+;; genuinely does, which is all the balance tests below need in order to
+;; mean anything.
 (test-assert "the buffer counter actually moves"
   (let ((before (caddr (live-counts))))
     (count-buffer-new!)

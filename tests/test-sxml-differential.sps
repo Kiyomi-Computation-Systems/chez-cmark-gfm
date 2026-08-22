@@ -23,6 +23,13 @@
         ;; program body with "multiple definitions for file-exists?" --
         ;; the same trap tests/test-ast-differential.sps records.
         (only (chezscheme) getenv mkdir)
+        ;; cmark's nested-STRONG rendering rule (see nested-strong-floor
+        ;; below) exists only from 0.29.0.gfm.10 onward, so deciding which
+        ;; behaviour to expect of the LOADED library needs the same version
+        ;; parsing (cmark gfm private discovery) gives test-discovery.sps and
+        ;; tests/test-ast-differential.sps -- not a hardcoded assumption
+        ;; either way.
+        (only (cmark gfm private discovery) parse-version-string encode-version)
         (cmark-testing))
 
 (define runner (test-runner-simple))
@@ -135,6 +142,7 @@
 (agrees "paragraphs agree"    "a & b <c> \"d\" it's\n")
 (agrees "emphasis agrees"     "*e* **s** ~~d~~ `c`\n")
 
+;; --- the nested-strong boundary (design spec 3.9) -----------------------
 ;; html.c:366-374 -- a STRONG whose DIRECT PARENT is also a STRONG emits NO
 ;; tags at all; its children render straight into the enclosing <strong>.
 ;; The test is on the parent alone, so it fires whether the inner strong is
@@ -142,10 +150,150 @@
 ;; (html.c:376-382), which is why *_foo_* keeps both <em> tags while
 ;; ****foo**** collapses to one <strong>. Found by the corpus sweep below,
 ;; which the hand-written fixtures above had missed entirely.
-(agrees "nested strong emits one tag"        "****foo****\n")
-(agrees "triply nested strong emits one tag" "******foo******\n")
-(agrees "an inner strong with siblings is spliced too" "__foo, __bar__, baz__\n")
-(agrees "a strong under an em under a strong" "_____foo_____\n")
+;;
+;; That citation needs a version qualifier, and this is the whole reason the
+;; assertions below are shaped differently from every other `agrees` in this
+;; file. Upstream 5c75d23 ("Ignore nested STRONGs during rendering") added
+;; the rule and it first shipped in 0.29.0.gfm.10; gfm.0 through gfm.9 emit
+;; BOTH tags. markdown-ast->sxml is pure Scheme implementing a FIXED mapping
+;; written against gfm.13, so it always splices -- and `make check-purity`
+;; runs it with no library loaded at all, so it cannot be made version-aware
+;; without destroying the determinism that check depends on. On a library
+;; older than gfm.10 our SXML and that library's own markdown->html
+;; therefore disagree, by exactly this rule and nothing else. Design spec
+;; 3.9 records the decision to keep the supported range at gfm.0 and
+;; document the divergence rather than raise the floor.
+;;
+;; So these assertions ask the LOADED library which behaviour to expect.
+;; They do not skip below the boundary: splice-nested-strong applies cmark's
+;; own gfm.10+ rule to cmark's own bytes, so the expectation is still
+;; produced by cmark rather than written down here, and the direction of the
+;; raw disagreement is asserted alongside it. An adapter that stopped
+;; splicing, or that spliced in the wrong place, fails on both sides.
+(define nested-strong-floor (encode-version 0 29 0 10))
+(define (cmark-splices-nested-strong?)
+  (>= (parse-version-string (cmark-gfm-version)) nested-strong-floor))
+
+;; html.c's rule applied to a rendered HTML string: drop the tags of a
+;; <strong> whose IMMEDIATELY ENCLOSING element is a <strong>, keeping its
+;; children. At or above gfm.10 cmark has already applied it and this is the
+;; identity; below gfm.10 it turns that library's bytes into the ones the
+;; adapter's fixed mapping produces.
+;;
+;; A <strong>-depth counter is NOT the rule and would be wrong on the corpus.
+;; spec.txt's "**foo *bar **baz**\nbim* bop**" renders a STRONG inside an EM
+;; inside a STRONG on every version: the inner strong's direct parent is the
+;; em, so cmark keeps its tags, and a depth counter would erase them. The
+;; enclosing element is tracked instead, exactly as html.c tests
+;; node->parent. `stack` holds one frame per open element -- its name, consed
+;; with whether that element's own tags are being dropped -- so the closing
+;; tag is dropped if and only if the opening one was.
+;;
+;; Only cmark's own renderer output is ever passed in, and only with
+;; unsafe-html? off (markdown->sxml refuses it outright, and no options
+;; record in this file sets it), so every `<` here opens a tag cmark emitted:
+;; text is entity-escaped, and raw HTML has already become an omitted-HTML
+;; comment. Comments and void elements are copied through without nesting.
+(define (tag-at? s i t)
+  (let ((n (string-length s)) (m (string-length t)))
+    (and (<= (+ i m) n) (string=? t (substring s i (+ i m))))))
+
+(define (scan-to s i ch)
+  (let ((n (string-length s)))
+    (let loop ((j i))
+      (cond ((= j n) #f)
+            ((char=? ch (string-ref s j)) j)
+            (else (loop (+ j 1)))))))
+
+(define (element-name s i gt)
+  (let loop ((j i))
+    (cond ((= j gt) (substring s i gt))
+          ((memv (string-ref s j) '(#\space #\/ #\newline)) (substring s i j))
+          (else (loop (+ j 1))))))
+
+(define (splice-nested-strong html)
+  (let ((n (string-length html)))
+    (let-values (((port get) (open-string-output-port)))
+      (let loop ((i 0) (stack '()))
+        (cond
+          ((= i n) (get))
+          ((not (char=? #\< (string-ref html i)))
+           (put-char port (string-ref html i))
+           (loop (+ i 1) stack))
+          (else
+           (let ((gt (scan-to html i #\>)))
+             (cond
+               ((not gt) (put-string port (substring html i n)) (get))
+               (else
+                (let ((tag (substring html i (+ gt 1))) (end (+ gt 1)))
+                  (cond
+                    ;; a comment or a declaration: no nesting effect
+                    ((tag-at? html (+ i 1) "!")
+                     (put-string port tag) (loop end stack))
+                    ((tag-at? html (+ i 1) "/")
+                     (let ((drop? (and (pair? stack) (cdar stack))))
+                       (unless drop? (put-string port tag))
+                       (loop end (if (pair? stack) (cdr stack) '()))))
+                    ;; a void element (<br />, <hr />, <img … />, <input … />)
+                    ((char=? #\/ (string-ref html (- gt 1)))
+                     (put-string port tag) (loop end stack))
+                    (else
+                     (let* ((name (element-name html (+ i 1) gt))
+                            (drop? (and (string=? "strong" name)
+                                        (pair? stack)
+                                        (string=? "strong" (caar stack)))))
+                       (unless drop? (put-string port tag))
+                       (loop end (cons (cons name drop?) stack)))))))))))))))
+
+;; A direct pin on the transform, independent of any library version. The
+;; third case is the one a depth counter gets wrong and is a real corpus
+;; example; the fourth proves sibling strongs at the same level survive; the
+;; fifth walks the comment and void-element branches. Without this, a
+;; transform that erased real tags would leave the sweep below passing
+;; against bytes cmark never produced on any version.
+(test-equal "splice-nested-strong applies html.c's parent rule, not a depth count"
+  '("<p><strong>foo, bar, baz</strong></p>\n"
+    "<p><em><strong>foo</strong></em></p>\n"
+    "<p><strong>foo <em>bar <strong>baz</strong>\nbim</em> bop</strong></p>\n"
+    "<p>a<strong>b</strong>c<strong>d</strong>e</p>\n"
+    "<p><!-- raw HTML omitted -->x<br />y</p>\n")
+  (map splice-nested-strong
+       '("<p><strong>foo, <strong>bar</strong>, baz</strong></p>\n"
+         "<p><em><strong><strong>foo</strong></strong></em></p>\n"
+         "<p><strong>foo <em>bar <strong>baz</strong>\nbim</em> bop</strong></p>\n"
+         "<p>a<strong>b</strong>c<strong>d</strong>e</p>\n"
+         "<p><!-- raw HTML omitted -->x<br />y</p>\n")))
+
+;; The comparator the boundary uses: cmark's bytes with cmark's own gfm.10+
+;; rule applied. Identical to divergence-under at or above gfm.10.
+(define strong-divergence-under
+  (case-lambda
+    ((m md o)
+     (let ((a (ours md o m)) (b (splice-nested-strong (theirs md o))))
+       (if (string=? a b) #f (list 'ours a 'theirs b))))))
+
+(define (strong-divergence md o) (strong-divergence-under default-marker md o))
+
+;; Two claims per fixture, so neither side of the boundary goes unasserted:
+;; our SXML matches cmark's rendering once cmark's own rule is applied, AND
+;; the RAW renderings disagree exactly when the loaded library predates
+;; gfm.10. Below gfm.10 the second element is #t, which is the documented
+;; divergence being asserted rather than skipped; a run there still fails if
+;; the mapping regresses, because the first element still has to agree.
+(define (strong-agrees name md)
+  (test-equal name
+    (list 'agree (not (cmark-splices-nested-strong?)))
+    (list (or (strong-divergence md opts) 'agree)
+          (and (divergence md opts) #t))))
+
+(strong-agrees "nested strong emits one tag"        "****foo****\n")
+(strong-agrees "triply nested strong emits one tag" "******foo******\n")
+(strong-agrees "an inner strong with siblings is spliced too" "__foo, __bar__, baz__\n")
+(strong-agrees "a strong under an em under a strong" "_____foo_____\n")
+
+;; The control: EMPH has no such rule on ANY version, so this one is a plain
+;; `agrees` and must stay one. If it ever needed the boundary treatment, the
+;; adapter would be splicing something cmark never splices.
 (agrees "nested em is NOT collapsed"         "*_foo_*\n")
 (agrees "blockquotes agree"   "> quoted\n>\n> twice\n")
 (agrees "breaks agree"        "a\nb  \nc\n\n---\n")
@@ -231,7 +379,8 @@
 
 ;; markdown->sxml (Task 8's entry point) belongs here rather than in
 ;; tests/test-options.sps: that suite is a PURE SUITE, and CALLING
-;; markdown->sxml runs (cmark gfm)'s native code, parsing through the shim.
+;; markdown->sxml runs (cmark gfm)'s native code, parsing through
+;; libcmark-gfm itself.
 ;; Not because importing (cmark gfm) alone would do that -- it would not:
 ;; Chez instantiates a library's body only when a binding it defines is
 ;; actually referenced, so an import with no reference to what it exports is
@@ -289,9 +438,9 @@
 ;; --- the corpus ---------------------------------------------------------
 ;; The vendored WORKING TREE, not $(CMARK_CLI). This is the only read of it
 ;; anywhere under tests/ -- every other suite reaches cmark through the CLI
-;; or the shim, both of which the pkg-config acquisition path (ADR-0001)
-;; satisfies with no submodule checked out at all. `make deps` therefore
-;; initialises vendor/cmark-gfm too, checkout only.
+;; or our own native bindings, both of which the pkg-config acquisition path
+;; (ADR-0001) satisfies with no submodule checked out at all. `make deps`
+;; therefore initialises vendor/cmark-gfm too, checkout only.
 ;;
 ;; The guard below exists because the failure without it is illegible.
 ;; `all-examples` is built at TOP LEVEL, outside any test- form, so a missing
@@ -394,10 +543,61 @@
     (per-marker (lambda (m) (set! visited (cons m visited)) 'agree))
     (reverse visited)))
 
+;; --- the nested-strong boundary, over the corpus ------------------------
+;; Which examples sit on the boundary is a PARSE fact -- a STRONG whose
+;; direct parent is a STRONG -- so the AST carries it identically on gfm.6
+;; and on gfm.13, and the set can be derived here rather than discovered
+;; from whichever library happens to be loaded. That is what lets the count
+;; below be a fixed number on every runtime.
+(define (nests-strong-directly? md)
+  (let walk ((n (markdown->ast md opts)) (parent 'none))
+    (or (and (eq? 'strong (markdown-node-type n)) (eq? 'strong parent))
+        (exists (lambda (k) (walk k (markdown-node-type n)))
+                (markdown-node-children n)))))
+
+(define boundary-examples (filter nests-strong-directly? all-examples))
+
+;; The sweep below excuses NOTHING -- all 744 examples are still compared
+;; byte for byte on every runtime -- but the size of the set it compares
+;; under cmark's own rule instead of against cmark's raw bytes is stated
+;; rather than left implicit. This count is what silently shrinks if the
+;; corpus, the AST walk, or the adapter's node coverage stops matching, and
+;; a shrinking exclusion set that fails nothing is the failure mode design
+;; spec 3.9 was written against. `grep -c` on the pinned submodule agrees:
+;; nine examples, all in spec.txt.
+(test-equal "the corpus's nested-strong examples are found"
+  9
+  (length boundary-examples))
+
+;; Reported, not just asserted: on a runtime below gfm.10 this line is the
+;; only place a reader of the CI log learns that nine of the corpus's
+;; examples are being judged under the documented divergence rather than
+;; against cmark's raw output.
+(display (string-append
+          "sxml-differential: nested-strong boundary (design spec 3.9): "
+          (number->string (length boundary-examples)) " of "
+          (number->string (length all-examples))
+          " corpus examples nest a strong directly inside a strong; "
+          (cmark-gfm-version)
+          (if (cmark-splices-nested-strong?)
+              " splices, so none diverge from markdown->sxml.\n"
+              " does not splice, so those nine diverge from markdown->sxml.\n")))
+
+;; The boundary asserted in both directions against the LOADED library, so
+;; it cannot quietly stop discriminating. Below gfm.10 EXACTLY the boundary
+;; set must diverge; at or above gfm.10 nothing may. An adapter that stopped
+;; splicing inverts both branches and fails here, and a divergence anywhere
+;; else in the corpus -- a third rendering rule that moved inside the
+;; declared range -- fails here too, naming its input rather than being
+;; absorbed by the normalisation the sweep applies.
+(test-equal "the corpus diverges on exactly the nested-strong examples, and only below gfm.10"
+  (if (cmark-splices-nested-strong?) '() boundary-examples)
+  (filter (lambda (md) (and (divergence md opts) #t)) all-examples))
+
 (test-equal "every corpus example agrees in-process, under both markers"
   'agree
   (per-marker (lambda (m)
-                (sweep (lambda (md) (divergence-under m md opts))
+                (sweep (lambda (md) (strong-divergence-under m md opts))
                        all-examples))))
 
 ;; No corpus example may reach the adapter's unmapped-type branch. If one
@@ -458,10 +658,10 @@
 
 ;; --- the CLI leg --------------------------------------------------------
 ;; Not redundant with the in-process leg. Our SXML path and markdown->html
-;; both consume a document parsed through OUR shim, so a wrong option bit or
-;; a missing extension corrupts the parse feeding both sides -- they would
-;; agree while both being wrong. The pinned CLI is the independent witness
-;; that the parse was configured correctly (ADR-0012).
+;; both consume a document parsed through OUR native bindings, so a wrong
+;; option bit or a missing extension corrupts the parse feeding both sides --
+;; they would agree while both being wrong. The pinned CLI is the independent
+;; witness that the parse was configured correctly (ADR-0012).
 ;;
 ;; It runs the four FIXTURES, not the 744-example corpus the in-process leg
 ;; runs. That is a deliberate reduction on cost, recorded in design spec 10

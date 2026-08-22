@@ -153,12 +153,62 @@
                                  'tight? 'absent)))
 
 ;; index is one of the three properties cmark's XML never emits, so the
-;; differential harness of Tasks 10-11 cannot see it. It is asserted directly
-;; here or it is not covered at all (design spec 8.3).
+;; differential harness of Tasks 10-11 cannot see it -- and it is explicitly
+;; excluded from the AST differential oracle (tests/test-ast-differential.sps
+;; :17) in favour of these assertions. It is covered here or nowhere at all
+;; (design spec 8.3).
+;;
+;; `index` is the item's ORDINAL POSITION -- its own list's start plus its
+;; zero-based offset among that list's items -- and 0 for every item of a
+;; bullet list. It is NOT the number typed in the source (design spec 3.8):
+;; that is what cmark_node_get_item_index returned, and that entry point
+;; does not exist before 0.29.0.gfm.11, below this library's declared floor.
+;;
+;; The two readings agree on a consecutively numbered list and diverge on
+;; every other one, so both shapes are asserted. An implementation that
+;; copied the literal number would pass the first and fourth cases here and
+;; fail the second and third; one that ignored `start` would fail the fourth.
+(define (item-indices tree)
+  (map (lambda (n) (markdown-node-property n 'index))
+       (nodes-of-type tree 'item)))
+
+(test-equal "consecutive numbering indexes 1 2 3"
+  '(1 2 3)
+  (item-indices (ast-of "1. a\n2. b\n3. c\n")))
+(test-equal "all-ones numbering, the common idiom, still indexes 1 2 3"
+  '(1 2 3)
+  (item-indices (ast-of "1. a\n1. b\n1. c\n")))
+(test-equal "gapped numbering still indexes 1 2 3"
+  '(1 2 3)
+  (item-indices (ast-of "1. a\n5. b\n9. c\n")))
+(test-equal "an offset list counts up from its own start"
+  '(5 6 7)
+  (item-indices (ast-of "5. a\n6. b\n7. c\n")))
 (test-equal "item index is copied for every item in an offset ordered list"
   '(3 4 5)
-  (map (lambda (n) (markdown-node-property n 'index))
-       (nodes-of-type (ast-of "3. a\n4. b\n5. c\n") 'item)))
+  (item-indices (ast-of "3. a\n4. b\n5. c\n")))
+(test-equal "every item of a bullet list indexes 0"
+  '(0 0 0)
+  (item-indices (ast-of "- a\n- b\n- c\n")))
+
+;; Two nested shapes, because each rules out a different wrong mechanism.
+;; Both are read in pre-order, so the inner list's items appear between the
+;; outer items that bracket them.
+;;
+;; Ordered inside ordered: the inner list restarts at its own start rather
+;; than continuing the outer count, and the outer count resumes afterwards.
+;; A single document-wide counter gives (1 2 3 4 5); one that never resets
+;; gives (1 2 3 4 3).
+(test-equal "a nested ordered list counts independently of its parent"
+  '(1 2 1 2 3)
+  (item-indices (ast-of "1. a\n1. b\n   1. x\n   1. y\n1. c\n")))
+;; Ordered inside bullet: the outer items stay 0 despite having offsets 0, 1
+;; and 2, while the inner list uses ITS OWN start of 3 -- so `start` is read
+;; from the item's own list, never from an enclosing one.
+(test-equal "an ordered list nested in a bullet list uses its own start"
+  '(0 0 3 4 0)
+  (item-indices (ast-of "- a\n- b\n\n  3. x\n  3. y\n\n- c\n")))
+
 (test-equal "a plain item is not a task and is not checked"
   '((index . 0) (task? . #f) (checked? . #f))
   (markdown-node-properties (first-of-type (ast-of "- a\n") 'item)))
@@ -349,9 +399,13 @@
                          (markdown-node-property n 'checked? 'absent)))
        (nodes-of-type (ext-ast "- [x] done\n- [ ] todo\n\n* plain\n") 'item)))
 
-(test-equal "a task item still carries its index"
-  0 (markdown-node-property
-     (first-of-type (ext-ast "- [x] done\n") 'item) 'index))
+;; These are BULLET items, so each task item indexes 0 -- the same answer a
+;; plain bullet item gets, and for the same reason. Asserted over two items
+;; rather than one: an implementation that added the sibling offset
+;; unconditionally still answers 0 for the first.
+(test-equal "task items index 0, like the bullet items they are"
+  '(0 0)
+  (item-indices (ext-ast "- [x] done\n- [ ] todo\n")))
 
 ;; Two independent channels for the same fact: the type string
 ;; (table.c:523-535) and the extension accessor. Redundancy turned into a

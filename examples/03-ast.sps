@@ -3,7 +3,7 @@
 ;;; escapes, and the tree stays valid after the native document is gone.
 ;;;
 ;;; Run it:
-;;;   CHEZSCHEMELIBDIRS=src:fallback chez --program examples/03-ast.sps
+;;;   CHEZSCHEMELIBDIRS=src chez --program examples/03-ast.sps
 (import (rnrs) (cmark gfm))
 
 (define (line . parts)

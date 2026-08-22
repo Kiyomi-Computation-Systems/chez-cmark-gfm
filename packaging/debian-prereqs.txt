@@ -1,9 +1,29 @@
-# Debian/Ubuntu packages needed to build and test chez-cmark-gfm.
+# Debian/Ubuntu packages needed to install, build, and test chez-cmark-gfm.
 # ONE copy, deliberately: README.org points at this file instead of
-# restating the list, and .github/workflows/ci.yml installs from it. A list
-# in two places drifts; a list in one place cannot.
-# Lines starting with # and blank lines are ignored.
+# restating the list, and .github/workflows/ci.yml installs from it -- both
+# the `linux` job and the `clean-install` job, the latter installing STRICTLY
+# from here so a bare container proves the documented steps. A list in two
+# places drifts; a list in one place cannot. Do not re-add a package to a
+# workflow step that this file already carries. The one deliberate exception
+# is the `akku-install` job, which installs `chezscheme cmark-gfm` directly
+# instead of reading this file -- reading it would also pull in the DEVELOP
+# section's compiler below, into the one job whose entire point is proving
+# none is required. See that job's own comment.
+# Lines starting with # and blank lines are ignored, so the section headers
+# below are labels only -- every uncommented line is installed together.
+
+# --- to USE the library ------------------------------------------------
+# All an end user needs. 2.0 compiles nothing: cmark-gfm is discovered on
+# the host at import time, so there is no compiler and no cmake here.
+# The cmark-gfm package also carries the CLI the differential suites use.
 chezscheme
+cmark-gfm
+
+# --- to DEVELOP on it ---------------------------------------------------
+# For the vendored cmark-gfm submodule ONLY -- the test oracle, not anything
+# of ours (design spec 8.3). Nothing in `make build` or `make test` compiles
+# C; `make vendor` does, and only to produce the pinned CLI and the shared
+# libraries the RHEL/Alpine README remedy tells readers to build the same way.
 cmake
 pkg-config
 build-essential

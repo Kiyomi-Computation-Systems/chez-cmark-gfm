@@ -3,7 +3,7 @@
 ;;; renders as an HTML fragment -- not a whole page.
 ;;;
 ;;; Run it:
-;;;   CHEZSCHEMELIBDIRS=src:fallback chez --program examples/04-sxml.sps
+;;;   CHEZSCHEMELIBDIRS=src chez --program examples/04-sxml.sps
 (import (rnrs) (cmark gfm))
 
 (define (line . parts)

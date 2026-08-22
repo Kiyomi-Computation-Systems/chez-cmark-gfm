@@ -160,8 +160,9 @@
 
   ;; --- renderer buffer ---------------------------------------------------
   ;; cmark documents renderer results as caller-owned, allocated by cmark's
-  ;; own allocator. chez_cmark_free_buffer releases them with that same
-  ;; allocator; libc free() must never be used on one.
+  ;; own allocator. free-buffer releases them through that same allocator's
+  ;; own free function pointer (native.sls); libc free() must never be used
+  ;; on one.
   ;;
   ;; Two properties here are structural, not documented:
   ;;
