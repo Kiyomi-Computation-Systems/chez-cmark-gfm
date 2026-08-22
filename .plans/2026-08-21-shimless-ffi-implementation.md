@@ -760,6 +760,21 @@ git commit -m "feat: build cmark option masks in Scheme, proven against header a
 - Modify: `src/cmark/gfm/private/scope.sls:16-25` (imports/exports unchanged in shape)
 - Modify: `tests/test-native.sps` (drop shim-specific assertions)
 - Modify: `tests/test-lifecycle.sps:58-59` (counters always on)
+- Modify: `tests/test-option-bits.sps` (delete the transitional block — see below)
+- Modify: **`src/cmark/gfm/private/convert.sls`** — `tasklist-checked` changes from
+  returning an int to returning a boolean, so its caller's
+  `(not (zero? (tasklist-checked p)))` becomes `(zero? #t)`, a type error. It becomes
+  `(cons 'checked? (tasklist-checked p))`.
+- Modify: **`src/cmark/gfm.sls`** — `cmark-gfm-version-compatible?` calls
+  `(version-compatible? (shim-compiled-version) (shim-runtime-version))`. Both bindings
+  are deleted here and `version-compatible?` drops to one argument, so this becomes
+  `(version-compatible? (cmark-runtime-version))`.
+
+**Two ripple effects to expect in `tests/test-native.sps`**, beyond the deletions Step 6
+names literally: `version-compatible?` going from two arguments to one makes four
+2-argument assertions impossible — collapse them to two 1-argument ones — and the
+`tasklist-checked` assertions that compared against `0`/`1` must compare against
+`#f`/`#t`.
 
 **Interfaces:**
 - Consumes: `option-bits` and the constant table from Task 2.
