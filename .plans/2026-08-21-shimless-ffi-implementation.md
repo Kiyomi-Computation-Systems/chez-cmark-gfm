@@ -1076,9 +1076,57 @@ Create `tests/test-library-loading.sps`:
 (test-equal "nonexistent files"         'invalid-override
   (override-error "/nonexistent/libcmark-gfm.so:/nonexistent/libcmark-gfm-extensions.so"))
 
+;; --- 'load-failed needs a subprocess -----------------------------------
+;; The other two reasons are raised by resolve-cmark-libraries, which this
+;; process can call directly. 'load-failed is raised by load-library, which
+;; runs in native.sls's LIBRARY BODY -- so it fires at import, before any
+;; in-process guard here could be entered. It needs a fresh process whose
+;; import fails, with stderr captured.
+;;
+;; The two decoy files must PASS validation to reach the load: absolute paths,
+;; existing regular files, and basenames that classify one as core and one as
+;; extensions. They are not shared objects, so load-shared-object raises and
+;; load-library converts that into reason 'load-failed.
+(define decoy-core "tests/tmp/libcmark-gfm.so")
+(define decoy-ext  "tests/tmp/libcmark-gfm-extensions.so")
+
+(system "mkdir -p tests/tmp")
+(for-each (lambda (p)
+            (call-with-port (open-file-output-port p (file-options no-fail))
+              (lambda (out) (put-bytevector out (string->utf8 "not a shared object\n")))))
+          (list decoy-core decoy-ext))
+
+(let ((out "tests/tmp/load-failed-stderr.txt"))
+  (capture-command
+   (string-append "CHEZ_CMARK_GFM_LIBS=" decoy-core ":" decoy-ext
+                  " CHEZSCHEMELIBDIRS=" (or (getenv "CHEZSCHEMELIBDIRS") "src:tests:build/scheme-libs")
+                  " " (or (getenv "CHEZ") "chez")
+                  " --program tests/load-failed-probe.sps")
+   out)
+  (let ((text (utf8->string (file->bytevector out))))
+    (test-assert "a validated-but-unloadable library raises reason load-failed"
+      (string-contains? text "load-failed"))))
+
 (test-end "library-loading")
 (exit (if (zero? (test-runner-fail-count runner)) 0 1))
 ```
+
+That subprocess needs a one-line probe program. Create `tests/load-failed-probe.sps`:
+
+```scheme
+#!r6rs
+;;; Importing (cmark gfm) is the whole test: native.sls resolves and loads the
+;;; cmark shared objects in its library body, so with CHEZ_CMARK_GFM_LIBS
+;;; pointing at two files that validate but cannot load, this import raises
+;;; &cmark-shim-unavailable with reason 'load-failed and the process dies with
+;;; that condition on stderr. Nothing here needs to run.
+(import (rnrs) (cmark gfm))
+(display "unexpectedly imported\n")
+```
+
+Add `(only (chezscheme) system getenv)` and `(cmark-testing)` to
+`tests/test-library-loading.sps`'s imports for `system`, `getenv`,
+`capture-command`, `file->bytevector`, and `string-contains?`.
 
 - [ ] **Step 2: Run it to confirm it fails**
 
