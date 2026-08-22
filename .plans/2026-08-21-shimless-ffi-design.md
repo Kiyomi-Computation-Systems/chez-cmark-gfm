@@ -59,7 +59,7 @@ than generated into the source tree."
 ## 2. Why the shim goes
 
 `src/cmark-gfm-shim.c` is 71 lines doing five jobs. Scheme already binds ~30 cmark entry
-points directly (`native.sls:140-185`); these five are the remainder.
+points directly (`native.sls`); these five are the remainder.
 
 ### 2.1 The five jobs
 
@@ -235,9 +235,10 @@ one of each kind, is `invalid-override`.
 
 ### 3.6 Loading
 
-Core first, then extensions — preserving the rationale at `native.sls:88-96`: on Linux
-the symbols of a dlopen'd library's dependencies are not placed in the global namespace,
-so extensions must find an already-loaded core. Both are loaded by absolute path.
+Core first, then extensions — preserving the rationale in the comment above `core-loaded`
+in `native.sls`: on Linux the symbols of a dlopen'd library's dependencies are not placed
+in the global namespace, so extensions must find an already-loaded core. Both are loaded
+by absolute path.
 
 **No fall-through.** A path that passed validation but fails to load raises
 `load-failed`. Discovery decides; loading reports.
@@ -318,8 +319,8 @@ Two checks, at different times, for different reasons.
 2. **After loading**, from `cmark_version()`, because a filename is a claim and distros
    patch. This is the authoritative check, and it runs on **both** paths, override
    included, because it lives in `native.sls`'s library body: `cmark_version` is bound
-   alone immediately after the two `load-shared-object` calls
-   (`native.sls:134`) and checked there (`native.sls:157`), ahead of every other
+   alone immediately after the two `load-shared-object` calls (the `cmark-runtime-version`
+   definition) and checked there (the `version-checked` definition), ahead of every other
    `foreign-procedure` definition.
 
 That position is load-bearing, not stylistic. Chez resolves a foreign entry point when
@@ -365,7 +366,7 @@ becomes **`supported`**, carrying the `(lo . hi)` range pair:
 This is strictly more informative than what it replaces: the condition now states both
 what was expected and what was found.
 
-Call sites to update: `gfm.sls:57` (export), `native.sls:279` (the raise),
+Call sites to update: `gfm.sls:57` (export), `native.sls` (its raise sites),
 `tests/test-conditions.sps:19-31`, and `examples/coverage-exemptions.scm:51` — the last
 of which is the export-coverage gate, so missing it fails `make examples` rather than
 failing silently.
@@ -690,7 +691,7 @@ escape hatch. Documented, not fixed.
 
 ### 11.5 Discovery is a search, and that reverses a stated position
 
-`native.sls:46` currently says the shim path is "validated, never searched." Directory
+`native.sls:46-47` (at `87c501b`) said the shim path is "validated, never searched." Directory
 scanning is a search. The distinction being drawn — and it must be drawn explicitly in
 ADR-0015, not left implied — is that a *fixed list of absolute system directories matched
 against a versioned filename shape* is not the thing that posture excluded, which was

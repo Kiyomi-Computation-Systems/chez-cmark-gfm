@@ -277,10 +277,15 @@ else
 # gets a chance to run its check -- an unattributed crash (bare "Trace/BPT
 # trap") instead of the diagnostic this target exists to provide. Observed
 # on this exact recipe; see stage-2-mutation-log.md, Mutation C.
-	CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) \
+	asan_lib="$$(command ls $$(dirname $$(xcrun --find clang))/../lib/clang/*/lib/darwin/libclang_rt.asan_osx_dynamic.dylib 2>/dev/null | head -1)"; \
+	  if [ -z "$$asan_lib" ]; then \
+	    echo "error: no libclang_rt.asan_osx_dynamic.dylib found under $$(dirname $$(xcrun --find clang))/../lib/clang/*/lib/darwin -- refusing to run test-memory uninstrumented" >&2; \
+	    exit 1; \
+	  fi; \
+	  CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) \
 	  CMARK_CLI=$(CMARK_CLI) \
 	  CMARK_STRESS_ITERATIONS=2 \
-	  DYLD_INSERT_LIBRARIES="$$(command ls $$(dirname $$(xcrun --find clang))/../lib/clang/*/lib/darwin/libclang_rt.asan_osx_dynamic.dylib | head -1)" \
+	  DYLD_INSERT_LIBRARIES="$$asan_lib" \
 	  ASAN_OPTIONS=detect_leaks=0 \
 	  MallocNanoZone=0 \
 	  sh -c 'for t in $(MEMORY_TESTS); do $(CHEZ) --program $$t || exit 1; done'

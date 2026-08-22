@@ -117,8 +117,8 @@ Rejected alternatives:
   no `libcmark-gfm*` at all; (2) its name is unversioned, so it fails clause 1; and
   (3) `(load-shared-object "libcmark-gfm-extensions.dylib")` raises, so there is no
   pair for clause 4 to match and `/usr/lib` is rejected regardless.
-  `native.sls:57-64` carries this as a comment, because the natural "simplification" of
-  adding a soname fallback reintroduces it silently.
+  `native.sls`'s `ABSOLUTE PATHS ONLY, NEVER LEAFNAMES` comment carries this, because the
+  natural "simplification" of adding a soname fallback reintroduces it silently.
 - **A stale `/usr/local` build shadows a newer system package.** First-directory-wins
   means an old `/usr/local/lib/libcmark-gfm.so.0.29.0.gfm.0` is chosen over a packaged
   `gfm.13` in `/usr/lib/<triple>`. Both are in range so both work; the older is simply
@@ -154,10 +154,11 @@ Rejected alternatives:
   `CHEZ_CMARK_GFM_LIBS` may legitimately name the unversioned symlinks from a `-dev`
   package, so selection is the user's. Verification is still ours: `cmark_version()` is
   read immediately after the two loads and checked against the supported range in
-  `native.sls`'s library body (`native.sls:134`, `:157`), so it runs on every path, the
-  override included. That covers the version and only the version — see the last two
-  Consequences. Entries are classified by **basename**, not whole
-  path, so a directory named `…cmark-gfm-extensions-cache…` cannot silently swap the
+  `native.sls`'s library body (the `cmark-runtime-version` and `version-checked`
+  definitions), so it runs on every path, the override included. That covers the version
+  and only the version — see the last two Consequences. Entries are classified by
+  **basename**, not whole path, so a directory named `…cmark-gfm-extensions-cache…`
+  cannot silently swap the
   pair (`discovery.sls:203-218`, `tests/test-discovery.sps:150-157`); order in the
   variable therefore does not matter.
 - **Two checks run at different times for different reasons**, and both are needed: the
@@ -167,12 +168,13 @@ Rejected alternatives:
   only because of where it sits. Chez resolves a foreign entry point when the
   `foreign-procedure` expression is *evaluated*, and a library body evaluates its
   definitions in order, so `native.sls` binds `cmark_version` alone straight after the
-  loads and checks it there (`native.sls:134`, `:157`), ahead of every other
-  `foreign-procedure`. Placed any later — in `ensure-native-loaded!`, which runs at first
-  *use*, as it originally was — the check is unreachable for precisely the libraries it
-  exists to reject, because an unsupported library aborts the import at whichever binding
-  it cannot satisfy. `ensure-native-loaded!` still re-runs it; under this ordering that
-  copy cannot fire, and it is kept as cheap redundancy rather than as coverage.
+  loads (`cmark-runtime-version`) and checks it there (`version-checked`), ahead of every
+  other `foreign-procedure`. Placed any later — in `ensure-native-loaded!`, which runs at
+  first *use*, as it originally was — the check is unreachable for precisely the
+  libraries it exists to reject, because an unsupported library aborts the import at
+  whichever binding it cannot satisfy. `ensure-native-loaded!` still re-runs it; under
+  this ordering that copy cannot fire, and it is kept as cheap redundancy rather than as
+  coverage.
 - **The version check is not a symbol check and must not be read as one.** It rejects a
   library whose `cmark_version()` is out of range, and nothing else. A library *inside*
   the range that is missing one of the symbols bound below the check still dies at import

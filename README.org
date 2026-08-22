@@ -356,9 +356,9 @@ distinguishable:
 ~linebreak~, ~emph~, ~strong~, and ~strikethrough~ carry no properties.
 
 An item's ~index~ is its *ordinal position*: its list's ~start~ plus its
-offset among that list's items, and 0 for every item of a bullet list —
-including a task list, which is one. It is not the number typed in the
-source, so ~1. 1. 1.~ and ~1. 5. 9.~ both index ~1 2 3~.
+offset among that list's items, and 0 for every item of a bullet list. It
+is not the number typed in the source, so ~1. 1. 1.~ and ~1. 5. 9.~ both
+index ~1 2 3~.
 
 #+begin_quote
 ⚠️ *The AST is untrusted structured input.* It preserves exactly what the

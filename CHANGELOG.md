@@ -24,7 +24,7 @@ behaviour. See ADR-0015, ADR-0016, ADR-0017.
 | `CHEZSCHEMELIBDIRS=src:fallback` | `CHEZSCHEMELIBDIRS=src` |
 | `make prod`, `make check-prod`, `make check-config` | removed. `make build` is now a discovery preflight: it compiles nothing and prints the library that would be loaded |
 | `HAVE_PKG`, `FLAVOR`, `CC`, `CFLAGS_*`, and the acquisition/flavor stamp machinery | removed. With no artifact there is no build mode to select and no mode flip to relink across |
-| `item` `index`, the number typed in the source | `item` `index`, the item's **ordinal position** — its list's `start` plus its offset among that list's items, and 0 for every item of a bullet list, a GFM task list being one. `1. 1. 1.` was `(1 1 1)` and is now `(1 2 3)`; `1. 5. 9.` was `(1 5 9)` and is now `(1 2 3)`. `1. 2. 3.` and `5. 6. 7.` are unchanged. The literal numbers are no longer recoverable from the AST |
+| `item` `index`, the number typed in the source | `item` `index`, the item's **ordinal position** — its list's `start` plus its offset among that list's items, and 0 for every item of a bullet list. `1. 1. 1.` was `(1 1 1)` and is now `(1 2 3)`; `1. 5. 9.` was `(1 5 9)` and is now `(1 2 3)`. `1. 2. 3.` and `5. 6. 7.` are unchanged. The literal numbers are no longer recoverable from the AST |
 
 `invalid-override` and `load-failed` keep their names and meanings.
 `invalid-override` now covers a wider set of causes — wrong entry count, a

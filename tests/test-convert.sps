@@ -399,9 +399,9 @@
                          (markdown-node-property n 'checked? 'absent)))
        (nodes-of-type (ext-ast "- [x] done\n- [ ] todo\n\n* plain\n") 'item)))
 
-;; A GFM task list is a BULLET list, so every task item indexes 0 -- the same
-;; answer a plain bullet item gets, and for the same reason. Asserted over
-;; two items rather than one: an implementation that added the sibling offset
+;; These are BULLET items, so each task item indexes 0 -- the same answer a
+;; plain bullet item gets, and for the same reason. Asserted over two items
+;; rather than one: an implementation that added the sibling offset
 ;; unconditionally still answers 0 for the first.
 (test-equal "task items index 0, like the bullet items they are"
   '(0 0)

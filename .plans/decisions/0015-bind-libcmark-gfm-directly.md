@@ -51,16 +51,17 @@ The five jobs that stood between Scheme and cmark, and what replaced each:
 
 | Shim job | Replacement | Where |
 |---|---|---|
-| `chez_cmark_shim_compiled_version` | deleted — no compile step, so no header/runtime skew can exist | `native.sls:286-290` |
-| `chez_cmark_runtime_version` | `(foreign-procedure "cmark_version" () int)` | `native.sls:119` |
-| `chez_cmark_option_bits` | six constants and the mask builder, in Scheme | `native.sls:302-324` |
-| `chez_cmark_free_buffer` | the third `void*` of `cmark_get_default_mem_allocator()`, called via its address | `native.sls:131-142` |
-| `chez_cmark_tasklist_checked` | `unsigned-8` as the result type, so only the defined byte of a C `_Bool` is read | `native.sls:149-153` |
+| `chez_cmark_shim_compiled_version` | deleted — no compile step, so no header/runtime skew can exist | `native.sls`, the `version-compatible?` comment |
+| `chez_cmark_runtime_version` | `(foreign-procedure "cmark_version" () int)` | `native.sls`, `cmark-runtime-version` |
+| `chez_cmark_option_bits` | six constants and the mask builder, in Scheme | `native.sls`, the `cmark-opt-*` constants and `option-bits` |
+| `chez_cmark_free_buffer` | the third `void*` of `cmark_get_default_mem_allocator()`, called via its address | `native.sls`, `allocator-slots` / `free-buffer` |
+| `chez_cmark_tasklist_checked` | `unsigned-8` as the result type, so only the defined byte of a C `_Bool` is read | `native.sls`, `tasklist-checked` |
 
 The debug counters were never cmark's. They counted acquisitions this binding makes,
-and they are now three Scheme variables in `native.sls:161-173`, always on. `make prod`,
-`make check-prod`, and the `FLAVOR` machinery existed only to compile them out; all
-three are gone.
+and they are now three Scheme variables in `native.sls` — `live-parser-count`,
+`live-root-count`, `live-buffer-count`, and their paired `-new!`/`-free!` procedures —
+always on. `make prod`, `make check-prod`, and the `FLAVOR` machinery existed only to
+compile them out; all three are gone.
 
 Three alternatives were rejected:
 
@@ -116,8 +117,8 @@ Three alternatives were rejected:
   unaffected, and the amount of C is now zero.
 - **The allocator offset is an ABI dependency, and it is new fragility.** "`free` is the
   third `void*` of `struct cmark_mem`" was a compiler-checked member access in the
-  shim; it is now `(foreign-ref 'uptr mem (* 2 (foreign-sizeof 'void*)))` at
-  `native.sls:137-139`, believed rather than checked. The test at
+  shim; it is now `(foreign-ref 'uptr mem (* 2 (foreign-sizeof 'void*)))` in
+  `allocator-slots` (`native.sls`), believed rather than checked. The test at
   `tests/test-native.sps:340-346` asserts the three slots are present, distinct, and
   non-null, which catches a NULL slot, a duplicated slot, and a struct shrunk to fewer
   members. **It does not catch a reordering** — three distinct non-null pointers stay
@@ -136,11 +137,12 @@ Three alternatives were rejected:
   and whatever `LD_LIBRARY_PATH`, `DYLD_*`, or a shared cache decides that means. What
   2.0 does instead is match a **fixed list of absolute system directories**
   (`discovery.sls:108-113`) against a **versioned filename shape**
-  (`discovery.sls:84-101`), and load the result by absolute path
-  (`native.sls:103-116`). No name we did not construct is ever handed to the loader.
+  (`discovery.sls:84-101`), and load the result by absolute path (`native.sls`:
+  `load-library`, then `core-loaded` and `extensions-loaded`). No name we did not
+  construct is ever handed to the loader.
   `CHEZ_CMARK_GFM_LIBS` keeps the strict rule unchanged: two absolute paths to existing
   regular files, used verbatim, with no fallback to the search when they are wrong
-  (`native.sls:74-79`, `discovery.sls:228-243`).
+  (`native.sls`'s `resolve-cmark-libraries` override branch, `discovery.sls:228-243`).
 - **ADR-0014 is spent.** `fallback/`, the generated `src/cmark/gfm/private/config.sls`,
   `make check-config`, `tests/check-config.sps`, and `tests/test-fallback-config.sps`
   are all deleted, and the Makefile's `CHEZ_LIBDIRS` drops its `fallback` segment:
