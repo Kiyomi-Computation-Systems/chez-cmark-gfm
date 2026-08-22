@@ -43,3 +43,14 @@ instantiate `native.sls`'s body until a binding is referenced.
 **Result:** FAILED — the anchored grep found no matching row, exactly as
 it did against README.org before the move.
 **Reverted:** yes.
+
+## Mutation D2 — the Linux row's grep also discriminates (reviewer-confirmed)
+
+**Guards:** the Supported matrix names the Chez each CI job actually ran
+(Linux row).
+**Mutation:** the Task 3 reviewer independently mutated the Linux row in
+`docs/installing.md` two ways: `9.5.8` -> `9.5.7`, and an empty version.
+**Result:** FAILED in both cases, per the Task 3 reviewer — the anchored
+grep found no matching row, the same discrimination Mutation D showed for
+the macOS row.
+**Reverted:** yes, per the Task 3 reviewer.

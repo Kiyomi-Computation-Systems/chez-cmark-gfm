@@ -112,6 +112,11 @@ make install PREFIX=/usr/local      # -> /usr/local/lib/chez-cmark-gfm/cmark/
 export CHEZSCHEMELIBDIRS=/usr/local/lib/chez-cmark-gfm:
 ```
 
+**This names the parent, not the `cmark/` directory printed above.**
+`(cmark gfm)` resolves to `<libdir>/cmark/gfm.sls`, so Chez needs the parent
+on its search path; point `CHEZSCHEMELIBDIRS` at the deeper path instead and
+the import silently fails to resolve.
+
 **The trailing colon is not a typo.** Assigning `CHEZSCHEMELIBDIRS`
 *replaces* Chez's search path rather than extending it, so without the
 colon `.` is dropped and relative imports stop resolving:
@@ -121,8 +126,9 @@ CHEZSCHEMELIBDIRS=/tmp/foo    =>  (("/tmp/foo" . "/tmp/foo"))
 CHEZSCHEMELIBDIRS=/tmp/foo:   =>  (("/tmp/foo" . "/tmp/foo") ("." . "."))
 ```
 
-`PREFIX` names the root and the tree lands in `$(PREFIX)/lib/chez-cmark-gfm`;
-set `LIBDIR` instead to choose that directory outright.
+`PREFIX` names the root, and by default the tree lands in
+`<PREFIX>/lib/chez-cmark-gfm`; set `LIBDIR` instead to choose that directory
+outright.
 `make uninstall PREFIX=/usr/local` removes it. Packagers can set `DESTDIR`.
 Nothing is compiled — the install copies `.sls` files and finds
 `libcmark-gfm` on the host at import time.

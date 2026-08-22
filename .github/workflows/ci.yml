@@ -339,7 +339,7 @@ jobs:
     # A bare container, NOT the runner image. ubuntu-latest arrives with a
     # toolchain, git, and build tools already present, so building there
     # proves nothing about a clean machine -- which is exactly what
-    # milestone 6's exit criterion is about. This job runs only what the
+    # milestone 6's exit criterion is about. This job runs only what
     # docs/installing.md tells a reader to run.
     container: ubuntu:24.04
     steps:
