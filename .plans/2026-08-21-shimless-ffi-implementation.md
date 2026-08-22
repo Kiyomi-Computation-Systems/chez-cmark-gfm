@@ -566,9 +566,10 @@ Create `tests/test-option-bits.sps`:
 ;;; tests/test-differential.sps; validate-utf8 is unreachable through the
 ;;; public API and has no other coverage at all, which is why the header
 ;;; parity check below is not optional.
+;; file-exists? comes from (rnrs); importing it from (chezscheme) as well
+;; raises "multiple definitions for file-exists? in body". See Global Constraints.
 (import (rnrs)
         (srfi :64)
-        (only (chezscheme) file-exists?)
         (cmark gfm private native))
 
 (define runner (test-runner-simple))
@@ -607,7 +608,11 @@ Create `tests/test-option-bits.sps`:
                                         (- (char->integer (string-ref str i))
                                            (char->integer #\0)))))
                       ((and acc (char=? (string-ref str i) #\))) acc)
-                      (else (loop (+ i 1) acc)))))))
+                      ;; Reset, not carry: a non-digit boundary separates the
+                      ;; literal "1" being shifted from the shift amount N that
+                      ;; follows "<< ". Carrying acc through would concatenate
+                      ;; the two digit runs (e.g. "(1 << 17)" reading as 117).
+                      (else (loop (+ i 1) #f)))))))
     (if (and (> (string-length s) 0) (char=? #\( (string-ref s 0)))
         (bitwise-arithmetic-shift-left 1 (digits s))
         (digits s))))
