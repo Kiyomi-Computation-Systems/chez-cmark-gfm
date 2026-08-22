@@ -69,7 +69,7 @@ MEMORY_TESTS := $(filter-out tests/test-differential.sps,$(TESTS))
 # `awk '/^\.PHONY:/ ...'`, which matches one physical line and has no
 # continuation handling -- a backslash-wrapped .PHONY hides every
 # continuation-line target from that check and adds a bogus `\`
-# pseudo-target. Found and fixed once already; see the mutation log.
+# pseudo-target. Found and fixed once already, in commit 3f5552c.
 .PHONY: all build deps check-pins check-purity check-help check-install examples dev help install uninstall test test-memory vendor clean deps-info
 
 help: ## Show this help message
