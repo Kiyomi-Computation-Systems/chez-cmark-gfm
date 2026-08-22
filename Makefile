@@ -1,84 +1,18 @@
 # chez-cmark-gfm
 
 CHEZ        ?= chez
-CC          ?= cc
 UNAME_S     := $(shell uname -s)
 
-ifeq ($(UNAME_S),Darwin)
-  SHLIB_EXT := dylib
-  SHLIB_LDFLAGS := -dynamiclib
-else
-  SHLIB_EXT := so
-  SHLIB_LDFLAGS := -shared -fPIC
-endif
-
 BUILD_DIR   := build
-LIB_DIR     := $(BUILD_DIR)/lib
-SHIM        := $(LIB_DIR)/libchezcmarkgfm.$(SHLIB_EXT)
-CONFIG_SLS  := src/cmark/gfm/private/config.sls
 VENDOR_DIR  := vendor/cmark-gfm
 VENDOR_BUILD:= $(BUILD_DIR)/vendor
 
-CFLAGS_BASE := -std=c99 -Wall -Wextra -Werror -Wconversion -Wshadow -Wpointer-arith -fPIC
-CFLAGS_DEV  := $(CFLAGS_BASE) -g -O0 -DCHEZ_CMARK_DEBUG_COUNTERS
-CFLAGS_PROD := $(CFLAGS_BASE) -O2
-
-# Which flags link the shim. dev is the default; `make prod` re-enters make
-# with FLAVOR=prod so the whole graph -- shim, config.sls, stamps -- agrees
-# on one flavor. Guarded because this variable's one failure mode is a typo
-# silently falling back to dev and shipping the wrong artifact.
-FLAVOR ?= dev
-ifeq ($(FLAVOR),dev)
-  CFLAGS_SHIM := $(CFLAGS_DEV)
-else ifeq ($(FLAVOR),prod)
-  CFLAGS_SHIM := $(CFLAGS_PROD)
-else
-  $(error FLAVOR must be dev or prod, got '$(FLAVOR)')
-endif
-
-# --- native dependency discovery (ADR-0001) --------------------------
-HAVE_PKG := $(shell pkg-config --exists libcmark-gfm && echo yes || echo no)
-
-ifeq ($(HAVE_PKG),yes)
-  CMARK_CFLAGS := $(shell pkg-config --cflags libcmark-gfm)
-  CMARK_LIBDIR := $(shell pkg-config --variable=libdir libcmark-gfm)
-  # Upstream ships no .pc for the extensions library: link it manually.
-  CMARK_LIBS   := $(shell pkg-config --libs libcmark-gfm) \
-                  -L$(CMARK_LIBDIR) -lcmark-gfm-extensions
-  CMARK_DLLS   := $(CMARK_LIBDIR)/libcmark-gfm.$(SHLIB_EXT) \
-                  $(CMARK_LIBDIR)/libcmark-gfm-extensions.$(SHLIB_EXT)
-  CMARK_CLI    := cmark-gfm
-else
-  CMARK_CFLAGS := -I$(VENDOR_BUILD)/src -I$(VENDOR_DIR)/src \
-                  -I$(VENDOR_DIR)/extensions
-  # The vendored copy is built and linked as SHARED libraries (design spec
-  # 6.1), never static. cmark-gfm's static archives are built with
-  # CMAKE_C_VISIBILITY_PRESET hidden plus CMARK_GFM_STATIC_DEFINE, which
-  # hides every cmark symbol from whatever links them. native.sls resolves
-  # cmark's entry points directly via foreign-procedure at runtime, so those
-  # symbols have to stay visible in a real shared object -- static linking
-  # cannot satisfy that no matter what the archives are named.
-  #
-  # Each shared library gets its own -Wl,-rpath entry, absolute and recorded
-  # at build time, so the shim resolves them at load time with no system
-  # library search and no dependence on the working directory or
-  # LD_LIBRARY_PATH/DYLD_LIBRARY_PATH -- the same guarantee the pkg-config
-  # path gets from the installed library's own rpath/soname handling.
-  #
-  # Extensions FIRST, then core, on the link line: kept from the static case
-  # for consistency, though it no longer determines symbol resolution --
-  # shared objects carry their own recorded dependencies (libcmark-gfm-
-  # extensions already depends on libcmark-gfm via its own CMake target).
-  CMARK_VENDOR_LIBDIR_EXT := $(abspath $(VENDOR_BUILD)/extensions)
-  CMARK_VENDOR_LIBDIR_SRC := $(abspath $(VENDOR_BUILD)/src)
-  CMARK_LIBS   := -L$(CMARK_VENDOR_LIBDIR_EXT) -lcmark-gfm-extensions \
-                  -L$(CMARK_VENDOR_LIBDIR_SRC) -lcmark-gfm \
-                  -Wl,-rpath,$(CMARK_VENDOR_LIBDIR_EXT) \
-                  -Wl,-rpath,$(CMARK_VENDOR_LIBDIR_SRC)
-  CMARK_DLLS   := $(CMARK_VENDOR_LIBDIR_SRC)/libcmark-gfm.$(SHLIB_EXT) \
-                  $(CMARK_VENDOR_LIBDIR_EXT)/libcmark-gfm-extensions.$(SHLIB_EXT)
-  CMARK_CLI    := $(abspath $(VENDOR_BUILD)/src/cmark-gfm)
-endif
+# The differential suites' oracle (tests/test-differential.sps and friends).
+# 2.0 builds no shim and draws no distinction between a pkg-config and a
+# vendored acquisition path, so this is just an overridable default naming
+# the PATH binary -- point it at another cmark-gfm explicitly if the one on
+# PATH is not the one to test against.
+CMARK_CLI ?= cmark-gfm
 
 SRFI_SRC     := vendor/chez-srfi
 SXMLT_SRC    := vendor/wak-sxml-tools
@@ -122,15 +56,17 @@ TESTS        := $(wildcard tests/test-*.sps)
 # work that would be lost".
 MEMORY_TESTS := $(filter-out tests/test-differential.sps,$(TESTS))
 
-.PHONY: all build deps check-pins check-purity check-prod check-config examples dev test test-memory vendor clean prod deps-info
+.PHONY: all build deps check-pins check-purity examples dev test test-memory vendor clean deps-info
 
 all: build
 
 deps-info:
-	@echo "cmark-gfm source : $(if $(filter yes,$(HAVE_PKG)),pkg-config,vendored)"
-	@echo "shim             : $(SHIM)"
 	@echo "cmark-gfm CLI    : $(CMARK_CLI)"
 
+# There is no compiled artifact in 2.0. `build` answers the question the
+# install contract raises instead: is a usable libcmark-gfm present, and which
+# one would be loaded? Kept as a canonical target because that question is
+# worth one command.
 build:
 	@CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) $(CHEZ) --program tests/preflight.sps
 
@@ -265,20 +201,20 @@ check-purity: build deps
 # `deps` needs from it is `test/*.txt`, the 744-example corpus
 # tests/test-sxml-differential.sps reads. That suite is the only thing under
 # tests/ that reads the vendored WORKING TREE at all -- every other suite
-# reaches cmark through $(CMARK_CLI) or the shim, both of which the
-# pkg-config path satisfies without any submodule. So under HAVE_PKG=yes
-# nothing else initialised it: `$(SHIM): vendor` is guarded out, `vendor`
-# never runs, and `make test` on a fresh clone died inside the suite on an
-# uncaught &i/o-file-does-not-exist naming open-file-input-port -- pointing
-# at the reader, not at the missing checkout.
+# reaches cmark through $(CMARK_CLI), a PATH lookup that touches no
+# submodule. Nothing else in the graph initialises vendor/cmark-gfm -- there
+# is no shim build left to do so as a side effect -- so `deps` has to check
+# it out explicitly: without this, `make test` on a fresh clone died inside
+# the suite on an uncaught &i/o-file-does-not-exist naming
+# open-file-input-port -- pointing at the reader, not at the missing checkout.
 #
-# CHECKOUT ONLY, deliberately: no cmake, no build. Under HAVE_PKG=no the
-# `vendor` target builds this same submodule for the shim to link against,
-# and building it twice from two targets would be the waste that rule exists
-# to avoid. `git submodule update --init` is idempotent and only ever resets
-# to the recorded gitlink, so running it from both paths disturbs neither --
-# and the corpus has to be at the pinned commit either way, since it is the
-# same revision the library links against.
+# CHECKOUT ONLY, deliberately: no cmake, no build. `make vendor` builds this
+# same submodule (for a local CLI binary and shared libraries), and building
+# it twice from two targets would be the waste that rule exists to avoid.
+# `git submodule update --init` is idempotent and only ever resets to the
+# recorded gitlink, so running it from both paths disturbs neither -- and the
+# corpus has to be at the pinned commit either way, since it is the same
+# submodule commit either path resolves to.
 deps:
 	git submodule update --init $(VENDOR_DIR)
 	git submodule update --init $(SRFI_SRC)
@@ -301,85 +237,6 @@ deps:
 	for f in $$src/*; do ln -sfn "$$f" "$$dst/$$(basename "$$f")"; done
 	ln -sfn $(abspath $(SRFI_LIBS))/wak/private/include/compat.chezscheme.sls \
 	        $(abspath $(SRFI_LIBS))/wak/private/include/compat.sls
-
-$(LIB_DIR):
-	mkdir -p $(LIB_DIR)
-
-ifeq ($(HAVE_PKG),no)
-$(SHIM): vendor
-endif
-
-# Which acquisition path last built the shim. The name encodes the mode, so
-# flipping HAVE_PKG makes the prerequisite change identity and forces a relink.
-# Without this, `make HAVE_PKG=no build && make build` leaves the vendored-linked
-# shim in place -- make sees the .c unchanged and skips it -- so the two exit-gate
-# runs would silently test the same artifact twice.
-ACQ_MODE  := $(if $(filter yes,$(HAVE_PKG)),pkgconfig,vendored)
-ACQ_STAMP := $(BUILD_DIR)/.acquisition-$(ACQ_MODE)
-
-$(ACQ_STAMP): | $(LIB_DIR)
-	rm -f $(BUILD_DIR)/.acquisition-*
-	touch $@
-
-# Same mechanism for the build flavor: flipping FLAVOR changes this
-# prerequisite's identity and forces a relink. Without it, `make prod &&
-# make test` would run the dev suite against a counters-free prod shim
-# (its counter-movement discriminators would rightly fail), and `make
-# build` after `make prod` would hand dev callers a prod shim.
-FLAVOR_STAMP := $(BUILD_DIR)/.flavor-$(FLAVOR)
-
-$(FLAVOR_STAMP): | $(LIB_DIR)
-	rm -f $(BUILD_DIR)/.flavor-*
-	touch $@
-
-# A stamp's identity change alone does not reliably force the relink: the
-# freshly touched stamp must also be NEWER than the shim, and Apple's make
-# 3.81 (macOS /usr/bin/make) compares mtimes at whole-second granularity,
-# so a mode flip landing in the same wall-clock second as the previous
-# link kept the old artifact (observed: `make build FLAVOR=prod` then an
-# immediate `make build` ran the dev suite against the still-prod shim;
-# GNU make 4.x's sub-second mtimes mask this). Deleting the shim from the
-# stamp recipes is no fix -- make has already cached the target's stat by
-# then and exits with the artifact gone. So detect the flip when the
-# Makefile is READ -- a stamp file present under a name other than the
-# requested ones -- and force the shim rule through a phony prerequisite,
-# which both makes treat as always-remade regardless of timestamps (the
-# same propagation that made the old phony `vendor` prerequisite relink
-# unconditionally). Non-build goals (check-prod, deps-info, clean) never
-# walk $(SHIM), so the flip marker is inert for them and `make check-prod`
-# still probes the artifact the last build left behind.
-STALE_STAMPS := $(filter-out $(ACQ_STAMP) $(FLAVOR_STAMP),\
-                  $(wildcard $(BUILD_DIR)/.acquisition-* $(BUILD_DIR)/.flavor-*))
-ifneq ($(STALE_STAMPS),)
-.PHONY: mode-flip-relink
-mode-flip-relink: ;
-$(SHIM): mode-flip-relink
-endif
-
-$(SHIM): src/cmark-gfm-shim.c src/cmark-gfm-shim.h $(ACQ_STAMP) $(FLAVOR_STAMP) | $(LIB_DIR)
-	$(CC) $(CFLAGS_SHIM) $(CMARK_CFLAGS) $(SHLIB_LDFLAGS) \
-	      -o $@ src/cmark-gfm-shim.c $(CMARK_LIBS)
-
-# config.sls carries the shim's ABSOLUTE path so the loader never searches.
-# Depends on the Makefile too: this file's contents are generated by the recipe
-# below, so a change here must regenerate it. Without that, editing the recipe
-# leaves a stale config.sls that looks correct and describes the previous build.
-$(CONFIG_SLS): $(SHIM) Makefile
-	@mkdir -p $(dir $@)
-	@printf '%s\n' \
-	  '#!r6rs' \
-	  ';; GENERATED by make -- do not edit, do not commit.' \
-	  '(library (cmark gfm private config)' \
-	  '  (export shim-path cmark-library-paths cmark-supported-version-range)' \
-	  '  (import (rnrs))' \
-	  '  (define shim-path "$(abspath $(SHIM))")' \
-	  '  ;; cmark shared objects, loaded explicitly before the shim. On Linux' \
-	  '  ;; a dlopen'"'"'d library'"'"'s dependencies are NOT in the global symbol' \
-	  '  ;; namespace, so binding cmark entry points through the shim alone' \
-	  '  ;; fails there while working on macOS.' \
-	  '  (define cmark-library-paths (quote ($(foreach l,$(CMARK_DLLS),"$(l)"))))' \
-	  '  (define cmark-supported-version-range (quote (#x001d0000 . #x001dffff))))' \
-	  > $@
 
 vendor:
 	git submodule update --init --recursive
@@ -429,54 +286,12 @@ else
 	  sh -c 'for t in $(MEMORY_TESTS); do $(CHEZ) --program $$t || exit 1; done'
 endif
 
-# prod = the same graph as `build`, run at FLAVOR=prod after a clean. Each
-# step is an explicit recipe line because the old form -- `prod: clean` plus
-# a conditional `prod: vendor` and a trailing `$(MAKE) $(CONFIG_SLS)` -- hid
-# two defects behind implicit ordering:
-#   - the config sub-make re-entered the $(SHIM) rule, found the acquisition
-#     stamp freshly recreated (and, vendored, the phony `vendor` prereq
-#     always remade), and RELINKED the just-built -O2 shim with dev flags:
-#     `make prod` exited 0 having shipped a debug build;
-#   - clean and vendor as sibling prerequisites left their relative order to
-#     make's internals -- here both make 3.81 and 4.4.1 ran clean first and
-#     merely built vendor twice, but vendor-first turns the link into a
-#     library-not-found failure.
-# The vendored gate needs no prod-specific rule: $(SHIM) already depends on
-# vendor when HAVE_PKG=no, inside the sub-make, after clean has finished.
-prod:
-	$(MAKE) clean
-	$(MAKE) build FLAVOR=prod
-	$(MAKE) check-prod
-
-# Proves the artifact that survived to the end of `make prod` is the prod
-# one (a check beats a comment): a shim carrying -DCHEZ_CMARK_DEBUG_COUNTERS
-# reports moving live-counts while a document is live, a prod shim's stay
-# frozen at zero (src/cmark-gfm-shim.c) -- the dev suite's discriminator
-# (tests/test-lifecycle.sps "live-counts moves during a scope") pointed the
-# other way. Deliberately NOT dependent on `build`: build at the default
-# flavor would relink the shim as dev, and the check would then judge the
-# artifact it itself just replaced. It probes what the last build left.
-# `env -u` so an exported CHEZ_CMARK_GFM_SHIM cannot point the probe away
-# from the shim config.sls names.
-check-prod: deps
-	@test -f $(SHIM) || { echo "check-prod: $(SHIM) is missing; run 'make prod' (or 'make build FLAVOR=prod') first" >&2; exit 1; }
-	@test -f $(CONFIG_SLS) || { echo "check-prod: $(CONFIG_SLS) is missing; run 'make prod' first" >&2; exit 1; }
-	env -u CHEZ_CMARK_GFM_SHIM CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) $(CHEZ) --program tests/check-prod.sps
-
 clean:
-	rm -rf $(BUILD_DIR) $(CONFIG_SLS) tests/tmp
-
-# The fallback config (fallback/) and the generated one (src/) both declare
-# (cmark gfm private config). Nothing else would notice them diverging, and a
-# divergence is invisible until a consumer imports an unbuilt tree -- so this
-# is a check, not a comment. Depends on `build` because it has nothing to
-# compare against until the generated file exists.
-check-config: build
-	$(CHEZ) --program tests/check-config.sps
+	rm -rf $(BUILD_DIR) tests/tmp
 
 EXAMPLES := $(wildcard examples/*.sps)
 
-# CHEZSCHEMELIBDIRS is src:fallback and NOTHING ELSE, deliberately. No
+# CHEZSCHEMELIBDIRS is src and NOTHING ELSE, deliberately. No
 # build/scheme-libs, no chez-srfi, no wak-*. The 0.3.0 CHANGELOG claims a
 # consumer of this package acquires no dev dependency; an example that
 # reached one would break this target, which is the only way that claim
@@ -494,7 +309,7 @@ examples: build
 	  if [ ! -f $$exp ]; then \
 	    echo "MISSING expected output: $$exp" >&2; fail=1; continue; \
 	  fi; \
-	  if CHEZSCHEMELIBDIRS=src:fallback $(CHEZ) --program $$e > tests/tmp/$$base.out 2>&1; then \
+	  if CHEZSCHEMELIBDIRS=src $(CHEZ) --program $$e > tests/tmp/$$base.out 2>&1; then \
 	    if diff -u $$exp tests/tmp/$$base.out; then \
 	      echo "ok"; \
 	    else \
