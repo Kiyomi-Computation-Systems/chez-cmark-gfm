@@ -402,8 +402,14 @@
 ;; --- the allocator slot the shim used to hide ------------------------
 ;; cmark_get_default_mem_allocator returns {calloc, realloc, free}. Freeing a
 ;; renderer buffer with libc free() is NOT equivalent and is documented as
-;; forbidden; this asserts we are reading the right member. A reordered or
-;; resized struct cmark_mem shows up here rather than as a heap corruption.
+;; forbidden; this asserts we are reading the right member. This establishes
+;; only that the three slots are present, distinct, and non-null: it catches a
+;; NULL slot, a duplicated slot, and a struct shrunk to fewer members. It does
+;; NOT catch a reordering -- three distinct non-null pointers stay three
+;; distinct non-null pointers under any permutation, so this assertion would
+;; pass unchanged even if slot 3 were not really `free`. That ordering
+;; guarantee instead rests on tests/test-differential.sps, whose renders
+;; exercise the real release path through this exact slot.
 (test-assert "allocator exposes three distinct non-null function pointers"
   (let ((slots (allocator-slots)))
     (and (= 3 (length slots))

@@ -45,10 +45,23 @@
     (and (bytevector? bv) (= 2 (bytevector-length bv)))))
 
 ;; --- balanced teardown ------------------------------------------------
-(test-assert "live-counts moves during a scope"
+;; The balance assertions below compare before against after, so they all pass
+;; against counters that never count anything: (0 0 0) equals (0 0 0). This is
+;; the assertion that makes them mean what they claim -- it demands the counters
+;; actually MOVE while a document is live.
+(test-assert "live-counts moves during a scope: at least one live parser and root while the body runs"
+  (let ((before (live-counts)))
+    (call-with-native-document "# hello\n" opts gfm-extensions
+      (lambda (h)
+        (let ((during (live-counts)))
+          (and (> (car during) (car before))      ; live-parsers
+               (> (cadr during) (cadr before)))))))) ; live-roots
+
+;; markdown->html is the only path exercised in this file that moves the buffer
+;; counter; the call-with-native-document assertions below never allocate one.
+(test-assert "counters balance across markdown->html"
   (let ((before (live-counts)))
     (markdown->html "# x\n" (default-cmark-options))
-    ;; back to where it started: every acquire was paired
     (equal? before (live-counts))))
 
 (test-assert "counters balance after a successful scope"
