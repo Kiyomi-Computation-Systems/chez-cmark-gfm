@@ -349,9 +349,10 @@ jobs:
       - name: Build, exactly as the README says
         run: make CHEZ=chezscheme build
 
-      # No `make deps`, deliberately. The examples must run with
-      # CHEZSCHEMELIBDIRS=src:fallback and no dev dependency whatsoever;
-      # omitting deps here is what makes that falsifiable.
+      # No `make deps`, deliberately. The examples run under
+      # CHEZSCHEMELIBDIRS=src alone (Makefile's `examples` target) with no dev
+      # dependency whatsoever; omitting deps here is what makes that
+      # falsifiable. `fallback/` was deleted in 2.0 and is not on that path.
       - name: Run every documented example
         run: make CHEZ=chezscheme examples
 
@@ -418,8 +419,13 @@ jobs:
       # arm64, where variadic arguments are passed on the stack. This runner
       # is x86-64 Linux, where the fixed-arity and variadic calling
       # conventions agree for the first several arguments, so the bug does
-      # not fire here -- deliberately not worked around, per the brief for
-      # this job.
+      # not fire here and is deliberately not worked around.
+      #
+      # Upstream: gitlab.com/akkuscm/akku issue #69, MR !12. The fix (delete
+      # the FFI, shell out to curl(1)) is merged to `dev` and unreleased, so
+      # 1.1.0 is still the newest tarball. Reproduced locally on arm64 macOS:
+      # calling curl_easy_setopt through a fixed-arity function pointer
+      # segfaults, while the correct variadic call returns CURLE_OK.
       - name: install akku (no apt package exists; upstream release tarball)
         run: |
           set -eu

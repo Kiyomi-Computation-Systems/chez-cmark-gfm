@@ -447,8 +447,12 @@ consequence.
 - The Linux job becomes `apt install cmark-gfm` plus a **second** job that removes the
   package and asserts `&cmark-library-unavailable` reason `not-found` with a message
   naming the candidate directories.
-- A **clean-container job** runs `akku install` from the manifest and imports `(cmark gfm)`
-  with nothing set, proving §1's exit criterion.
+- An **akku job** runs `akku install` from the manifest and then *calls into*
+  `(cmark gfm)` with nothing set in the environment, proving §1's exit criterion. It does
+  not need `container:` isolation — §1 requires only cmark-gfm plus Chez and an unset
+  environment, not an otherwise-bare machine, and nothing preinstalled on a runner puts a
+  conflicting versioned cmark-gfm on the searched paths. A bare *import* would not prove
+  it: Chez invokes an imported library's body only when a binding is referenced.
 - The support matrix in `README.org` is still asserted against the versions each job ran.
   Its "Memory evidence" column is unchanged, but the acquisition-path framing must be
   replaced: ADR-0001's two paths (pkg-config vs vendored) no longer exist, so the matrix
