@@ -92,9 +92,10 @@ Three alternatives were rejected:
   - `tests/test-differential.sps:120-142` — five of the six flags, each with a paired
     assertion: first that the CLI's own output moves when the flag is passed, then that
     ours matches it byte for byte. A wrong constant fails the second half.
-  - `tests/test-option-bits.sps:63-69` — all six, parsed out of
-    `vendor/cmark-gfm/src/cmark-gfm.h`. This is the only coverage `validate-utf8?` has:
-    it is structurally unreachable through the public API
+  - `tests/test-option-bits.sps:64-69` — all six, parsed out of
+    `vendor/cmark-gfm/src/cmark-gfm.h`. This is the only place `validate-utf8?`'s
+    constant is checked against the real header: it is structurally unreachable
+    through the public API
     (`tests/test-differential.sps:102-106`), so no fixture can discriminate it, and the
     structural assertions beside the parity check (`tests/test-option-bits.sps:75-82`)
     compare the Scheme table with itself. If the submodule is not checked out, that
@@ -132,8 +133,9 @@ Three alternatives were rejected:
   (`native.sls:74-79`, `discovery.sls:228-243`).
 - **ADR-0014 is spent.** `fallback/`, the generated `src/cmark/gfm/private/config.sls`,
   `make check-config`, `tests/check-config.sps`, and `tests/test-fallback-config.sps`
-  are all deleted, and `CHEZSCHEMELIBDIRS` collapses from `src:fallback` back to `src`
-  (`Makefile:21`). The `not-built` reason retires with them.
+  are all deleted, and the Makefile's `CHEZ_LIBDIRS` drops its `fallback` segment:
+  `src:fallback:tests:$(SRFI_LIBS)` becomes `src:tests:$(SRFI_LIBS)` (`Makefile:21`).
+  The `not-built` reason retires with them.
 - **What ADR-0014 predicted and what shipped are not the same shape**, and the
   difference is worth recording rather than smoothing over. Its Successor said "shim
   path and cmark library paths from the environment or a config file, resolved and

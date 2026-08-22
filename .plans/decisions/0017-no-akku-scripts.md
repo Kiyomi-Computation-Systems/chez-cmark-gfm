@@ -84,8 +84,9 @@ Two alternatives were rejected:
 - `akku install` places this package's `src/cmark/**.sls` under `.akku/lib` and does
   nothing else: no prompt, no `.akku/ffi` artifact, no generated file, no post-install
   step. The `akku-install` CI job installs from the manifest and then calls into
-  `(cmark gfm)` with nothing set in the environment
-  (`.github/workflows/ci.yml:447-453`), which is release 2.0's exit criterion.
+  `(cmark gfm)` with nothing set in the environment (`.github/workflows/ci.yml`,
+  step "install from the manifest and import with nothing set"), which is
+  release 2.0's exit criterion.
 - **This decision only stands because 2.0 needs no build step at all.** It is a
   consequence of ADR-0015, not an independent position on packaging. Anything that
   reintroduces a compile — a Windows shim, a vendored fallback, a generated
@@ -108,10 +109,12 @@ Two alternatives were rejected:
   to run it in. This is the one cost of the decision that is not offset elsewhere, and
   it is what the rejected advice-only script would have bought.
 - These findings are pinned to akku 1.1.1-beta.0, the version installed on the
-  development machine and the source these line numbers were read from. CI installs the
-  1.1.0 release tarball instead (`.github/workflows/ci.yml:429-435`), which was not
-  re-checked against them. The mechanism is Akku's, not ours, and it can change; a
-  future reader weighing a `scripts` clause should re-read `lib/scripts.scm` rather than
+  development machine and the source these line numbers were read from. CI
+  installs the 1.1.0 release tarball instead (`.github/workflows/ci.yml`,
+  step "install akku (no apt package exists; upstream release tarball)"),
+  which was not re-checked against them. The mechanism is Akku's, not ours,
+  and it can change; a future reader weighing a `scripts` clause should
+  re-read `lib/scripts.scm` rather than
   trust the citations above.
 
 ## Successor

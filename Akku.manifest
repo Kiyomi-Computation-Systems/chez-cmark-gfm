@@ -12,9 +12,9 @@
 ;;
 ;; scripts: Akku's script mechanism would run a build, but it prompts for
 ;; approval on every install until the package is vetted in the index -- for
-;; downstream dependants too -- and run-cmd ignores exit status, so a failed
-;; build would report success. 2.0 has nothing to build, so none of that has
-;; to be weighed. See ADR-0017.
+;; downstream dependants too -- and that prompt can simply be declined, after
+;; which no script runs and the install still reports success. 2.0 has
+;; nothing to build, so none of that has to be weighed. See ADR-0017.
 (akku-package ("chez-cmark-gfm" "2.0.0")
   (synopsis "CommonMark and GitHub Flavored Markdown for Chez Scheme")
   (authors "Kiyomi Computation Systems LLC")

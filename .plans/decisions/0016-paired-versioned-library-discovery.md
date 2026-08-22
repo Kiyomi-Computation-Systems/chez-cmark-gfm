@@ -135,8 +135,9 @@ Rejected alternatives:
 - **`not-found` does not say where it looked.** The condition carries `path` `#f` and
   the reason symbol and nothing else (`conditions.sls:101-104`); the diagnostic
   `tests/preflight.sps:26-30` prints names the *remedy* — the two install one-liners and
-  the override — which is what CI asserts (`.github/workflows/ci.yml:386-387`). The
-  design spec asked for a message naming the candidate directories and that was not
+  the override — which is what CI asserts (`.github/workflows/ci.yml`, step
+  "build must fail with a message naming the remedy"). The design spec asked
+  for a message naming the candidate directories and that was not
   built. For the common case, a machine with no cmark-gfm, the remedy is the more useful
   answer; for the uncommon one, a library present in a directory the search does not
   cover, the user is told to name it explicitly without being told what was already

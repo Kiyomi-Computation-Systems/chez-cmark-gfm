@@ -586,7 +586,7 @@ the shim that read them from the headers, while that shim still exists.
 
 Accepted, and documented rather than mitigated (§8.2). Those users gain a one-time
 system-level source build in exchange for the platforms that *do* package it dropping a
-per-project CMake build. Coverage: Debian 11+, Ubuntu 20.04+, Arch, openSUSE Tumbleweed,
+per-project CMake build. Coverage: Debian 11+, Ubuntu 22.04+, Arch, openSUSE Tumbleweed,
 NixOS, Gentoo, Void, and Homebrew all package it, and every packaged version falls inside
 the existing supported range.
 

@@ -69,10 +69,11 @@ question left once nothing is compiled against a header.
 ### Removed
 
 - **The C shim** — `src/cmark-gfm-shim.c` (71 lines) and
-  `src/cmark-gfm-shim.h` (70). All five of its entry points are gone:
-  `compiled_version` had nothing left to compare against; `runtime_version`
-  became `cmark_version` bound directly; `option_bits` became six Scheme
-  constants asserted against the header; `free_buffer` became the third
+  `src/cmark-gfm-shim.h` (70). Fourteen `chez_cmark_*` entry points, doing
+  five jobs, are gone: `compiled_version` had nothing left to compare
+  against; `runtime_version` became `cmark_version` bound directly;
+  `option_bits` became six Scheme constants asserted against the header;
+  `free_buffer` became the third
   `void*` of `cmark_get_default_mem_allocator()`, called via its address;
   and `tasklist_checked` became a direct binding with an `unsigned-8`
   result, which reads the one byte `_Bool` actually defines. The debug
@@ -98,7 +99,7 @@ question left once nothing is compiled against a header.
   not the GFM fork. 1.0's vendored path compiled cmark-gfm from the
   submodule, so those platforms worked with no system package; 2.0 compiles
   nothing and asks for a one-time source build instead. `README.org` gives
-  the commands. Debian 11+, Ubuntu 20.04+, Arch, openSUSE Tumbleweed, NixOS,
+  the commands. Debian 11+, Ubuntu 22.04+, Arch, openSUSE Tumbleweed, NixOS,
   Gentoo, Void, and Homebrew all package it, and every packaged version falls
   inside the supported range.
 - **"`free` is the third `void*` in `struct cmark_mem`" is an ABI
