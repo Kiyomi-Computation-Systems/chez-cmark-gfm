@@ -263,7 +263,7 @@ Expected: `Exception: library (cmark gfm private discovery) not found`.
 
 - [ ] **Step 3: Write the implementation**
 
-Create `src/cmark/gfm/private/discovery.sls`. This code is verified — all 37 assertions
+Create `src/cmark/gfm/private/discovery.sls`. This code is verified — all 42 assertions
 above pass against it.
 
 ```scheme
@@ -517,7 +517,7 @@ above pass against it.
 CHEZSCHEMELIBDIRS=src:fallback:tests:build/scheme-libs chez --program tests/test-discovery.sps
 ```
 
-Expected: `# of expected passes 37`, exit 0.
+Expected: `# of expected passes 42`, exit 0.
 
 - [ ] **Step 5: Confirm the rest of the suite is untouched**
 
