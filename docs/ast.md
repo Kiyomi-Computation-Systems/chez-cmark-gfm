@@ -77,19 +77,32 @@ collapses "this node has no such property" and "this node has the
 property, and it's false" to the same `#f`, because that's what a missing
 default resolves to either way — not because the two cases are the same.
 A caller who needs to tell them apart supplies a third argument the real
-value could never equal:
+value could never equal. `task?` itself never needs the trick — it's
+never absent on an `item`, so the plain call is already correct:
 
 ```scheme
 (define (task-item? node)
-  (not (eq? (markdown-node-property node 'task? 'absent) 'absent)))
+  (markdown-node-property node 'task?))
+```
+
+`checked?` is where the trick is actually needed: a `link` node has no
+`checked?` property at all, while an unchecked task `item`'s `checked?`
+is present, and `#f`:
+
+```scheme
+(define (first-child n) (car (markdown-node-children n)))
+(define link (first-child (first-child (markdown->ast "[a](u)\n"))))
+(define item (first-child (first-child (markdown->ast "- [ ] x\n"))))
+
+(markdown-node-property link 'checked? 'absent)  ;; => 'absent
+(markdown-node-property item 'checked? 'absent)  ;; => #f
 ```
 
 Without that distinction, code that branches on `checked?` could silently
-treat a `link` node — which has no `checked?` property at all — the
-same as an unchecked `item`, instead of telling the two apart. Prefer
-`markdown-node-property` over reading `markdown-node-properties` with
-`assq` directly for this reason: the default argument is the only place
-that distinction is available.
+treat that `link` the same as the unchecked `item`, instead of telling
+the two apart. Prefer `markdown-node-property` over reading
+`markdown-node-properties` with `assq` directly for this reason: the
+default argument is the only place that distinction is available.
 
 ## Properties by node type
 
@@ -161,9 +174,21 @@ visit every node.
 `markdown-node-map` rebuilds every node in the tree on every call,
 whether `proc` changes that node or not — there's no shortcut for "this
 subtree is unchanged, skip it." Even the identity map above returns a
-tree that shares no node, at any depth, with the original (`eq?` fails
-everywhere, though `equal?` holds). For a large tree, expect a full copy
-on every call, not a diff.
+tree that shares no node, at any depth, with the original:
+
+```scheme
+(define mapped (markdown-node-map (lambda (n) n) tree))
+(eq? tree mapped)     ;; => #f
+(equal? tree mapped)  ;; => #f
+```
+
+`equal?` fails right alongside `eq?`, not despite it: `markdown-node` is
+a plain record with no custom equality, so Chez's `equal?` on two node
+records falls back to identity — the same comparison `eq?` already
+makes. (A node's own properties alist is still `equal?` to its
+counterpart's, because alists are plain pairs rather than records — but
+that's a fact about the alist, not the node.) For a large tree, expect a
+full copy on every call, not a diff.
 
 `markdown-node-fold` threads an accumulator through the walk instead of
 building a tree, so reach for it when the result isn't itself an AST —
