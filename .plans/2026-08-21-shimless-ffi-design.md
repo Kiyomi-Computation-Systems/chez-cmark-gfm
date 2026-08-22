@@ -305,10 +305,22 @@ failing silently.
 
 `not-built` and `missing` retire with the build step.
 
-`path` is `#f` for `not-found` — there is no single path to report — and the condition
-message must name the directories that were tried. That is ADR-0014's "name the remedy"
-principle applied to the failure that replaces it. `not-found` is the one users will
-actually hit; its message is the install instruction.
+`path` is `#f` for `not-found` — there is no single path to report. `not-found` is the one
+users will actually hit, so ADR-0014's "name the remedy" principle has to be honoured
+somewhere; **as built, that somewhere is `tests/preflight.sps`, not the condition.**
+
+An earlier revision of this section required the condition's *message* to name the
+directories that were tried. It does not, and that is the accepted shape rather than an
+oversight. `make build` runs the preflight, which catches the condition and prints the
+`apt install cmark-gfm` / `brew install cmark-gfm` lines plus the `CHEZ_CMARK_GFM_LIBS`
+escape hatch; CI's `no-library` job asserts that exact remedy text is present, so the
+interactive path — the one a user hits — is covered end to end and guarded against
+rotting.
+
+The accepted cost: a caller who catches `&cmark-library-unavailable` programmatically,
+without going through the preflight, learns that resolution failed but not where discovery
+looked. Adding the candidate list to the condition would close that, at the price of one
+more public-API change in a release already breaking the API; it was weighed and declined.
 
 **Every in-repo reference is ours to update.** There are ~40 across `conditions.sls`,
 `native.sls`, `gfm.sls:62`, six test suites, `examples/coverage-exemptions.scm`, and

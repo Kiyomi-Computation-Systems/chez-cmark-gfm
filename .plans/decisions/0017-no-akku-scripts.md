@@ -47,13 +47,24 @@ read from akku 1.1.1-beta.0's own source, are why:
   gate is present exactly where it costs the most friction and absent exactly where a
   CI job would hit it.
 
-**A correction to the design spec.** §9 also gave "`run-cmd` ignores exit status, so a
-failed build would report success" as a reason. That is false for akku 1.1.1-beta.0:
-`run-cmd` reads the wait status and raises on a signal or a non-zero exit
-(`lib/scripts.scm:209-216`). The hazard it describes is real — an install that reports
-success with no build behind it — but it arrives by the declined-prompt path above,
-not by an ignored exit code. Recorded rather than quietly dropped, because the wrong
-version of this claim is already in the design spec and would otherwise outlive it.
+**A correction to the design spec, and it turns on which akku you have.** §9 also gave
+"`run-cmd` ignores exit status, so a failed build would report success" as a reason. That
+is version-specific, and the spec did not say so:
+
+| akku | `run-cmd` |
+|---|---|
+| **1.1.0** — the newest *released* version, and what CI installs from the upstream tarball | does not check it. The source carries the `FIXME: should check the error status` verbatim. |
+| **1.1.1-beta.0** — the `dev` branch, unreleased | reads the wait status and raises on a signal or a non-zero exit (`lib/scripts.scm:209-216`). |
+
+So the spec's claim holds for every akku a user can install today, and stops holding
+whenever `dev` ships. An argument that expires on someone else's release schedule is not
+one to rest a decision on.
+
+**The declined-prompt path above is the reason that survives both versions**, and it is
+the one this ADR rests on: the prompt is answered `#f`, no script runs, and the install
+reports success regardless of what `run-cmd` would have done with an exit code. Recorded
+rather than quietly dropped, because the version-blind form of this claim is already in
+the design spec and would otherwise outlive it.
 
 Two alternatives were rejected:
 
