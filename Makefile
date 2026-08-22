@@ -56,18 +56,36 @@ TESTS        := $(wildcard tests/test-*.sps)
 # work that would be lost".
 MEMORY_TESTS := $(filter-out tests/test-differential.sps,$(TESTS))
 
-.PHONY: all build deps check-pins check-purity examples dev test test-memory vendor clean deps-info
+.PHONY: all build deps check-pins check-purity check-help examples dev help test test-memory vendor clean deps-info
 
-all: build
+help: ## Show this help message
+	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_.-]+:.*?## / \
+	  { printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 
-deps-info:
+# `help` cannot rot: a .PHONY target added without a `## ` description on
+# its own line fails this check. Lifted from chez-libuv, which runs the
+# same pair.
+check-help: ## Fail if any .PHONY target is undocumented in `make help`
+	@missing=0; \
+	targets=$$(awk '/^\.PHONY:/ { $$1 = ""; print }' Makefile); \
+	for t in $$targets; do \
+	  grep -qE "^$$t:.*## " Makefile || { \
+	    echo "check-help: target '$$t' has no '## ' description on its own line" >&2; \
+	    missing=1; \
+	  }; \
+	done; \
+	exit $$missing
+
+all: build ## Alias for build
+
+deps-info: ## Report which cmark-gfm CLI the differential suites will use
 	@echo "cmark-gfm CLI    : $(CMARK_CLI)"
 
 # There is no compiled artifact in 2.0. `build` answers the question the
 # install contract raises instead: is a usable libcmark-gfm present, and which
 # one would be loaded? Kept as a canonical target because that question is
 # worth one command.
-build:
+build: ## Verify a usable libcmark-gfm is present and name which one loads
 	@CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) $(CHEZ) --program tests/preflight.sps
 
 # Scheme dependencies. chez-srfi, wak-sxml-tools, and wak-common are each
@@ -134,7 +152,7 @@ build:
 # always ran to end of file. Anchoring on the tarball's own name_version
 # convention removes both: the pattern can only match the target package's
 # own line, so which line comes first no longer matters.
-check-pins:
+check-pins: ## Verify the submodule commits and Akku.lock name the same revisions
 	@fail=0; \
 	for pair in "$(SRFI_SRC):chez-srfi" "$(SXMLT_SRC):wak-sxml-tools" "$(COMMON_SRC):wak-common"; do \
 	  src=$${pair%%:*}; name=$${pair##*:}; \
@@ -176,7 +194,7 @@ check-pins:
 # silently elsewhere. That is not a gap in practice: a real accidental
 # dependency is something one of them actually CALLS, and that is exactly
 # what trips this.
-check-purity: build deps
+check-purity: build deps ## Verify the pure suites import no native code
 	@fail=0; \
 	for t in tests/test-options.sps tests/test-ast.sps tests/test-sxml.sps tests/test-example-coverage.sps tests/test-manifest-deps.sps; do \
 	  echo "=== check-purity: $$t, CHEZ_CMARK_GFM_LIBS poisoned ==="; \
@@ -215,7 +233,7 @@ check-purity: build deps
 # recorded gitlink, so running it from both paths disturbs neither -- and the
 # corpus has to be at the pinned commit either way, since it is the same
 # submodule commit either path resolves to.
-deps:
+deps: ## Vendor chez-srfi and the wak libraries into build/scheme-libs
 	git submodule update --init $(VENDOR_DIR)
 	git submodule update --init $(SRFI_SRC)
 	mkdir -p $(SRFI_LIBS)/srfi
@@ -238,7 +256,7 @@ deps:
 	ln -sfn $(abspath $(SRFI_LIBS))/wak/private/include/compat.chezscheme.sls \
 	        $(abspath $(SRFI_LIBS))/wak/private/include/compat.sls
 
-vendor:
+vendor: ## Build the vendored cmark-gfm (dev dependency: corpus, header, CLI oracle)
 	git submodule update --init --recursive
 	cmake -S $(VENDOR_DIR) -B $(VENDOR_BUILD) \
 	  -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
@@ -246,12 +264,12 @@ vendor:
 	  -DCMARK_TESTS=OFF -DCMARK_SHARED=ON -DCMARK_STATIC=OFF
 	cmake --build $(VENDOR_BUILD) -j
 
-dev: build deps
+dev: build deps ## Start a REPL with the library path set
 	CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) $(CHEZ)
 
 # Each suite sets its own exit status. Keep going after a failure so one
 # broken suite cannot hide the others, then fail the target if any failed.
-test: build deps check-pins
+test: build deps check-pins ## Run every tests/test-*.sps suite
 	@fail=0; \
 	for t in $(TESTS); do \
 	  echo "=== $$t ==="; \
@@ -261,7 +279,7 @@ test: build deps check-pins
 	else echo "SUITE FAILED"; fi; \
 	exit $$fail
 
-test-memory: build deps check-pins
+test-memory: build deps check-pins ## Run the suites under Valgrind (Linux) or ASan (macOS)
 ifeq ($(UNAME_S),Linux)
 	@for t in $(MEMORY_TESTS); do \
 	  CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) CMARK_CLI=$(CMARK_CLI) \
@@ -291,7 +309,7 @@ else
 	  sh -c 'for t in $(MEMORY_TESTS); do $(CHEZ) --program $$t || exit 1; done'
 endif
 
-clean:
+clean: ## Remove build/ and tests/tmp
 	rm -rf $(BUILD_DIR) tests/tmp
 
 EXAMPLES := $(wildcard examples/*.sps)
@@ -304,7 +322,7 @@ EXAMPLES := $(wildcard examples/*.sps)
 #
 # Each examples/NN-name.sps pairs with examples/expected/NN.out. Keeps going
 # after a failure so one stale example cannot hide the others.
-examples: build
+examples: build ## Run every examples/*.sps and diff against examples/expected/
 	@mkdir -p tests/tmp; \
 	fail=0; \
 	for e in $(EXAMPLES); do \
