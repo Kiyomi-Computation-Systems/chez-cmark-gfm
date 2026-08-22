@@ -19,7 +19,7 @@
 ;; (cmark gfm private conditions) is pure -- it imports only (rnrs) and reaches
 ;; no shared object -- so its predicates are safe to import directly.
 (import (rnrs)
-        (only (chezscheme) printf getenv eval environment)
+        (only (chezscheme) printf eval environment)
         (cmark gfm private conditions))
 
 (guard (e ((cmark-shim-unavailable? e)
@@ -32,12 +32,27 @@
           ((cmark-version-incompatible? e)
            (printf "chez-cmark-gfm: found cmark-gfm ~x, outside the supported range\n"
                    (cmark-version-incompatible-runtime e))
+           (exit 1))
+          (else
+           ;; Catch-all: e.g. an unreadable candidate directory, where
+           ;; file-directory? is true for a chmod 000 directory and
+           ;; directory-list then raises unwrapped. Without this clause the
+           ;; guard re-raises and the raw Chez condition dump is exactly
+           ;; what this program exists to prevent.
+           (printf "chez-cmark-gfm: unexpected error while locating libcmark-gfm\n")
+           (printf "  install it with:  apt install cmark-gfm   (Debian/Ubuntu)\n")
+           (printf "                    brew install cmark-gfm  (macOS)\n")
+           (printf "  or name both libraries in CHEZ_CMARK_GFM_LIBS.\n")
+           (printf "  raw condition: ~a\n" e)
            (exit 1)))
-  ;; The override is spliced as a literal rather than quoted: getenv yields a
-  ;; string or #f, both self-evaluating, and `env` carries only the two cmark
-  ;; libraries' exports -- not (rnrs)'s, so `quote` is not bound inside it.
+  ;; Reads resolved-libraries -- the value native.sls's own instantiation
+  ;; already computed and dlopen'd -- rather than calling
+  ;; resolve-cmark-libraries a second time. A second call would repeat the
+  ;; directory scan and, in principle, could derive a different answer than
+  ;; what was actually loaded; reading the binding instead guarantees this
+  ;; printout names the real thing.
   (let* ((env (environment '(cmark gfm) '(cmark gfm private native)))
-         (libs (eval `(resolve-cmark-libraries ,(getenv "CHEZ_CMARK_GFM_LIBS")) env)))
+         (libs (eval 'resolved-libraries env)))
     (printf "cmark-gfm ~a\n" (eval '(cmark-gfm-version) env))
     (printf "  core: ~a\n" (car libs))
     (printf "  ext:  ~a\n" (cdr libs))

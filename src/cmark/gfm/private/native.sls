@@ -13,6 +13,7 @@
   (export ensure-native-loaded!
           version-supported? version-compatible?
           resolve-cmark-libraries cmark-supported-version-range
+          resolved-libraries
           c-string->string
           option-bits
           cmark-opt-default cmark-opt-sourcepos cmark-opt-hardbreaks
@@ -61,6 +62,12 @@
   ;; notice. Three properties keep it unreachable: it has no filesystem entry,
   ;; its name is unversioned, and there is no extensions library beside it.
   ;; Do not "simplify" this into a soname fallback.
+  ;;
+  ;; "Existing" alone is not enough: file-exists? is also true of a
+  ;; directory, and a directory handed to load-shared-object escapes as a
+  ;; raw dlopen error instead of a structured condition. file-regular? is
+  ;; what rules a directory out, so do not simplify this into file-exists?
+  ;; alone.
   (define (regular-file? path)
     (and (file-exists? path) (file-regular? path)))
 

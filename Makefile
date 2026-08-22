@@ -222,7 +222,7 @@ check-pins:
 # tests/test-ast.sps, and tests/test-sxml.sps unable to pass by accident
 # because of native behaviour -- they exercise Scheme values only.
 #
-# Poisoning CHEZ_CMARK_GFM_SHIM with a path that looks absolute but does not
+# Poisoning CHEZ_CMARK_GFM_LIBS with a path that looks absolute but does not
 # exist is a probe: if nothing in the suite's import chain ever reaches
 # (cmark gfm private native), the variable is never even read and the suite
 # passes untouched; if anything does reach it, native.sls's library body
@@ -243,12 +243,12 @@ check-pins:
 check-purity: build deps
 	@fail=0; \
 	for t in tests/test-options.sps tests/test-ast.sps tests/test-sxml.sps tests/test-example-coverage.sps tests/test-manifest-deps.sps; do \
-	  echo "=== check-purity: $$t, CHEZ_CMARK_GFM_SHIM poisoned ==="; \
-	  if CHEZ_CMARK_GFM_SHIM=/nonexistent CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) \
+	  echo "=== check-purity: $$t, CHEZ_CMARK_GFM_LIBS poisoned ==="; \
+	  if CHEZ_CMARK_GFM_LIBS=/nonexistent CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) \
 	      $(CHEZ) --program $$t; then \
 	    echo "purity holds: $$t pulled in no native code"; \
 	  else \
-	    echo "PURITY VIOLATED: $$t failed with CHEZ_CMARK_GFM_SHIM poisoned" >&2; \
+	    echo "PURITY VIOLATED: $$t failed with CHEZ_CMARK_GFM_LIBS poisoned" >&2; \
 	    echo "to a nonexistent path. Its import chain now reaches" >&2; \
 	    echo "(cmark gfm private native), which loads a shared object -- check" >&2; \
 	    echo "what it (or something it imports) just started pulling in." >&2; \
@@ -464,7 +464,7 @@ check-prod: deps
 	env -u CHEZ_CMARK_GFM_SHIM CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) $(CHEZ) --program tests/check-prod.sps
 
 clean:
-	rm -rf $(BUILD_DIR) $(CONFIG_SLS)
+	rm -rf $(BUILD_DIR) $(CONFIG_SLS) tests/tmp
 
 # The fallback config (fallback/) and the generated one (src/) both declare
 # (cmark gfm private config). Nothing else would notice them diverging, and a
