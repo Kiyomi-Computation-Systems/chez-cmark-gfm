@@ -23,6 +23,12 @@
         ;; requesting it here too fails the library body with "multiple
         ;; definitions for file-exists?".
         (only (chezscheme) getenv mkdir)
+        ;; The indentation cap this suite's own serializer applies (see
+        ;; max-indent-floor below) exists in cmark only from 0.29.0.gfm.10
+        ;; onward, so checking it against whatever library is actually loaded
+        ;; needs the same version parsing (cmark gfm private discovery) gives
+        ;; test-discovery.sps -- not a hardcoded assumption either way.
+        (only (cmark gfm private discovery) parse-version-string encode-version)
         (cmark-testing))
 
 (define runner (test-runner-simple))
@@ -140,10 +146,19 @@
                     (xml-escape (markdown-node-property n 'title)) "\""))
     (else "")))
 
-;; Two spaces per level, capped at MAX_INDENT = 40 (src/xml.c:14, :28-32).
-;; Dropping the cap makes every document nested deeper than 20 levels diverge.
+;; Two spaces per level, capped at MAX_INDENT = 40 (src/xml.c:14, :28-32) --
+;; but only on 0.29.0.gfm.10 and later. Upstream commit f7e31f8 added the cap
+;; ("for (i = 0; i < state->indent && i < MAX_INDENT; i++)"); every version
+;; before it indents without bound. Dropping the cap on a runtime that has it
+;; makes every document nested deeper than 20 levels diverge -- and applying
+;; it on a runtime that lacks it diverges the same way in reverse, which is
+;; why this asks the loaded library rather than assuming either branch.
+(define max-indent-floor (encode-version 0 29 0 10))
+(define (cmark-caps-indent?)
+  (>= (parse-version-string (cmark-gfm-version)) max-indent-floor))
+
 (define (emit-indent port depth)
-  (let ((n (min (* 2 depth) 40)))
+  (let ((n (if (cmark-caps-indent?) (min (* 2 depth) 40) (* 2 depth))))
     (let loop ((i 0))
       (unless (= i n) (put-char port #\space) (loop (+ i 1))))))
 
@@ -286,11 +301,13 @@
            "<title>x</title>\n")
 
 ;; --- the indentation cap ------------------------------------------------
-;; MAX_INDENT is 40, so indentation stops growing past 20 levels. A serializer
-;; without the cap agrees on every fixture above and diverges only here.
+;; MAX_INDENT is 40 on 0.29.0.gfm.10 and later, so indentation stops growing
+;; past 20 levels there; earlier runtimes have no such cap (see
+;; cmark-caps-indent? above). A serializer that gets this boundary wrong
+;; agrees on every fixture above and diverges only here.
 (define (nested-quotes n) (string-append (make-string n #\>) " deep\n"))
 
-(test-equal "in-process XML agrees at 25 levels of nesting, past MAX_INDENT"
+(test-equal "in-process XML agrees at 25 levels of nesting, past MAX_INDENT on gfm.10+"
   'agree (or (divergence (nested-quotes 25) no-positions) 'agree))
 (test-equal "in-process XML agrees at 25 levels with positions"
   'agree (or (divergence (nested-quotes 25) positions) 'agree))
@@ -394,7 +411,7 @@
            with-exts+pos)
 (check-cli "a task list, checked and unchecked" "- [x] a\n- [ ] b\n" with-exts+pos)
 (check-cli "a multi-line inline code span" "`a\nb` end\n" with-exts+pos)
-(check-cli "25 levels of nesting, past MAX_INDENT"
+(check-cli "25 levels of nesting, past MAX_INDENT on gfm.10+"
            (nested-quotes 25) with-exts+pos)
 (check-cli "the XML escaper's four characters"
            "a & b < c > d \" e ' f / g\n" with-exts+pos)

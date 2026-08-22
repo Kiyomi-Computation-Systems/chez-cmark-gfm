@@ -534,6 +534,34 @@ jobs:
         run: |
           set -eu
           akku install
+          # akku install itself succeeded above -- it fetched all four
+          # dependencies, installed them and this project, and wrote both
+          # .akku/list and .akku/bin/activate. What akku GENERATES, though,
+          # reads four variables with no default: $R6RS_PATH and $R7RS_PATH
+          # near the top (its first line is `AKKU_CHEZ_PATH="$R6RS_PATH"`),
+          # then $LD_LIBRARY_PATH and $DYLD_LIBRARY_PATH further down, for
+          # .akku/ffi. That is fine under akku's own assumption that an
+          # unset variable expands to empty, but fatal under this step's
+          # `set -eu` the moment any one of the four is actually unset --
+          # confirmed against the real akku 1.1.0 release tarball in a real
+          # ubuntu:24.04 container: guarding only the first two still dies
+          # one line later, at "LD_LIBRARY_PATH: unbound variable". This is
+          # akku's quirk, not a bug in anything installed above, so all four
+          # are accommodated here rather than by dropping set -u for the
+          # whole step, which would just as easily hide a real
+          # unbound-variable mistake in the exit-criterion command below.
+          : "${R6RS_PATH:=}"
+          : "${R7RS_PATH:=}"
+          : "${LD_LIBRARY_PATH:=}"
+          : "${DYLD_LIBRARY_PATH:=}"
+          export R6RS_PATH R7RS_PATH LD_LIBRARY_PATH DYLD_LIBRARY_PATH
           . .akku/bin/activate
-          echo '(import (cmark gfm)) (display (markdown->html "# ok\n" (default-cmark-options)))' > /tmp/t.sps
+          # (rnrs) is imported for display alone: chezscheme --program holds
+          # a top-level program to strict R6RS import discipline, and
+          # (cmark gfm) does not re-export display. Also confirmed against
+          # the real ubuntu:24.04 container: without it, this line fails
+          # with "unbound identifier display", independently of the set -u
+          # accommodation above -- the two are separate latent bugs in this
+          # step that both had to clear before the exit criterion could run.
+          echo '(import (rnrs) (cmark gfm)) (display (markdown->html "# ok\n" (default-cmark-options)))' > /tmp/t.sps
           chezscheme --program /tmp/t.sps | grep -q '<h1>ok</h1>'
