@@ -1154,6 +1154,25 @@ The Documentation table:
 | [[file:.plans/][Design specs & ADRs]]     | Why it is built this way, with the evidence                         |
 ```
 
+- [ ] **Step 1b: Rename the CI steps and comments that still say "README"**
+
+Task 3 repointed these greps at `docs/installing.md` but left their
+human-facing names, which now misdirect: when the step goes red, GitHub
+shows a name telling the maintainer to edit a file the check no longer
+reads. In `.github/workflows/ci.yml`:
+
+| Line | Now | Change to |
+|---|---|---|
+| 82 | `# The README matrix decays silently the moment a runner image bumps` | `# The docs/installing.md matrix decays silently the moment a runner image bumps` |
+| 86 | `- name: Check the README matrix names the Chez this job ran` | `- name: Check the docs/installing.md matrix names the Chez this job ran` |
+| 225 | same as 86 | same |
+| 342-343 | `only what the README\n# README tells a reader to run.` | one sentence naming `docs/installing.md`, with no dangling article |
+| 347 | `the only thing installed that the README does not list` | `... that docs/installing.md does not list` |
+
+Also fix `packaging/debian-prereqs.txt`: line 2 says `README.org points at
+this file`, and line 26 refers to `the RHEL/Alpine README remedy`. Both
+now live in `docs/installing.md`.
+
 - [ ] **Step 2: Verify the length and every link**
 
 Run:
@@ -1535,14 +1554,21 @@ Expected: each exits 0; `ALL SUITES PASSED`, `ALL EXAMPLES PASSED`.
 Run:
 
 ```bash
-grep -rn 'README\.org' .github/workflows/ci.yml tests/ Makefile || \
+grep -rn 'README' .github/ tests/ Makefile packaging/ src/ docs/ || \
   echo "no stale references"
 ```
 
-Expected: either `no stale references`, or only hits that legitimately
-concern the README as a file (not as the home of moved content). Inspect
-each hit; a reference to a section that no longer exists there is a
-defect.
+Greps `README`, **not** `README\.org`, and covers `packaging/` and `src/`.
+Both widenings are load-bearing: `ci.yml`'s step names say "the README
+matrix" without the extension, and `packaging/debian-prereqs.txt` says
+"README.org points at this file". A sweep anchored on `README\.org` over
+only `ci.yml tests/ Makefile` returns clean while both survive — the sweep
+would be a check that cannot fail, which is the exact trap this plan exists
+to avoid (AGENTS.md).
+
+Expected: every remaining hit legitimately concerns the README as a file,
+not as the home of content that moved. Inspect each; a reference to a
+section README.org no longer contains is a defect.
 
 - [ ] **Step 3: Confirm docs/ holds only user-facing documentation**
 
