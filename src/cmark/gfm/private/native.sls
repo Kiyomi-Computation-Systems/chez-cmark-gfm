@@ -12,7 +12,7 @@
 (library (cmark gfm private native)
   (export ensure-native-loaded!
           version-supported? version-compatible?
-          resolve-shim-path load-shim
+          resolve-cmark-libraries cmark-supported-version-range
           c-string->string
           option-bits
           cmark-opt-default cmark-opt-sourcepos cmark-opt-hardbreaks
@@ -42,71 +42,71 @@
   (import (rnrs)
           (only (chezscheme)
                 load-shared-object foreign-procedure foreign-ref foreign-sizeof
-                file-regular? make-mutex with-mutex getenv)
-          (cmark gfm private config)
+                file-regular? file-directory? directory-list
+                make-mutex with-mutex getenv)
+          (cmark gfm private discovery)
           (cmark gfm private conditions))
 
-  ;; --- shim resolution --------------------------------------------------
-  ;; The override exists because config-in-the-environment is 12-factor. It
-  ;; is validated, never searched: an absolute path to an existing regular
-  ;; file, or nothing at all. There is no fallback search and the working
-  ;; directory is never consulted (design spec 6.2). "Existing" alone is
-  ;; not enough: file-exists? is also true of a directory, which would
-  ;; otherwise reach load-shared-object directly and escape as a raw
-  ;; dlopen error instead of a structured condition -- and the same is
-  ;; true of the default, generated path if the built shim is corrupt.
-  ;;
-  ;; Both steps below (path validation, and wrapping the load itself) are
-  ;; ordinary, exported procedures rather than bare expressions, so they
-  ;; can be unit-tested directly with synthetic paths from a single
-  ;; process. The shim itself still loads exactly once per process either
-  ;; way; see tests/test-shim-loading.sps for why the actual default-path
-  ;; / override wiring below still needs a subprocess on top of that.
+  ;; --- library resolution ------------------------------------------------
+  ;; Fixes cmark's major/minor at 0.29 and leaves the patch and gfm-patch
+  ;; numbers free. A runtime library outside this range raises
+  ;; &cmark-version-incompatible before any parse happens.
+  (define cmark-supported-version-range '(#x001d0000 . #x001dffff))
+
+  ;; ABSOLUTE PATHS ONLY, NEVER LEAFNAMES. `(load-shared-object
+  ;; "libcmark-gfm.dylib")` resolves to macOS's own copy in the dyld shared
+  ;; cache at /usr/lib/libcmark-gfm.dylib -- a different build, with no headers
+  ;; shipped anywhere, that Apple may change on any OS update, and which
+  ;; currently reports the same version as the pinned one so nothing would
+  ;; notice. Three properties keep it unreachable: it has no filesystem entry,
+  ;; its name is unversioned, and there is no extensions library beside it.
+  ;; Do not "simplify" this into a soname fallback.
   (define (regular-file? path)
     (and (file-exists? path) (file-regular? path)))
 
-  (define (resolve-shim-path default-path override)
-    (cond
-      ;; The fallback config's sentinel: shim-path is #f because no build has
-      ;; run, so there is no path to report. Guarded on (not override) so an
-      ;; explicit CHEZ_CMARK_GFM_SHIM still wins in an unbuilt tree.
-      ((and (not override) (not (string? default-path)))
-       (raise (make-cmark-shim-unavailable #f 'not-built)))
-      ((not override)
-       (if (regular-file? default-path)
-           default-path
-           (raise (make-cmark-shim-unavailable default-path 'missing))))
-      ((and (> (string-length override) 0)
-            (char=? (string-ref override 0) #\/)
-            (regular-file? override))
-       override)
-      (else (raise (make-cmark-shim-unavailable override 'invalid-override)))))
+  (define (resolve-cmark-libraries override)
+    (if override
+        (let-values (((status payload) (parse-library-override override regular-file?)))
+          (if (eq? status 'ok)
+              payload
+              (raise (make-cmark-shim-unavailable override 'invalid-override))))
+        (let* ((platform (current-platform))
+               (candidates (default-candidate-directories
+                             platform (current-machine) directory-names directory?)))
+          (let-values (((status payload)
+                        (select-cmark-libraries directory-names directory?
+                                                candidates
+                                                cmark-supported-version-range
+                                                platform)))
+            (cond
+              ((eq? status 'found) payload)
+              ((eq? status 'out-of-range)
+               (raise (make-cmark-version-incompatible
+                       cmark-supported-version-range payload)))
+              (else
+               (raise (make-cmark-shim-unavailable #f 'not-found))))))))
 
-  (define (load-shim path)
+  ;; directory-list yields names; some Chez versions yield (name . type) pairs.
+  (define (directory-names dir)
+    (map (lambda (entry) (if (pair? entry) (car entry) entry))
+         (directory-list dir)))
+
+  (define (directory? path) (file-directory? path))
+
+  (define (load-library path)
     (guard (e (#t (raise (make-cmark-shim-unavailable path 'load-failed))))
       (load-shared-object path)))
 
-  (define shim-file
-    (resolve-shim-path shim-path (getenv "CHEZ_CMARK_GFM_SHIM")))
+  (define resolved-libraries
+    (resolve-cmark-libraries (getenv "CHEZ_CMARK_GFM_LIBS")))
 
-  ;; cmark's own shared objects are loaded EXPLICITLY, and before the shim.
-  ;; On Linux the symbols of a dlopen'd library's dependencies are not placed
-  ;; in the global namespace, so resolving cmark_* entry points through the
-  ;; shim alone fails there -- `no entry for
-  ;; "cmark_gfm_core_extensions_ensure_registered"` -- while succeeding on
-  ;; macOS, whose loader searches dependencies. CI caught exactly this: green
-  ;; on macOS, red on Linux. The Stage 0 spikes loaded both libraries
-  ;; explicitly and were right to; this restores that.
-  (define cmark-loaded
-    (for-each (lambda (path)
-                (unless (regular-file? path)
-                  (raise (make-cmark-shim-unavailable path 'missing)))
-                (load-shim path))
-              cmark-library-paths))
-
-  ;; A definition, not a bare expression, so it is legal at this position in
-  ;; an R6RS library body while still running before every binding below.
-  (define shim-loaded (load-shim shim-file))
+  ;; These two are DEFINITIONS, not expressions, so they run before every
+  ;; foreign-procedure definition below -- see the ORDERING NOTE at the top of
+  ;; this file. Core before extensions: on Linux the symbols of a dlopen'd
+  ;; library's dependencies are not placed in the global namespace, so the
+  ;; extensions library must find an already-loaded core.
+  (define core-loaded (load-library (car resolved-libraries)))
+  (define extensions-loaded (load-library (cdr resolved-libraries)))
 
   ;; --- version, straight from the library ------------------------------
   (define cmark-runtime-version (foreign-procedure "cmark_version" () int))
@@ -236,8 +236,8 @@
 
   ;; --- extension accessors ----------------------------------------------
   ;; These live in libcmark-gfm-extensions. They resolve only because
-  ;; cmark-loaded above loads both cmark shared objects explicitly, before the
-  ;; shim: on Linux a dlopened library's dependencies are not placed in the
+  ;; extensions-loaded above loads that shared object explicitly, after the
+  ;; core: on Linux a dlopened library's dependencies are not placed in the
   ;; global symbol namespace, so a missing explicit load fails HERE, at import
   ;; time, and only on Linux.
   ;;

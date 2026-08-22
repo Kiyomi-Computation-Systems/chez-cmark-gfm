@@ -84,17 +84,7 @@ SRFI_SRC     := vendor/chez-srfi
 SXMLT_SRC    := vendor/wak-sxml-tools
 COMMON_SRC   := vendor/wak-common
 SRFI_LIBS    := $(BUILD_DIR)/scheme-libs
-# src FIRST, fallback SECOND, and the order is the mechanism: Chez resolves a
-# library from the first entry that has it, so the generated
-# src/cmark/gfm/private/config.sls shadows fallback/'s checked-in sentinel
-# whenever a build has happened. Reversing these two makes every native suite
-# fail with reason 'not-built against a perfectly good build.
-# tests/test-fallback-config.sps covers the documented order only -- that the
-# fallback engages when nothing ahead of it has a config, and that a built
-# src/ shadows it. It does not itself exercise the reversed order breaking;
-# that rests on the other native suites failing collaterally instead. See
-# ADR-0014.
-CHEZ_LIBDIRS := src:fallback:tests:$(SRFI_LIBS)
+CHEZ_LIBDIRS := src:tests:$(SRFI_LIBS)
 TESTS        := $(wildcard tests/test-*.sps)
 
 # The differential suite spawns ~400 cmark-gfm subprocesses. Those are separate
@@ -141,7 +131,8 @@ deps-info:
 	@echo "shim             : $(SHIM)"
 	@echo "cmark-gfm CLI    : $(CMARK_CLI)"
 
-build: $(SHIM) $(CONFIG_SLS)
+build:
+	@CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) $(CHEZ) --program tests/preflight.sps
 
 # Scheme dependencies. chez-srfi, wak-sxml-tools, and wak-common are each
 # vendored as a submodule pinned to the SAME commit Akku.lock names. Keep them

@@ -5,14 +5,11 @@
         (cmark gfm private conditions)
         (cmark gfm private scope)
         ;; foreign-alloc / foreign-set! / foreign-free build and mutate
-        ;; real C buffers for the c-string->string tests below. current-
-        ;; directory anchors the synthetic absolute paths used by the
-        ;; shim-path-validation tests below. None of these names collide
-        ;; with an (rnrs) export, so unlike file-exists? and exit above,
-        ;; this import needs no `only` justification beyond keeping the
-        ;; list minimal.
-        (only (chezscheme) foreign-alloc foreign-set! foreign-free
-              current-directory))
+        ;; real C buffers for the c-string->string tests below. None of
+        ;; these names collide with an (rnrs) export, so unlike
+        ;; file-exists? and exit above, this import needs no `only`
+        ;; justification beyond keeping the list minimal.
+        (only (chezscheme) foreign-alloc foreign-set! foreign-free))
 
 ;; SRFI-64's default runner does not set a process exit code, so a failing
 ;; suite would still exit 0 and `make test` would report success. Hold the
@@ -168,86 +165,6 @@
 
 (test-assert "version-compatible? rejects a version outside the range"
   (not (version-compatible? #x001c0000)))
-
-;; --- I2: shim-path validation and load wrapping -------------------------
-;; native.sls's own shim-file/shim-loaded top-level bindings run once per
-;; process (see tests/test-shim-loading.sps for subprocess coverage of
-;; that actual default-path/override wiring). resolve-shim-path and
-;; load-shim are the reusable procedures behind them, and are callable
-;; directly here, any number of times, with synthetic paths -- including
-;; a real dlopen call in the load-shim case, which is safe to repeat
-;; against a bogus path even after the real shim has already loaded.
-(define a-real-directory (current-directory))
-(define a-real-non-library-file
-  (string-append (current-directory) "/Makefile"))
-
-;; --- reason discriminates the four resolution failures -------------------
-;; Asserting (list path reason) rather than the path alone is deliberate, and
-;; is a fix, not a flourish. resolve-shim-path RETURNS the path it accepts, so
-;; an assertion expecting just the path is satisfied by the success path:
-;; verified by deleting every rejection from resolve-shim-path, after which
-;; this suite still reported 54 expected passes and exit 0. A two-element list
-;; is a value no success path here produces, and the trailing 'no-condition
-;; closes the other half -- a guard returns its body's value when nothing
-;; raises.
-(define (shim-failure thunk)
-  (guard (e ((cmark-shim-unavailable? e)
-             (list (cmark-shim-unavailable-path e)
-                   (cmark-shim-unavailable-reason e))))
-    (thunk)
-    'no-condition))
-
-(test-equal "a directory override is rejected as invalid-override"
-  (list a-real-directory 'invalid-override)
-  (shim-failure (lambda () (resolve-shim-path "/irrelevant/default" a-real-directory))))
-
-(test-equal "a directory as the default path, with no override, is missing"
-  (list a-real-directory 'missing)
-  (shim-failure (lambda () (resolve-shim-path a-real-directory #f))))
-
-(test-equal "a non-absolute override is rejected as invalid-override"
-  (list "relative/path.dylib" 'invalid-override)
-  (shim-failure (lambda () (resolve-shim-path a-real-non-library-file "relative/path.dylib"))))
-
-(test-equal "a nonexistent override is rejected as invalid-override"
-  (list "/no/such/path.dylib" 'invalid-override)
-  (shim-failure (lambda () (resolve-shim-path a-real-non-library-file "/no/such/path.dylib"))))
-
-;; --- the fifth branch: 'not-built ----------------------------------------
-;; resolve-shim-path's first cond clause fires when there is no override AND
-;; the default path is not a string -- exactly what the checked-in fallback
-;; config (fallback/cmark/gfm/private/config.sls) supplies for shim-path
-;; before any `make build` has run. #f is used here as the default path
-;; because that is literally what the fallback supplies, not a stand-in: the
-;; clause itself raises with a hardcoded #f, and conditions.sls:86 documents
-;; #f as "no path was ever configured". The only prior coverage of this
-;; branch was tests/test-fallback-config.sps, a subprocess suite that greps
-;; a child's stderr for the substring "not-built" -- it cannot see the
-;; condition's path field at all, so a regression that raised 'not-built
-;; with the wrong path would pass there unnoticed.
-(test-equal "a non-string default path with no override is not-built"
-  (list #f 'not-built)
-  (shim-failure (lambda () (resolve-shim-path #f #f))))
-
-(test-assert "a valid absolute, existing, regular-file override is accepted"
-  (string=? a-real-non-library-file
-            (resolve-shim-path "/irrelevant/default" a-real-non-library-file)))
-
-;; An explicit override still wins even when the default path is not built
-;; (not a string): someone holding a prebuilt shim can point
-;; CHEZ_CMARK_GFM_SHIM at it from an otherwise-unbuilt tree. Turns on the
-;; RETURNED PATH matching the override exactly, via string=?, not on bare
-;; truthiness and not on #f -- if the not-built clause above wrongly fired
-;; here too, resolve-shim-path would raise instead of returning, SRFI-64
-;; would turn that raise into #f for this test's actual expression, and
-;; test-assert would correctly fail on that #f rather than accepting it.
-(test-assert "an explicit override wins over a not-built default path"
-  (string=? a-real-non-library-file
-            (resolve-shim-path #f a-real-non-library-file)))
-
-(test-equal "load-shim wraps a real dlopen failure as load-failed"
-  (list a-real-non-library-file 'load-failed)
-  (shim-failure (lambda () (load-shim a-real-non-library-file))))
 
 ;; --- Stage 2: version string ------------------------------------------
 ;; Not asserted against a hardcoded "0.29.0.gfm.13", which would only pin the
