@@ -309,6 +309,37 @@ No new FFI surface: `convert-children` already threads a 0-based sibling index f
 `table_cell` alignment, and the parent node it walks *is* the list, so `node-list-start`
 and `node-list-type` supply the rest.
 
+### 3.9 Two behaviour boundaries at gfm.10, and why the range still starts at gfm.0
+
+CI's first real run against Ubuntu 24.04 (cmark-gfm **0.29.0.gfm.6**) found two places
+where cmark's *rendering* changes inside the declared range. Both landed in **0.29.0.gfm.10**:
+
+| | gfm.0 – gfm.9 | gfm.10 – gfm.13 |
+|---|---|---|
+| nested `strong` (`5c75d23`) | emits nested `<strong>` tags | splices the inner one away |
+| XML indent (`f7e31f8`) | indents without bound | caps at `MAX_INDENT` = 40 |
+
+The indent one is confined to a test oracle: `markdown->xml` calls cmark and is correct on
+every version, so only the suite's own serializer had to learn the boundary.
+
+**The nested-`strong` one is not.** `markdown-ast->sxml` is pure Scheme implementing a
+*fixed* mapping written against gfm.13's `html.c`, so it always splices, while
+`markdown->html` calls cmark and does not on gfm.0–9. On those libraries **the two public
+entry points disagree with each other**, and §8's mapping table cites `html.c:366` as
+though the rule were universal.
+
+**Decision: keep the range at gfm.0 and document the divergence** rather than raise the
+floor to gfm.10. Raising it would drop Debian 11/12 and Ubuntu 22.04/24.04 LTS — the same
+four platforms §3.8 declined to drop — and the alternative of making the adapter
+version-aware would destroy its determinism and contradict `make check-purity`, which runs
+it with no library loaded at all.
+
+The accepted cost, stated rather than buried: on cmark-gfm older than 0.29.0.gfm.10,
+`markdown->sxml` splices a `strong` directly inside a `strong` while that library's own
+`markdown->html` does not. Both are self-consistent; they are not consistent with each
+other. The affected differential assertions ask the loaded library which behaviour to
+expect, and must keep discriminating on both sides of the boundary rather than skipping.
+
 ## 4. Version checking
 
 Two checks, at different times, for different reasons.
