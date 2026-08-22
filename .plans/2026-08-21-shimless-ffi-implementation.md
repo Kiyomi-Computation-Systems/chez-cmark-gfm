@@ -960,16 +960,40 @@ Two related points, both deliberate:
   composition test above it only exercises two flag positions, so a table that aliased
   two flags or wired one to nothing would still pass everything above this assertion.
 
-In `tests/test-lifecycle.sps:55-59`, the check discriminated dev from prod builds.
-Counters are always on now, so replace it with the unconditional form:
+In `tests/test-lifecycle.sps`, **keep the existing movement assertion**. An earlier
+revision of this plan said it "discriminated dev from prod builds" and replaced it with a
+balance check; that was wrong. It never discriminated build flavors — that was
+`tests/check-prod.sps`'s job — it demanded the counters actually MOVE while a document is
+live, which is the property every other assertion in this file depends on. Its own comment
+says so: a suite of pure balance checks passes against counters that never count, because
+`(0 0 0)` equals `(0 0 0)`.
+
+It works unchanged with Scheme-side counters. Only its comment needs editing, to drop the
+references to a "counters-free shim" that no longer exists:
 
 ```scheme
-(test-assert "live-counts moves during a scope"
+(test-assert "live-counts moves during a scope: at least one live parser and root while the body runs"
+  (let ((before (live-counts)))
+    (call-with-native-document "# hello\n" opts gfm-extensions
+      (lambda (h)
+        (let ((during (live-counts)))
+          (and (> (car during) (car before))      ; live-parsers
+               (> (cadr during) (cadr before)))))))) ; live-roots
+```
+
+Additionally **add** a balance check through `markdown->html`, which no other assertion in
+this file exercises and which is the only one here that moves the buffer counter. Name it
+for what it checks — not "moves", which is the assertion above:
+
+```scheme
+(test-assert "counters balance across markdown->html"
   (let ((before (live-counts)))
     (markdown->html "# x\n" (default-cmark-options))
-    ;; back to where it started: every acquire was paired
     (equal? before (live-counts))))
 ```
+
+This file needs `(cmark gfm)` on its import list for `markdown->html` and
+`default-cmark-options`.
 
 - [ ] **Step 7: Run the tests**
 
