@@ -490,7 +490,7 @@ cmark output. ~^~ below is the attribute marker under the default
 | ~paragraph~                    | ~(p …)~, or spliced away inside a tight list                                 | ~html.c:287~                      |
 | ~text~                         | a string, verbatim                                                          | ~html.c:311~                      |
 | ~emph~                         | ~(em …)~                                                                    | ~html.c:376~                      |
-| ~strong~                       | ~(strong …)~; directly inside a ~strong~, spliced away                       | ~html.c:366~                      |
+| ~strong~                       | ~(strong …)~; directly inside a ~strong~, spliced away                       | ~html.c:366~ (gfm.10+)            |
 | ~strikethrough~                | ~(del …)~                                                                   | ~extensions/strikethrough.c:132~  |
 | ~blockquote~                   | ~(blockquote …)~                                                            | ~html.c:151~                      |
 | ~list~, bullet                 | ~(ul …)~                                                                    | ~html.c:170~                      |
@@ -530,6 +530,14 @@ Four details the table compresses:
   mode* (~html.c:118-139~), not by the serializer: ~text~, ~code~, and
   ~html-inline~ contribute their literals, ~linebreak~ and ~softbreak~ a
   single space, every other node nothing while still being descended into.
+
+*The ~strong~ splice is the one row with a version qualifier.* cmark gained
+that rule in ~0.29.0.gfm.10~ (upstream ~5c75d23~); ~gfm.0~ through ~gfm.9~
+emit both tags. The mapping above is fixed and deliberately not
+version-aware, so on a cmark-gfm older than ~0.29.0.gfm.10~ ~markdown->sxml~
+splices a ~strong~ directly inside a ~strong~ while that same library's
+~markdown->html~ does not. Both are self-consistent; they are not consistent
+with each other. See design spec §3.9.
 
 ~markdown-ast->sxml~ is public and takes an arbitrary tree, so it also
 raises ~&cmark-malformed-tree~ (reason ~header-row-not-first~) for a table
