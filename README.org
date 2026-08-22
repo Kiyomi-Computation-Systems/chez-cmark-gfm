@@ -5,10 +5,6 @@ CommonMark GFM for Chez Sceme
 #+begin_quote
 ✨ *AI Disclosure:* LLMs are used extensively the in the planning and development of this project.
 #+end_quote
------
-
-© [[https://kiyomicomputation.systems/][Kiyomi Computation Systems LLC]]. Licensed under BSD 3-Clause — see
-[[file:LICENSE][LICENSE]], and [[file:NOTICE][NOTICE]] for cmark-gfm's own licenses.
 
 * Requirements and Build
 
@@ -640,3 +636,8 @@ caller can catch the whole family or discriminate precisely.
   (markdown->html "# hi\n" (make-cmark-options 'unsaef-html? #t)))
 ;; => (bad-option unsaef-html? unknown-key)
 #+end_src
+
+-----
+
+© [[https://kiyomicomputation.systems/][Kiyomi Computation Systems LLC]]. Licensed under BSD 3-Clause — see
+[[file:LICENSE][LICENSE]], and [[file:NOTICE][NOTICE]] for cmark-gfm's own licenses.

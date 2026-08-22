@@ -116,6 +116,56 @@ None is obvious from reading the code.
   character worth escaping. The assertion had been *named* for the `text` case
   too, so a real regression would have pointed a reader at the wrong function.
   Dump the actual tree before choosing either the mutation site or the name.
+* **Deleting a subsystem disarms the checks built around it, and they stay
+  green.** Release 2.0 removed the C shim and produced seven of these in one
+  branch. `make check-purity` poisoned `CHEZ_CMARK_GFM_SHIM`, which the same
+  release had replaced with `CHEZ_CMARK_GFM_LIBS` — nothing read the poison, so
+  the gate passed unconditionally, including for regressions it existed to
+  catch. A CI step asserted `! -e build/lib`, a path only the deleted shim rules
+  ever created. `deps-info` branched on `$(HAVE_PKG)`; with the variable gone
+  Make expanded it to empty and it reported "vendored" forever — a dangling Make
+  variable is not an error. A CI job named for the vendored build passed while
+  Homebrew's copy silently satisfied discovery first: green for the wrong
+  reason, which is worse than red. And a `no-library` job greped only for remedy
+  text that the preflight's catch-all `else` prints for *any* condition, so it
+  could not identify the failure it claimed to test.
+  None of these fail, so no gate surfaces them. On any deletion, ask of every
+  surviving check "what would make this fail now?" and treat "nothing" as a
+  defect — then prove it by breaking the guarded thing and watching it go red.
+  A passing CI job is evidence a check *ran*, not that it works.
+* **A hand-written oracle that mirrors cmark bakes in one version's behaviour,
+  and the supported range spans several.** `tests/test-ast-differential.sps` and
+  `tests/test-sxml-differential.sps` reimplement cmark's renderers in Scheme to
+  diff against. Three of those reimplementations encoded gfm.13 behaviour as if
+  it were constant across the declared `0.29.0.gfm.x` range: the XML indent cap
+  (`MAX_INDENT`, upstream `f7e31f8`, gfm.10), nested-`strong` splicing
+  (`5c75d23`, gfm.10), and the tasklist `completed` attribute
+  (`extensions/tasklist.c`'s `xml_attr`, gfm.1). Two only surfaced when CI first
+  ran against Ubuntu's gfm.6; the third had never fired anywhere. When an oracle
+  encodes upstream behaviour, check *which versions in the range* have it —
+  `git tag --contains` on the vendored submodule answers this in one command —
+  and ask the loaded library rather than assuming. `cmark-caps-indent?` in
+  `test-ast-differential.sps` is the pattern.
+* **The supported range is a symbol constraint that a version check cannot
+  express.** Distributions patch entry points independently of the version they
+  report: Debian 11's `libcmark-gfm-extensions0.symbols` exports
+  `cmark_gfm_extensions_get_tasklist_item_checked@Base 0.29.0.gfm.0`, while
+  upstream gfm.0 has no such function. So a gfm.0 floor admits a crashing
+  upstream build and a gfm.1 floor rejects a working Debian one — the two are
+  indistinguishable by `cmark_version()`. `native.sls` therefore *probes* that
+  binding inside a `guard` (a failed `foreign-procedure` resolution is
+  catchable) and raises `&cmark-library-unavailable` reason `missing-entry-point`.
+  Before widening the range or adding a binding, check the symbol across every
+  tag in it, not the version.
+* **Chez invokes an imported library's body only when a binding is
+  *referenced*.** A probe that merely imports `(cmark gfm)` never forces
+  `native.sls`'s body to run, so discovery never happens and
+  `CHEZ_CMARK_GFM_LIBS` is never even read. A subprocess test written that way
+  printed "unexpectedly imported" and exited 0 against libraries that cannot
+  possibly load. Any test asserting something about load-time behaviour must
+  *call* into the library — `tests/load-failed-probe.sps` calls
+  `markdown->html` for exactly this reason. The same property is what makes
+  `make check-purity` meaningful and what limits it.
 * **An assertion passes whenever some *other* rule can produce the value it
   expects.** The abstract form of this is already above; here is what it looked
   like four times in one stage, each one green and each one empty. A
