@@ -27,7 +27,15 @@ SRFI_SRC     := vendor/chez-srfi
 SXMLT_SRC    := vendor/wak-sxml-tools
 COMMON_SRC   := vendor/wak-common
 SRFI_LIBS    := $(BUILD_DIR)/scheme-libs
-CHEZ_LIBDIRS := src:tests:$(SRFI_LIBS)
+# "." (repo root), not "site", is what puts (site slug) on the path: Chez
+# resolves a library's FULL name as a path under each libdir -- (cmark gfm)
+# needs libdir "src" because the file is src/cmark/gfm.sls, i.e. the libdir
+# is the PARENT of the first path segment, not that segment itself. So
+# (site slug) at site/slug.sls needs the repo root on CHEZ_LIBDIRS, not
+# "site" (which would only resolve a bare (slug), or (site slug) nested a
+# second time at site/site/slug.sls). Verified empirically: CHEZSCHEMELIBDIRS
+# =site alone cannot find (site slug); =. can.
+CHEZ_LIBDIRS := src:tests:.:$(SRFI_LIBS)
 TESTS        := $(wildcard tests/test-*.sps)
 
 # The differential suite spawns ~400 cmark-gfm subprocesses. Those are separate
