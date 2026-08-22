@@ -126,7 +126,7 @@
 
 ;; --- whitespace ---------------------------------------------------------
 ;; A pretty-printing serializer would corrupt pre content. This asserts the
-;; chosen one does not, which is what lets the README promise it.
+;; chosen one does not, which is what lets docs/sxml.md promise it.
 ;;
 ;; Asserted on the WHOLE rendering, not on a `contains?` probe for
 ;; "  indented\n". That earlier form was vacuous, found by mutation in Task

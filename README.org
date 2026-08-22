@@ -1,643 +1,139 @@
 * chez-cmark-gfm
 
-CommonMark GFM for Chez Sceme
+[[https://github.com/Kiyomi-Computation-Systems/chez-cmark-gfm/actions/workflows/ci.yml][https://github.com/Kiyomi-Computation-Systems/chez-cmark-gfm/actions/workflows/ci.yml/badge.svg]]
+
+CommonMark and GitHub Flavored Markdown for Chez Scheme.
 
 #+begin_quote
-✨ *AI Disclosure:* LLMs are used extensively the in the planning and development of this project.
+✨ *AI Disclosure:* LLMs are used extensively in the planning and development of this project.
 #+end_quote
 
-* Requirements and Build
+* What it is
+
+A binding to the system ~libcmark-gfm~. It renders Markdown to HTML, XML,
+CommonMark, and plain text; parses it to an immutable Scheme AST; and converts
+that AST to SXML in HTML vocabulary, for the serializer of your choosing.
+
+It is safe by default: raw HTML and unsafe link schemes are suppressed unless
+you ask for them by name.
+
+It *compiles nothing*. There is no C shim and no generated configuration —
+importing ~(cmark gfm)~ locates a libcmark-gfm on this machine and loads it —
+so installing needs no compiler, no CMake, and no submodule checkout.
+
+* Status
+
+- Version *2.0*.
+- Needs a cmark-gfm in ~0.29.0.gfm.x~; one outside that range is refused
+  rather than used.
+- Needs Chez Scheme *9.5.8* or later.
+- Runs on *macOS* and *Linux*. *Windows is not supported* (ADR-0004).
+
+* Install
 
 ** Prerequisites
 
-- *Chez Scheme* 9.5.8 or later. The binary is ~chez~ on macOS and
-  ~chezscheme~ on Debian/Ubuntu.
-- *cmark-gfm*, from your system's package manager. One command, no compiler:
+Chez Scheme, and cmark-gfm from your system's package manager:
 
-  #+begin_src sh
-  apt install cmark-gfm     # Debian/Ubuntu
-  brew install cmark-gfm    # macOS
-  #+end_src
+#+begin_src sh
+apt install chezscheme cmark-gfm     # Debian/Ubuntu
+brew install chezscheme cmark-gfm    # macOS
+#+end_src
 
-  Each pulls the core and extensions shared libraries at matching versions,
-  and each also installs the ~cmark-gfm~ CLI the differential suites use as
-  their oracle. [[file:packaging/debian-prereqs.txt][packaging/debian-prereqs.txt]] carries the Debian names in
-  two labelled sections — using the library needs the first one only; the
-  second is for building the vendored test oracle. One copy, which CI
-  installs from and this section points at rather than restating.
-  RHEL, Fedora, and Alpine package no GFM library; see the *RHEL, Fedora,
-  and Alpine* section under Installing.
+RHEL, Fedora, and Alpine package no GFM library and need a one-time source
+build. That recipe, the Debian package list, the version rules, and the order
+the library is looked for in are all in [[file:docs/installing.md][docs/installing.md]].
 
-Supported versions are ~0.29.0.gfm.x~ — the constant
-~cmark-supported-version-range~ in ~src/cmark/gfm/private/native.sls~,
-~(#x001d0000 . #x001dffff)~, fixing cmark's major and minor at 0.29 and
-leaving the patch and gfm-patch numbers free. Nothing is generated and
-nothing is compiled: importing ~(cmark gfm)~ locates a library on this
-machine and loads it, and one outside that range is refused with
-~&cmark-version-incompatible~ rather than used.
-
-The range is not the whole contract, because one entry point this binding
-needs — ~cmark_gfm_extensions_get_tasklist_item_checked~ — arrived in
-~0.29.0.gfm.1~, and a version check cannot stand in for it: Debian 11
-backports the symbol into its ~gfm.0~ and still reports ~gfm.0~, so a floor
-that rejected upstream ~gfm.0~ would reject Debian's working one too. The
-symbol is probed instead. A library that satisfies the range but lacks it
-raises ~&cmark-library-unavailable~ with reason ~missing-entry-point~,
-naming the extensions library, rather than dying with a raw foreign-procedure
-error.
-
-*** Supported matrix
-
-Two rows, because two rows are what CI proves. 2.0 has *one* acquisition
-path — the system package — so the rows differ in where cmark-gfm came
-from, not in how it was built; ADR-0015 amends ADR-0001's two paths away.
-*Windows is not supported* (ADR-0004); the position is stated here rather
-than left implied.
-
-| Platform              | Chez   | cmark-gfm from | Memory evidence                                  |
-|-----------------------+--------+----------------+--------------------------------------------------|
-| macOS/ARM64 (Homebrew)| 10.4.1 | ~brew~         | ASan only — *no leak claim*                      |
-| Linux/x86-64 (apt)    | 9.5.8  | ~apt~          | Valgrind clean, historically — *unverified here* |
-
-Two further CI jobs cover what neither row does: ~no-library~ installs Chez
-and deliberately no cmark-gfm, asserting ~make build~ fails, reports reason
-~not-found~, and names the remedy — the reason symbol is what tells that
-failure apart from any other, since the diagnostic's catch-all clause prints
-the same remedy for every condition; ~akku-install~ installs from
-~Akku.manifest~ and calls into ~(cmark gfm)~ with nothing set in the
-environment.
-
-The floor is *9.5.8*, established by test rather than assumption: earlier
-revisions of this file said "10.4.1 or later", which recorded one
-developer's machine and was never verified. LeakSanitizer does not exist on
-macOS/ARM64, so only the Linux row can support a leak claim (ADR-0003).
-
-A CI step asserts this table against the versions each job actually ran, so
-a runner-image bump fails the build until the table is updated rather than
-letting the claim go stale.
-
-** Installing
-
-|                | 1.0                                         | 2.0                       |
-|----------------+---------------------------------------------+---------------------------|
-| Linux          | clone, submodule init, CMake build (2 min)  | ~apt install cmark-gfm~   |
-| macOS          | clone + ~make build~, Xcode CLT             | ~brew install cmark-gfm~  |
-| Library path   | ~CHEZSCHEMELIBDIRS=src:fallback~            | ~CHEZSCHEMELIBDIRS=src~   |
-| Akku           | not supported                               | supported                 |
-| RHEL / Alpine  | worked (vendored build)                     | source build, below       |
-
-*With Akku.* ~Akku.manifest~ declares the package's name, version, license,
-homepage, and its development-only dependencies; ~Akku.lock~ is committed.
-It names no libraries — Akku infers those from the file tree — and carries
-no ~scripts~ clause, because there is nothing to build (ADR-0017).
+** With Akku
 
 #+begin_src sh
 akku install
 . .akku/bin/activate
 #+end_src
 
-puts ~src/cmark/**.sls~ under ~.akku/lib/~ and sets ~CHEZSCHEMELIBDIRS~;
-~(cmark gfm)~ then finds the system libcmark-gfm on its own, with nothing
-else set and no compiler involved. That is the release's exit criterion,
-and CI's ~akku-install~ job is what proves it.
+~(cmark gfm)~ then finds the system libcmark-gfm on its own, with nothing else
+set and no compiler involved.
 
-*From a clone.*
+** From a clone
 
 #+begin_src sh
-git clone <repo> && cd chez-cmark-gfm && make build
-#+end_src
-
-~--recursive~ is needed only to run the test suite: everything under
-~vendor/~ is a development dependency — the 744-example corpus and the
-header ~tests/test-option-bits.sps~ parses — and ~make deps~ checks those
-out. The differential suites' CLI oracle is ~$(CMARK_CLI)~, which defaults
-to the ~cmark-gfm~ on ~PATH~ that the system package installed.
-
-*** RHEL, Fedora, and Alpine
-
-Neither Fedora/RHEL (including EPEL) nor Alpine packages the cmark-gfm C
-library. Fedora ships only language bindings — ~ghc-cmark-gfm~ and
-~python3-cmarkgfm~ — and ~cmark-devel~ is upstream cmark, not the GFM fork.
-Alpine's ~cmark~ is likewise not the GFM fork.
-
-Build it once from source; the default prefix is on the search path:
-
-#+begin_src sh
-git clone --branch 0.29.0.gfm.13 https://github.com/github/cmark-gfm
-cmake -S cmark-gfm -B cmark-gfm/build \
-      -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMARK_SHARED=ON -DCMARK_TESTS=OFF
-cmake --build cmark-gfm/build --target install   # -> /usr/local/lib
-#+end_src
-
-~-DCMAKE_POLICY_VERSION_MINIMUM=3.5~ is not optional on a current CMake and
-is not decoration: 0.29.0.gfm.13 opens with ~cmake_minimum_required(VERSION
-3.0)~, which CMake 4 refuses outright — /Compatibility with CMake < 3.5 has
-been removed from CMake./ — exit 1, before any target is configured. This
-project's own ~make vendor~ passes the same flag for the same reason.
-
-Any ~0.29.x.gfm.y~ satisfies the supported range. If you install somewhere
-other than a searched directory, name both libraries explicitly:
-
-#+begin_src sh
-export CHEZ_CMARK_GFM_LIBS=/opt/cmark/lib/libcmark-gfm.so.0.29.0.gfm.13:/opt/cmark/lib/libcmark-gfm-extensions.so.0.29.0.gfm.13
-#+end_src
-
-This is a step 1.0 did not require: its vendored build path compiled
-cmark-gfm from the submodule. 2.0 compiles nothing, which is what makes the
-Akku install work, and the cost falls on the platforms with no package.
-
-** Build
-
-#+begin_src sh
+git clone https://github.com/Kiyomi-Computation-Systems/chez-cmark-gfm
+cd chez-cmark-gfm
 make build
 #+end_src
 
-*compiles nothing.* There is no C shim in 2.0 and no generated
-~config.sls~; ~make build~ is a preflight answering the question the
-install contract actually raises — is a usable libcmark-gfm present, and
-which one would be loaded:
+~make build~ is a preflight, not a build step: it prints the libcmark-gfm that
+would be loaded, or exits non-zero naming the remedy. Running it is optional —
+importing ~(cmark gfm)~ performs the same discovery either way.
 
-#+begin_example
-cmark-gfm 0.29.0.gfm.13
-  core: /opt/homebrew/lib/libcmark-gfm.0.29.0.gfm.13.dylib
-  ext:  /opt/homebrew/lib/libcmark-gfm-extensions.0.29.0.gfm.13.dylib
-#+end_example
-
-With no usable library it exits non-zero and names the remedy instead of
-dumping a loader error. Running it is optional — importing ~(cmark gfm)~
-performs the same discovery either way — but it is the one command that
-turns a misconfigured machine into a sentence you can act on.
-
-Discovery scans a fixed list of system directories, in order, for a *core
-and extensions pair at the same version in the same directory*:
-~/opt/homebrew/lib~, ~/usr/local/lib~, ~/opt/local/lib~ on macOS;
-~/usr/local/lib~, ~/usr/lib/<triple>~, ~/usr/lib~, ~/usr/lib64~ on Linux.
-The first directory holding an in-range pair wins, so a stale
-~/usr/local/lib~ build shadows a newer packaged one — both are in range, so
-both work, and ~CHEZ_CMARK_GFM_LIBS~ is the escape hatch. See ADR-0016.
-
-** Running
-
-Chez has to be told where the library lives:
+** System-wide
 
 #+begin_src sh
-CHEZSCHEMELIBDIRS=src chez --program your-script.sps
+make install PREFIX=/usr/local
+export CHEZSCHEMELIBDIRS=/usr/local/lib/chez-cmark-gfm:
 #+end_src
 
-~src~ alone: ~fallback/~ is deleted, and there is no generated
-configuration left for it to shadow. Under Akku, ~. .akku/bin/activate~
-sets this for you.
+*The trailing colon is not a typo.* Assigning ~CHEZSCHEMELIBDIRS~ *replaces*
+Chez's search path rather than extending it, so without the colon ~.~ is
+dropped and relative imports stop resolving. ~make install~ prints the line
+that way. ~make uninstall PREFIX=...~ removes the tree.
+
+** Running your program
 
 #+begin_src sh
-make dev
+CHEZSCHEMELIBDIRS=src: chez --program your-script.sps
 #+end_src
 
-starts a REPL for interactive use. It runs ~build~ and ~deps~ first — the
-latter vendors ~chez-srfi~ and the ~wak~ libraries into ~build/scheme-libs~
-for the test suites; ~(cmark gfm)~ itself needs none of it — then sets
-~CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs~, the Makefile's
-~CHEZ_LIBDIRS~, the same one ~make test~ uses.
+from a clone. Under Akku, ~. .akku/bin/activate~ sets the variable for you;
+after ~make install~, the export line above does.
 
-** ~CHEZ_CMARK_GFM_LIBS~
-
-Environment override naming both shared objects outright, read once at
-import time by ~resolve-cmark-libraries~ in
-~src/cmark/gfm/private/native.sls~ — config in the environment is
-12-factor. It is *validated, never searched*:
-
-- *Unset*: the directory scan above runs.
-- *Set*: exactly *two* colon-separated *absolute* paths to *existing
-  regular files*, one core and one extensions library; those two are
-  loaded verbatim and the scan never runs. Order does not matter — each
-  entry is classified by basename, so a swapped value is not a footgun —
-  and versioned filenames are not required, so a ~-dev~ package's
-  unversioned symlinks are accepted.
-- *Anything else* — one path, three paths, a relative path, a missing
-  file, a directory, two libraries of the same kind — raises
-  ~&cmark-library-unavailable~ with reason ~invalid-override~. There is no
-  PATH search, no falling back to the scan, and the working directory is
-  never consulted.
-
-Selection is yours; verification is still ours. Whatever gets loaded, its
-~cmark_version()~ is checked against the supported range.
-
-** Tests
-
-#+begin_src sh
-make test
-#+end_src
-
-runs every ~tests/test-*.sps~ suite and fails if any of them do.
-
-#+begin_src sh
-make test-memory
-#+end_src
-
-runs them again (minus the differential suite, which only spawns separate
-~cmark-gfm~ subprocesses no memory tool here instruments) under Valgrind on
-Linux, or an AddressSanitizer preload on macOS. Only the Linux run can
-support a leak claim — LeakSanitizer does not exist on macOS/ARM64
-(ADR-0003).
-
-#+begin_src sh
-make check-purity
-#+end_src
-
-runs the five pure suites with ~CHEZ_CMARK_GFM_LIBS~ pointed at a
-nonexistent path. Anything whose import chain reaches
-~(cmark gfm private native)~ raises at import time and fails the target, so
-the purity of ~options.sls~, ~ast.sls~, and the SXML adapter is a check
-rather than a comment.
-
-* Usage
+* A taste
 
 #+begin_src scheme
 (import (cmark gfm))
 
-;; Safe by default: raw HTML and unsafe link schemes are suppressed.
-(markdown->html "# Hello\n\n~~struck~~\n" (default-cmark-options))
+(define doc "A ~~struck~~ word and a <b>raw</b> tag.\n")
 
-;; Options are named symbols. Unknown keys, duplicate keys, and unknown
-;; extensions are rejected before anything native is allocated.
-(markdown->html "<b>raw</b>\n" (make-cmark-options 'unsafe-html? #t))
+;; Safe by default: raw HTML becomes a comment, with no flag to remember.
+(markdown->html doc (default-cmark-options))
+;; => "<p>A <del>struck</del> word and a <!-- raw HTML omitted -->raw<!-- raw HTML omitted --> tag.</p>\n"
 
-;; Functional update; the original is unchanged.
-(define base (make-cmark-options 'extensions '(table)))
-(markdown->html "| a |\n|---|\n| 1 |\n" (cmark-options-with base 'smart? #t))
+;; The other behaviour exists, and has to be asked for by name.
+(markdown->html doc (make-cmark-options 'unsafe-html? #t))
+;; => "<p>A <del>struck</del> word and a <b>raw</b> tag.</p>\n"
 
-;; Wrap width applies only to the renderers that wrap. Passing one to
-;; markdown->html is an arity error, not a silently ignored setting.
-(markdown->commonmark "long paragraph text here\n" base 72)
-(markdown->plaintext  "long paragraph text here\n" base 72)
-(markdown->xml        "# Hello\n" base)
-
-;; Which native library is loaded, and what it can do.
-(cmark-gfm-version)                 ;; => "0.29.0.gfm.13"
-(cmark-gfm-version-compatible?)     ;; => #t
-(cmark-gfm-available-extensions)    ;; => (autolink strikethrough table tagfilter tasklist)
+;; SXML in HTML vocabulary, for the serializer of your choosing.
+(markdown->sxml "A [link](/x) and a <b>raw</b> tag.\n")
+;; => (*TOP* (p "A " (a (^ (href "/x")) "link") " and a "
+;;               (*COMMENT* " raw HTML omitted ") "raw"
+;;               (*COMMENT* " raw HTML omitted ") " tag."))
 #+end_src
 
-** Options
+Adapted from [[file:examples/01-rendering.sps][examples/01-rendering.sps]] and [[file:examples/04-sxml.sps][examples/04-sxml.sps]]. ~make examples~
+runs every file under ~examples/~ and diffs it against pinned output, so a
+sample cannot go stale silently.
 
-| Key                 | Default                                             |
-|---------------------+-----------------------------------------------------|
-| ~extensions~        | ~(autolink strikethrough table tagfilter tasklist)~ |
-| ~validate-utf8?~    | ~#t~                                                |
-| ~source-positions?~ | ~#f~ (see ADR-0008)                                 |
-| ~hardbreaks?~       | ~#f~                                                |
-| ~nobreaks?~         | ~#f~                                                |
-| ~smart?~            | ~#f~                                                |
-| ~unsafe-html?~      | ~#f~                                                |
-| ~max-input-bytes~   | ~5242880~ (5 MiB)                                   |
-| ~max-nodes~         | ~250000~                                            |
-| ~max-depth~         | ~1000~                                              |
+* Documentation
 
-~hardbreaks?~ and ~nobreaks?~ cannot both be set. cmark gives hardbreaks
-precedence rather than leaving the combination undefined, so this is a
-deliberate policy: honouring one of two explicit requests and silently
-dropping the other would hide a caller's mistake.
+| [[file:docs/installing.md][Installing]]   | Prerequisites, Akku, system-wide install, and every acquisition path |
+| [[file:docs/usage.md][Usage]]             | The four renderers, and which library got loaded                    |
+| [[file:docs/options.md][Options]]         | Every option, its default, and the two that conflict                |
+| [[file:docs/ast.md][The AST]]             | Node shape, properties by type, traversal, resource limits          |
+| [[file:docs/sxml.md][SXML]]               | The adapter, the full mapping, and choosing a serializer            |
+| [[file:docs/errors.md][Errors]]           | The condition family, and what raises what                          |
+| [[file:docs/memory.md][Memory ownership]] | The contract a caller depends on                                    |
+| [[file:docs/building.md][Building]]       | Targets, test suites, and the memory checks                         |
+| [[file:CHANGELOG.md][CHANGELOG]]          | Per-release history                                                 |
+| [[file:.plans/][Design specs & ADRs]]     | Why it is built this way, with the evidence                         |
 
-Input is always a Scheme string, encoded internally with ~string->utf8~, which
-cannot produce invalid UTF-8 from a valid Scheme string — so cmark's
-~validate-utf8?~ (its replace-invalid-bytes-with-U+FFFD behavior) has no
-effect reachable through this API; it exists for byte-oriented callers, not
-this one. An embedded NUL character is rejected outright, at any position.
+* Contributing
 
-** Memory ownership
+Issues and pull requests are welcome. ~make help~ lists every target and
+[[file:docs/building.md][docs/building.md]] says what each one checks; a pull request is expected to keep
+~make test~, ~make examples~, and the ~check-*~ targets green. A change in
+behaviour needs a test that fails against the old behaviour.
 
-The contract a caller depends on. Rationale is in the design spec §5.
-
-- ~markdown->ast~ returns *only Scheme-owned objects*. No native pointer is
-  reachable from the result, and the tree stays valid after the native
-  document is freed.
-- Every borrowed native string is copied before the document it came from is
-  cleaned up.
-- A native document is dead outside its own scope; touching one raises
-  ~&cmark-dead-document~. No public entry point exposes a live document, so
-  a caller cannot reach that condition.
-- Renderer buffers are copied into Scheme strings and freed exactly once, on
-  the success and the failure path alike.
-- Parsers, roots, and extension-list containers have one owner each and are
-  freed exactly once.
-
-** The AST
-
-#+begin_src scheme
-(import (cmark gfm))
-
-;; One argument: source positions ON (ADR-0009).
-(define tree (markdown->ast "# Hello\n\n~~struck~~\n"))
-
-(markdown-node-type tree)                   ;; => document
-(markdown-node-property
-  (car (markdown-node-children tree)) 'level)  ;; => 1
-
-;; Two arguments: your options record, verbatim.
-(markdown->ast "# Hello\n" (make-cmark-options 'source-positions? #f))
-
-;; Immutable. Both helpers return new trees.
-(markdown-node-map (lambda (n) n) tree)     ;; children-first
-(markdown-node-fold (lambda (n acc) (+ acc 1)) 0 tree)  ;; pre-order
-#+end_src
-
-Nodes are ~(type properties children source)~. Properties are read with
-~markdown-node-property~, which takes an optional default — several
-properties have ~#f~ as a legitimate value, so absence and false are
-distinguishable:
-
-| Node type | Properties |
-|-----------------+---------------------------------------|
-| ~heading~ | ~level~ |
-| ~text~ ~code~ ~html-inline~ ~html-block~ | ~literal~ |
-| ~code-block~ | ~literal~ ~fence-info~ |
-| ~link~ ~image~ | ~url~ ~title~ |
-| ~list~ | ~kind~ ~start~ ~tight?~ ~delimiter~ |
-| ~item~ | ~index~ ~task?~ ~checked?~ |
-| ~table~ | ~columns~ ~alignments~ |
-| ~table-row~ | ~header?~ |
-| ~table-cell~ | ~alignment~ |
-| ~extension~ | ~native-type~, and ~literal~ when the node has one |
-
-~document~, ~paragraph~, ~blockquote~, ~thematic-break~, ~softbreak~,
-~linebreak~, ~emph~, ~strong~, and ~strikethrough~ carry no properties.
-
-An item's ~index~ is its *ordinal position*: its list's ~start~ plus its
-offset among that list's items, and 0 for every item of a bullet list. It
-is not the number typed in the source, so ~1. 1. 1.~ and ~1. 5. 9.~ both
-index ~1 2 3~.
-
-#+begin_quote
-⚠️ *The AST is untrusted structured input.* It preserves exactly what the
-document said, including raw HTML and ~javascript:~ URLs. ~unsafe-html?~ does
-not affect it — that option is a renderer policy. Sanitise when you render,
-not when you parse.
-#+end_quote
-
-Two ceilings bound the copy, because ~max-input-bytes~ does not: 5 MiB of
-adversarial Markdown parses to millions of nodes.
-
-| Key | Default |
-|-------------+---------|
-| ~max-nodes~ | 250000 |
-| ~max-depth~ | 1000 |
-
-Exceeding either raises ~&cmark-resource-limit~, which derives from
-~&cmark-invalid-input~ and carries the ceiling that was exceeded:
-
-#+begin_src scheme
-(guard (e ((cmark-resource-limit? e)
-           (list (cmark-invalid-input-reason e)
-                 (cmark-resource-limit-value e))))
-  (markdown->ast deeply-nested (make-cmark-options 'max-depth 64)))
-;; => (too-deep 64)
-#+end_src
-
-** SXML
-
-#+begin_src scheme
-(import (cmark gfm))
-
-;; Parse and convert in one step. Renderer defaults; positions off.
-(markdown->sxml "# Hello\n\n[l](/x \"t\")\n")
-;; => (*TOP* (h1 "Hello") (p (a (^ (href "/x") (title "t")) "l")))
-
-;; The pure adapter, when you already hold a tree.
-(markdown-ast->sxml (markdown->ast "# Hello\n"))
-
-;; markdown->sxml takes cmark's options first, the SXML policies second.
-(markdown->sxml "para <b>raw</b>\n"
-                (default-cmark-options)
-                (make-sxml-options 'raw-html 'escape))
-;; => (*TOP* (p "para " "<b>" "raw" "</b>"))
-#+end_src
-
-~(cmark gfm sxml)~ is pure: it imports nothing that can reach a shared
-object, and ~make check-purity~ enforces that by running its suite with
-~CHEZ_CMARK_GFM_LIBS~ poisoned. ~markdown->sxml~ lives in ~(cmark gfm)~ rather
-than in the adapter precisely because it parses.
-
-*** Options
-
-| Key                | Values                      | Default   |
-|--------------------+-----------------------------+-----------|
-| ~raw-html~         | ~omit~, ~escape~            | ~omit~    |
-| ~softbreak~        | ~newline~, ~break~, ~space~ | ~newline~ |
-| ~attribute-marker~ | ~caret~, ~at~               | ~caret~   |
-
-~make-sxml-options~, ~default-sxml-options~, and ~sxml-options-with~
-mirror the ~cmark-options~ trio exactly, including its rejection of
-unknown keys, duplicate keys, and unknown values.
-
-*~omit~ is the default because it is the policy that does not depend on
-the caller's serializer.* Under ~omit~ an ~html-block~ or ~html-inline~
-becomes ~(*COMMENT* " raw HTML omitted ")~ — cmark's own substitution
-(~src/html.c:259,337~) — so the tree holds no attacker-controlled markup
-at all and the output is safe whatever serializer you chose. Under
-~escape~ the literal is carried through as an ordinary string and the
-safety rests *entirely* on that serializer escaping it. That is a
-difference in what this library can promise, not a matter of taste. There
-is no trusted or unsafe mode and none is planned (ADR-0011): SXML has no
-portable raw-markup node, and a caller who needs the literal reads it
-from the AST, which preserves it.
-
-~softbreak~ is the SXML side of cmark's ~hardbreaks?~/~nobreaks?~. Those
-are renderer flags on softbreak (~html.c:319-325~) that never reach the
-parse, so no AST can carry them and the adapter has no other way to learn
-them.
-
-*The default attribute marker is deliberately not the SXML
-specification's ~@~.* Both serializers reachable on this platform mark an
-attribute list ~^~ — ~wak-sxml-tools~ (~sxml-tools/upstream/sxml-tools.scm:44-48~)
-and ~wak-htmlprag~ (~htmlprag/htmlprag.scm:334~) — and neither recognises
-~@~ at all. Handed a ~@~-marked tree, ~srl:sxml->html~ does not raise: it
-silently turns every attribute list into bogus child elements
-(~(a (@ (href "/x")) "l")~ becomes ~<a><@><href>/x</href></@>l</a>~). Do
-not assume canonical SXML here. ~'attribute-marker 'at~ gives the
-specification's spelling, for hand-written pattern matching or for moving
-a tree to another Scheme. See ADR-0013.
-
-*** Options that are refused, and one that is not
-
-~markdown->sxml~ raises ~&cmark-invalid-option~ with reason
-~not-applicable~ for ~unsafe-html?~, ~hardbreaks?~, and ~nobreaks?~:
-
-#+begin_src scheme
-(markdown->sxml "# hi\n" (make-cmark-options 'unsafe-html? #t))
-;; raises &cmark-invalid-option, key unsafe-html?, reason not-applicable
-#+end_src
-
-All three are cmark *renderer* options. They never reach the parse, so no
-AST can carry them, and SXML is a different renderer with its own
-policies — ~raw-html~ and ~softbreak~ above. Accepting one silently would
-discard a setting the caller made explicitly. The cost is real and
-accepted: one options record shared with ~markdown->html~ needs a
-~cmark-options-with~ line, which makes the divergence in security
-semantics visible at the call site rather than invisible.
-
-~source-positions?~ is the deliberate exception. It is *accepted and
-silently discarded*. Unlike the three above it genuinely does reach the
-AST — the parse honours it, at full cost — and it is the adapter that
-then drops the positions, per ADR-0011. What that costs a caller is
-wasted parse work, not a downgraded policy, so it is not refused.
-~markdown->sxml~ defaults to ~(default-cmark-options)~, where positions
-are off, rather than to ~(default-ast-options)~: turning them on would
-pay for information the output discards (ADR-0009).
-
-*** The mapping
-
-Every row is the shape a conforming serializer must render as the cited
-cmark output. ~^~ below is the attribute marker under the default
-~attribute-marker: caret~; under ~at~ it is ~@~ and nothing else changes.
-
-| AST node                       | SXML                                                                        | cmark                             |
-|--------------------------------+-----------------------------------------------------------------------------+-----------------------------------|
-| ~document~                     | ~(*TOP* …)~                                                                 | —                                 |
-| ~heading~ level /n/            | ~(h1 …)~ … ~(h6 …)~                                                         | ~html.c:201~                      |
-| ~paragraph~                    | ~(p …)~, or spliced away inside a tight list                                 | ~html.c:287~                      |
-| ~text~                         | a string, verbatim                                                          | ~html.c:311~                      |
-| ~emph~                         | ~(em …)~                                                                    | ~html.c:376~                      |
-| ~strong~                       | ~(strong …)~; directly inside a ~strong~, spliced away                       | ~html.c:366~ (gfm.10+)            |
-| ~strikethrough~                | ~(del …)~                                                                   | ~extensions/strikethrough.c:132~  |
-| ~blockquote~                   | ~(blockquote …)~                                                            | ~html.c:151~                      |
-| ~list~, bullet                 | ~(ul …)~                                                                    | ~html.c:170~                      |
-| ~list~, ordered, start = 1     | ~(ol …)~                                                                    | ~html.c:174~                      |
-| ~list~, ordered, start ≠ 1     | ~(ol (^ (start "N")) …)~                                                    | ~html.c:178~                      |
-| ~item~, plain                  | ~(li …)~                                                                    | ~html.c:190~                      |
-| ~item~, task, checked          | ~(li (input (^ (type "checkbox") (checked "") (disabled ""))) " " …)~       | ~extensions/tasklist.c:125~       |
-| ~item~, task, unchecked        | the same with *no* ~checked~ attribute at all                                | ~extensions/tasklist.c:127~       |
-| ~link~                         | ~(a (^ (href …) (title …)) …)~                                              | ~html.c:384~                      |
-| ~image~                        | ~(img (^ (src …) (alt …) (title …)))~                                       | ~html.c:402~                      |
-| ~code~                         | ~(code …)~                                                                  | ~html.c:329~                      |
-| ~code-block~, no info          | ~(pre (code …))~                                                            | ~html.c:218~                      |
-| ~code-block~, info             | ~(pre (code (^ (class "language-X")) …))~                                   | ~html.c:242~                      |
-| ~thematic-break~               | ~(hr)~                                                                      | ~html.c:280~                      |
-| ~linebreak~                    | ~(br)~                                                                      | ~html.c:315~                      |
-| ~softbreak~                    | ~"\n"~, or ~(br)~ / ~" "~ per ~softbreak~                                   | ~html.c:319-325~                  |
-| ~html-inline~ / ~html-block~   | ~(*COMMENT* " raw HTML omitted ")~, or the literal under ~escape~            | ~html.c:259,337~                  |
-| ~table~                        | ~(table (thead …) (tbody …))~, either section absent when empty              | ~extensions/table.c:756,774~      |
-| ~table-row~                    | ~(tr …)~                                                                    | ~extensions/table.c:774~          |
-| ~table-cell~, header / body    | ~(th (^ (align …)) …)~ / ~(td (^ (align …)) …)~                             | ~extensions/table.c:798,806~      |
-| ~extension~, or anything unmapped | raises ~&cmark-unsupported-node~, carrying the type                       | —                                 |
-
-Four details the table compresses:
-
-- *A tight list has no ~p~ elements in its output at all.* ~html.c:287-297~
-  reads tightness off the paragraph's grandparent and emits no ~<p>~ tags;
-  the paragraph's children go straight into the ~<li>~. This is not
-  "paragraphs that render compactly".
-- *~title~ and ~align~ are omitted, never empty.* ~html.c:392~ writes
-  ~title~ only when it is non-empty, and ~extensions/table.c:806~ writes no
-  ~align~ for an unaligned column. An empty attribute is a byte difference.
-  ~align~ appears on body cells as well as header cells.
-- *~class="language-X"~ takes the first token of the info string only*
-  (~html.c:223-227~). The rest is reachable only through
-  ~CMARK_OPT_FULL_INFO_STRING~, which this library does not expose.
-- *An image's ~alt~ is a flattened string, produced by cmark's own plain
-  mode* (~html.c:118-139~), not by the serializer: ~text~, ~code~, and
-  ~html-inline~ contribute their literals, ~linebreak~ and ~softbreak~ a
-  single space, every other node nothing while still being descended into.
-
-*The ~strong~ splice is the one row with a version qualifier.* cmark gained
-that rule in ~0.29.0.gfm.10~ (upstream ~5c75d23~); ~gfm.0~ through ~gfm.9~
-emit both tags. The mapping above is fixed and deliberately not
-version-aware, so on a cmark-gfm older than ~0.29.0.gfm.10~ ~markdown->sxml~
-splices a ~strong~ directly inside a ~strong~ while that same library's
-~markdown->html~ does not. Both are self-consistent; they are not consistent
-with each other. See design spec §3.9.
-
-~markdown-ast->sxml~ is public and takes an arbitrary tree, so it also
-raises ~&cmark-malformed-tree~ (reason ~header-row-not-first~) for a table
-whose header row is not the first: cmark's parser cannot produce one, and
-reproducing what its renderer would do opens a ~thead~ inside an open
-~tbody~.
-
-*** What the mapping drops
-
-HTML vocabulary cannot express everything the AST holds. ~markdown->ast~
-remains the interface for all of it:
-
-| Dropped                            | Where it survives |
-|------------------------------------+-------------------|
-| ~list~ ~delimiter~ (period vs paren) | ~markdown->ast~ |
-| fence info past the first token      | ~markdown->ast~ |
-| image child structure                | ~markdown->ast~ |
-| all source positions                 | ~markdown->ast~ |
-| raw HTML literals (under ~omit~)     | ~markdown->ast~ |
-
-This is ADR-0011, not an oversight. Because the tree carries no metadata
-channel, every piece of information the tree carries /about the document/
-is information the HTML shows — which is what puts almost all of it under
-the byte-for-byte oracle below. Two properties stay outside it and are
-tested directly instead: ~raw-html: escape~, which cmark has no equivalent
-for, and ~attribute-marker~, which the test serializer accepts in both
-spellings and so normalises away before comparing. See design spec §10.
-
-*** URLs
-
-A ~link~ ~href~ and an ~image~ ~src~ take cmark's own rule, transcribed
-from ~src/scanners.re:345-354~: a URL is dangerous when it begins
-~javascript:~, ~vbscript:~, ~file:~, or ~data:~, matched
-case-insensitively, with ~data:image/png~, ~data:image/gif~,
-~data:image/jpeg~, and ~data:image/webp~ allowed through. A rejected URL
-yields an *empty* attribute value — not a raised condition and not a
-removed attribute — matching ~html.c:387-391~ and ~html.c:405-409~. There
-is no customisation hook in 0.3.
-
-The adapter percent-encodes every byte outside ~HREF_SAFE~
-(~src/houdini_href_e.c:32-44~) and *never touches ~&~ or ~'~*. Those two
-are entity-escaped by whatever serializer you run; doing both halves in
-one place produces ~%2520~ or ~&amp;amp;~, valid HTML carrying the wrong
-URL.
-
-*** Your serializer, not ours
-
-The SXML tree is verified by rendering it through a test-only serializer
-written against ~vendor/cmark-gfm/src/html.c~ and diffing byte-for-byte
-against ~markdown->html~ for the same parse, across all 744 examples of
-cmark's own corpus, under both attribute markers. *That byte-equality is a
-property of the serializer in ~tests/~, not a promise about your pipeline.*
-A conforming third-party serializer will differ, and none of
-these differences changes what the document means. Measured against
-~wak-sxml-tools~' ~srl:sxml->html~, the one this project tests
-conformance through:
-
-|                                  | cmark              | ~srl:sxml->html~                        |
-|----------------------------------+--------------------+-----------------------------------------|
-| Between blocks                   | ~\n~               | ~\n~ plus depth-proportional indentation |
-| Two adjacent inline elements     | nothing between    | newline and indent injected             |
-| ~"~ in text                      | ~&quot;~           | left raw                                |
-| ~'~ in an ~href~                 | ~&#x27;~           | ~&apos;~                                |
-| Childless elements               | ~<hr />~           | ~<hr>~                                  |
-| End of document                  | trailing ~\n~      | none                                    |
-
-The second row is the one worth knowing: an injected newline between two
-adjacent inline elements collapses to a rendered space, so
-~<p><strong>a</strong><em>b</em></p>~ and
-~<p>\n  <strong>a</strong>\n  <em>b</em>\n</p>~ do not look the same.
-~srl:sxml->html-noindent~ avoids the whole indentation family.
-
-⚠️ *A pretty-printing serializer will corrupt ~<pre>~ content.* Injected
-indentation inside a code block is content, not formatting.
-~srl:sxml->html~ does not do it — it exempts ~pre~, ~script~, ~style~, and
-~textarea~, and any element with a bare-text child, and
-~tests/test-sxml-portability.sps~ asserts the exact rendering — but that
-is a property of that serializer, checked, not a property of SXML.
-
-** Errors
-
-Every failure is a structured condition deriving from ~&cmark-error~, so a
-caller can catch the whole family or discriminate precisely.
-
-#+begin_src scheme
-(guard (e ((cmark-invalid-option? e)
-           (list 'bad-option (cmark-invalid-option-key e)
-                             (cmark-invalid-option-reason e)))
-          ((cmark-error? e) 'some-other-cmark-failure))
-  (markdown->html "# hi\n" (make-cmark-options 'unsaef-html? #t)))
-;; => (bad-option unsaef-html? unknown-key)
-#+end_src
-
------
+* License
 
 © [[https://kiyomicomputation.systems/][Kiyomi Computation Systems LLC]]. Licensed under BSD 3-Clause — see
 [[file:LICENSE][LICENSE]], and [[file:NOTICE][NOTICE]] for cmark-gfm's own licenses.

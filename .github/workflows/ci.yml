@@ -79,11 +79,12 @@ jobs:
           echo "cc:       $(cc --version | head -1)"
           echo "cmark-gfm CLI (apt): $(cmark-gfm --version | head -1)"
 
-      # The README matrix decays silently the moment a runner image bumps
-      # Chez. This makes that a build failure instead. Deliberately asserts
-      # agreement with what THIS run used -- it does not pin a version, which
-      # would fight the "recorded rather than asserted" note above.
-      - name: Check the README matrix names the Chez this job ran
+      # The docs/installing.md matrix decays silently the moment a runner
+      # image bumps Chez. This makes that a build failure instead.
+      # Deliberately asserts agreement with what THIS run used -- it does not
+      # pin a version, which would fight the "recorded rather than asserted"
+      # note above.
+      - name: Check the docs/installing.md matrix names the Chez this job ran
         run: |
           set -eu
           actual=$( (chezscheme --version 2>&1 || scheme --version 2>&1) | tr -d '[:space:]')
@@ -138,12 +139,12 @@ jobs:
       # that alone is enough for the corpus and the header -- so nothing in
       # `make test` actually needs this cmake build to have run; $(CMARK_CLI)
       # defaults to the apt-installed `cmark-gfm` on PATH, not a vendor-built
-      # binary. This step is kept anyway, as a regression guard: README.org's
-      # RHEL/Fedora/Alpine remedy (8.2) tells those readers to build this
-      # exact pinned submodule themselves, and nothing else in CI would
-      # notice if that stopped working. cmake and build-essential are
-      # installed for this, not for anything of ours -- 2.0 compiles no shim
-      # on any platform.
+      # binary. This step is kept anyway, as a regression guard:
+      # docs/installing.md's RHEL/Fedora/Alpine remedy (8.2) tells those
+      # readers to build this exact pinned submodule themselves, and nothing
+      # else in CI would notice if that stopped working. cmake and
+      # build-essential are installed for this, not for anything of ours --
+      # 2.0 compiles no shim on any platform.
       - name: Build vendored cmark-gfm (dev dependency -- corpus, header, CLI oracle)
         run: make vendor
 
@@ -222,7 +223,7 @@ jobs:
 
       # Equivalent to the linux job's check above (same rationale: the table
       # tracks what "Report versions" printed, and is not a pinned version).
-      - name: Check the README matrix names the Chez this job ran
+      - name: Check the docs/installing.md matrix names the Chez this job ran
         run: |
           set -eu
           actual=$(chez --version 2>&1 | tr -d '[:space:]')
@@ -344,8 +345,8 @@ jobs:
     container: ubuntu:24.04
     steps:
       # A bare container has no git, so checkout cannot run yet. This is the
-      # only thing installed that the README does not list, and it is needed
-      # to obtain the repository at all rather than to build it.
+      # only thing installed that docs/installing.md does not list, and it is
+      # needed to obtain the repository at all rather than to build it.
       - name: Bootstrap enough to check out
         run: |
           set -eu
