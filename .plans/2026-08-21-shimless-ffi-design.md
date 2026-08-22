@@ -502,7 +502,8 @@ Build it once from source; the default prefix is on the search path:
 
 #+begin_src sh
 git clone --branch 0.29.0.gfm.13 https://github.com/github/cmark-gfm
-cmake -S cmark-gfm -B cmark-gfm/build -DCMARK_SHARED=ON -DCMARK_TESTS=OFF
+cmake -S cmark-gfm -B cmark-gfm/build \
+      -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMARK_SHARED=ON -DCMARK_TESTS=OFF
 cmake --build cmark-gfm/build --target install   # -> /usr/local/lib
 #+end_src
 
