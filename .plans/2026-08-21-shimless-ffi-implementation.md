@@ -787,6 +787,12 @@ transition), and remove `shim-option-bits`, `shim-compiled-version`, and
 `shim-runtime-version` from the export list. Add `cmark-runtime-version` and
 `allocator-slots`.
 
+**In the same step**, delete the transitional block from `tests/test-option-bits.sps` —
+everything between `;; --- TRANSITIONAL` and `;; --- end transitional block`, inclusive.
+It calls `shim-option-bits`, so leaving it would make that suite fail on an unbound
+identifier. The block exists only to prove the Scheme table equals the shim's before
+this step removes the shim's; it dies in the same commit as the thing it guards.
+
 Insert, **after** the cmark shared objects are loaded and among the other
 `foreign-procedure` definitions:
 
@@ -927,8 +933,9 @@ git commit -m "feat: bind cmark directly, drop the shim's five entry points"
 **Files:**
 - Modify: `src/cmark/gfm/private/native.sls:36-105` (resolution and loading)
 - Delete: `src/cmark-gfm-shim.c`, `src/cmark-gfm-shim.h`, `src/cmark/gfm/private/config.sls`, `fallback/`, `tests/check-config.sps`, `tests/test-fallback-config.sps`, `tests/test-shim-loading.sps`
-- Modify: `tests/test-option-bits.sps` (delete the transitional block)
-- Create: `tests/test-library-loading.sps`
+- Create: `tests/test-library-loading.sps`, `tests/preflight.sps`
+- Modify: `Makefile:144` (`build` target) and `Makefile:97` (`CHEZ_LIBDIRS`) — the minimum
+  to keep `make test` working; the cleanup is Task 6
 
 **Interfaces:**
 - Consumes: everything Task 1 produces; `cmark-runtime-version` from Task 3.
@@ -1084,8 +1091,8 @@ git rm tests/check-config.sps tests/test-fallback-config.sps tests/test-shim-loa
 `config.sls` is gitignored, so `git rm` may report it as untracked; the `||` branch
 handles that.
 
-Delete the transitional block from `tests/test-option-bits.sps` — everything between
-`;; --- TRANSITIONAL` and `;; --- end transitional block`, inclusive.
+(The transitional block in `tests/test-option-bits.sps` was already deleted in Task 3,
+in the same step that removed `shim-option-bits`. Nothing to do here.)
 
 - [ ] **Step 5: Run the tests**
 
@@ -1103,12 +1110,84 @@ rm -rf build/lib && CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez --program
 ```
 
 Expected: green. This is the whole point of the change — rendering with no compiled shim
-anywhere. The Makefile still references the shim and is fixed in Task 6.
+anywhere.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 7: Make `make` work again — the minimum, not the cleanup**
+
+Deleting the shim sources breaks `Makefile:144` (`build: $(SHIM) $(CONFIG_SLS)`), and
+`test: build deps check-pins` depends on it — so `make test` would fail from here until
+Task 6. Fix only what is needed to keep the suite green; Task 6 removes the dead
+machinery.
+
+Create `tests/preflight.sps`:
+
+```scheme
+#!r6rs
+;;; `make build` in 2.0. There is nothing to compile, so build answers the
+;;; question the install contract actually raises: is this machine set up, and
+;;; which library would be loaded?
+;; `exit` comes from (rnrs), NOT (chezscheme) -- importing it from both raises
+;; "multiple definitions for exit in body". See Global Constraints.
+(import (rnrs)
+        (only (chezscheme) printf getenv)
+        (cmark gfm)
+        (cmark gfm private native)
+        (cmark gfm private conditions))
+
+(guard (e ((cmark-library-unavailable? e)
+           (printf "chez-cmark-gfm: no usable libcmark-gfm (~a)\n"
+                   (cmark-library-unavailable-reason e))
+           (printf "  install it with:  apt install cmark-gfm   (Debian/Ubuntu)\n")
+           (printf "                    brew install cmark-gfm  (macOS)\n")
+           (printf "  or name both libraries in CHEZ_CMARK_GFM_LIBS.\n")
+           (exit 1))
+          ((cmark-version-incompatible? e)
+           (printf "chez-cmark-gfm: found cmark-gfm ~x, outside the supported range\n"
+                   (cmark-version-incompatible-runtime e))
+           (exit 1)))
+  (let ((libs (resolve-cmark-libraries (getenv "CHEZ_CMARK_GFM_LIBS"))))
+    (printf "cmark-gfm ~a\n" (cmark-gfm-version))
+    (printf "  core: ~a\n" (car libs))
+    (printf "  ext:  ~a\n" (cdr libs))
+    (exit 0)))
+```
+
+**Note on the condition names:** Task 5 renames `&cmark-shim-unavailable` to
+`&cmark-library-unavailable`. At this point in the sequence the old spelling is still in
+force, so write `cmark-shim-unavailable?` / `cmark-shim-unavailable-reason` here and let
+Task 5's mechanical rename sweep this file with the rest. Likewise
+`cmark-version-incompatible-runtime` is already correct — only the `compiled`→`supported`
+accessor changes in Task 5, and this file does not use it.
+
+Then two minimal `Makefile` edits — nothing else:
+
+```make
+build:
+	@CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) $(CHEZ) --program tests/preflight.sps
+```
+
+```make
+CHEZ_LIBDIRS := src:tests:$(SRFI_LIBS)
+```
+
+Leave `prod`, `check-prod`, `check-config`, `FLAVOR`, `mode-flip-relink`, and the
+`$(SHIM)`/`$(CONFIG_SLS)` variable definitions alone — they are now unreachable from
+`build` but harmless, and Task 6 removes them. `make check-config` and `make prod` will
+fail until then; neither is on `make test`'s path.
+
+- [ ] **Step 8: Run the full suite through make**
 
 ```bash
-git add -A src tests
+make test
+```
+
+Expected: `ALL SUITES PASSED`, with `make build` printing the two resolved absolute paths
+instead of compiling anything.
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add -A src tests Makefile
 git commit -m "feat: resolve libcmark-gfm at runtime; delete the C shim and fallback config"
 ```
 
@@ -1263,66 +1342,23 @@ git commit -m "refactor!: rename &cmark-shim-unavailable to &cmark-library-unava
 
 ---
 
-### Task 6: Makefile
+### Task 6: Makefile cleanup — remove the dead shim machinery
 
 **Files:**
 - Modify: `Makefile`
-- Create: `tests/preflight.sps`
 
 **Interfaces:**
-- Consumes: `resolve-cmark-libraries` from Task 4.
-- Produces: `make build` prints the two resolved absolute paths and exits non-zero if
-  resolution fails.
+- Consumes: `tests/preflight.sps` and the reworked `build` target, both created in Task 4.
+- Produces: nothing new. This task only deletes what the shim's removal made unreachable.
 
-- [ ] **Step 1: Write the preflight program**
+**Scope note.** Task 4 already made `make build` a preflight and dropped `fallback` from
+`CHEZ_LIBDIRS`, because `make test` depends on `build` and would otherwise have been
+broken from Task 4 through this task. What remains here is removing machinery that is now
+unreachable but still present, and renaming the purity gate's variable. `make test` is
+green before and after this task; the observable change is that `make prod` and
+`make check-config` stop existing rather than failing.
 
-Create `tests/preflight.sps`:
-
-```scheme
-#!r6rs
-;;; `make build` in 2.0. There is nothing to compile, so build answers the
-;;; question the install contract actually raises: is this machine set up, and
-;;; which library would be loaded?
-(import (rnrs)
-        (only (chezscheme) printf getenv exit-handler)
-        (cmark gfm)
-        (cmark gfm private native)
-        (cmark gfm private conditions))
-
-(guard (e ((cmark-library-unavailable? e)
-           (printf "chez-cmark-gfm: no usable libcmark-gfm (~a)\n"
-                   (cmark-library-unavailable-reason e))
-           (printf "  install it with:  apt install cmark-gfm   (Debian/Ubuntu)\n")
-           (printf "                    brew install cmark-gfm  (macOS)\n")
-           (printf "  or name both libraries in CHEZ_CMARK_GFM_LIBS.\n")
-           (exit 1))
-          ((cmark-version-incompatible? e)
-           (printf "chez-cmark-gfm: found cmark-gfm ~x, outside the supported range\n"
-                   (cmark-version-incompatible-runtime e))
-           (exit 1)))
-  (let ((libs (resolve-cmark-libraries (getenv "CHEZ_CMARK_GFM_LIBS"))))
-    (printf "cmark-gfm ~a\n" (cmark-gfm-version))
-    (printf "  core: ~a\n" (car libs))
-    (printf "  ext:  ~a\n" (cdr libs))
-    (exit 0)))
-```
-
-- [ ] **Step 2: Run it to confirm it works before touching the Makefile**
-
-```bash
-CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs chez --program tests/preflight.sps
-```
-
-Expected: three lines naming the version and both absolute paths, exit 0.
-
-```bash
-CHEZ_CMARK_GFM_LIBS=/nope:/nope CHEZSCHEMELIBDIRS=src:tests:build/scheme-libs \
-  chez --program tests/preflight.sps; echo "exit=$?"
-```
-
-Expected: the install-instruction block, `exit=1`.
-
-- [ ] **Step 3: Rewrite the Makefile targets**
+- [ ] **Step 1: Rewrite the Makefile targets**
 
 Delete from `Makefile`: `SHIM`, `CONFIG_SLS`, `FLAVOR`, `HAVE_PKG`, `CMARK_CFLAGS`,
 `CMARK_LIBS`, `CMARK_DLLS`, `CMARK_LIBDIR`, the `$(SHIM):` rule, the `$(CONFIG_SLS):`
@@ -1335,21 +1371,15 @@ build or `PATH` only:
 CMARK_CLI ?= cmark-gfm
 ```
 
-Replace the `build` target:
+**Already done in Task 4, do not redo:** the `build` target is already the preflight, and
+`CHEZ_LIBDIRS` already reads `src:tests:$(SRFI_LIBS)`. Confirm both, then add the comment
+above `build` if Task 4 did not:
 
 ```make
 # There is no compiled artifact in 2.0. `build` answers the question the
 # install contract raises instead: is a usable libcmark-gfm present, and which
 # one would be loaded? Kept as a canonical target because that question is
 # worth one command.
-build:
-	@CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) $(CHEZ) --program tests/preflight.sps
-```
-
-Update `CHEZ_LIBDIRS` to drop `fallback`:
-
-```make
-CHEZ_LIBDIRS := src:tests:$(SRFI_LIBS)
 ```
 
 Update `.PHONY`:
@@ -1382,7 +1412,7 @@ clean:
 	rm -rf $(BUILD_DIR)
 ```
 
-- [ ] **Step 4: Verify every canonical target**
+- [ ] **Step 2: Verify every canonical target**
 
 ```bash
 make clean && make build && make test && make check-purity && make examples
@@ -1390,7 +1420,7 @@ make clean && make build && make test && make check-purity && make examples
 
 Expected: all four succeed; `make build` prints the resolved paths; `ALL SUITES PASSED`.
 
-- [ ] **Step 5: Verify a genuinely clean tree needs no compiler**
+- [ ] **Step 3: Verify a genuinely clean tree needs no compiler**
 
 ```bash
 git clean -xdn | head -20
@@ -1406,7 +1436,7 @@ git clone --no-local . /tmp/shimless-check && cd /tmp/shimless-check \
 Expected: green with no C compilation anywhere in the output. `make deps` still
 initialises the submodule for the corpus and the CLI oracle.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
 git add Makefile tests/preflight.sps
