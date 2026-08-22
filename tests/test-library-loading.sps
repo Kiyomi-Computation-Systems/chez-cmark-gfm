@@ -87,5 +87,60 @@
     (test-assert "a validated-but-unloadable library raises reason load-failed"
       (string-contains? text "load-failed"))))
 
+;; --- 'missing-entry-point, the in-range library that lacks a symbol -----
+;; Design spec 3.10. cmark_gfm_extensions_get_tasklist_item_checked first
+;; shipped in 0.29.0.gfm.1; unpatched upstream 0.29.0.gfm.0 does not have it,
+;; yet reports a version well inside the supported range, so the version gate
+;; cannot see the difference and a floor cannot be raised without also
+;; rejecting Debian 11's patched gfm.0. native.sls guards that one binding
+;; instead. This asserts the guard actually converts the failure.
+;;
+;; The decoy extensions library is a SYMLINK TO THE RESOLVED CORE LIBRARY,
+;; and that is the whole trick. Nothing is compiled and nothing is committed:
+;; the core is a real shared object, so it loads; it reports a version inside
+;; the range, so version-checked passes; and it does not export any
+;; cmark_gfm_extensions_* symbol, so the first extensions binding native.sls
+;; evaluates -- raw-tasklist-checked, which precedes every other one -- fails
+;; exactly as it would on an unpatched gfm.0. Verified: with the guard
+;; removed this same command prints
+;;   Exception in foreign-procedure: no entry for
+;;   "cmark_gfm_extensions_get_tasklist_item_checked"
+;; so both assertions below fail. They are not decoration.
+;;
+;; No suffix on the decoy name, deliberately: parse-library-override does no
+;; version or extension parsing at all, and dlopen by absolute path does not
+;; care, so this needs no macOS/Linux branch. What the basename MUST contain
+;; is "cmark-gfm-extensions", or it classifies as a second core and the
+;; override is rejected as 'invalid-override before any load happens.
+(define decoy-ext-symbolless
+  (string-append (current-directory) "/tests/tmp/libcmark-gfm-extensions.decoy"))
+
+(system (string-append "ln -sf " (car resolved-libraries) " " decoy-ext-symbolless))
+
+(let ((out "tests/tmp/missing-entry-point-stderr.txt"))
+  (guard (e (#t #f))
+    (capture-command
+     (string-append "CHEZ_CMARK_GFM_LIBS=" (car resolved-libraries)
+                    ":" decoy-ext-symbolless
+                    " CHEZSCHEMELIBDIRS=" (or (getenv "CHEZSCHEMELIBDIRS") "src:tests:build/scheme-libs")
+                    " " (or (getenv "CHEZ") "chez")
+                    " --program tests/load-failed-probe.sps")
+     out
+     #t))
+  (let ((text (utf8->string (file->bytevector out))))
+    (test-assert "an in-range library missing the tasklist entry point raises missing-entry-point"
+      (string-contains? text "missing-entry-point"))
+    ;; The condition is only half the claim. The other half is that the raw
+    ;; foreign-procedure error no longer escapes -- that is what the guard
+    ;; buys, and asserting only the reason above would still pass if both
+    ;; were somehow printed.
+    (test-assert "the raw foreign-procedure error does not escape"
+      (not (string-contains? text "no entry for")))
+    ;; The path must name the EXTENSIONS library, not the core. Both are
+    ;; loaded, both are real files, and a cdr/car slip would be invisible to
+    ;; the two assertions above while sending the reader to the wrong file.
+    (test-assert "the condition names the extensions library, not the core"
+      (string-contains? text "libcmark-gfm-extensions.decoy"))))
+
 (test-end "library-loading")
 (exit (if (zero? (test-runner-fail-count runner)) 0 1))

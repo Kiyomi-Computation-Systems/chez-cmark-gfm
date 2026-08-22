@@ -18,6 +18,13 @@
 ;;; With CHEZ_CMARK_GFM_LIBS pointing at two files that validate but cannot
 ;;; load, that forced invocation raises &cmark-library-unavailable with reason
 ;;; 'load-failed, and the process dies with that condition on stderr.
+;;;
+;;; tests/test-library-loading.sps runs this same program a SECOND time with a
+;;; different override -- two files that validate, load, and pass the version
+;;; gate, but where the extensions half exports no cmark_gfm_extensions_*
+;;; symbol -- to reach reason 'missing-entry-point. The file keeps its name:
+;;; what it does is force native.sls's library body to run and let whatever
+;;; that body raises escape, and the override decides which failure that is.
 (import (rnrs) (cmark gfm))
 (display (markdown->html "# x\n" (default-cmark-options)))
 (display "unexpectedly imported\n")

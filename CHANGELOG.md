@@ -31,12 +31,21 @@ behaviour. See ADR-0015, ADR-0016, ADR-0017.
 relative path, an absent file, two libraries of the same kind — because the
 remedy is identical for all of them: name both libraries, by absolute path.
 
+A fourth reason, `missing-entry-point`, is new. It is listed here rather than
+under *Added* only so the reasons stay in one place — **it is not a breaking
+change**. Adding a reason is additive for existing `guard` clauses: they
+discriminate on `cmark-library-unavailable?`, and every one of them still
+catches every condition it caught before. Only code that exhaustively
+`case`s on the reason symbol and errors on the default would notice, and
+nothing is obliged to. See the `0.29.0.gfm.0` floor note below for why it
+exists.
+
 `cmark-gfm-version-compatible?` keeps its name and arity. It now answers "is
 the loaded library inside the supported range", which is the only version
 question left once nothing is compiled against a header.
 
-The `index` redefinition is what makes the declared `0.29.0.gfm.0` floor
-*true*. `cmark_node_get_item_index`, which returned the literal number, was
+The `index` redefinition is *half* of what makes the declared `0.29.0.gfm.0`
+floor true. `cmark_node_get_item_index`, which returned the literal number, was
 added upstream in `f040422` and first tagged in `0.29.0.gfm.11`; binding it
 killed `(import (cmark gfm))` outright — with a raw Chez
 `no entry for …`, not a structured condition — on every library below that,
@@ -48,6 +57,22 @@ computed from `cmark_node_get_list_start` and `cmark_node_get_list_type` on
 the parent list, both present since well before 0.29, plus the sibling
 offset `convert-children` already threaded for table-cell alignment — so no
 FFI surface was added to remove one. See design spec §3.8.
+
+The other half is `cmark_gfm_extensions_get_tasklist_item_checked`, and it
+could not be fixed the same way, because it cannot be fixed by a version check
+at all. That entry point first shipped in `0.29.0.gfm.1` — unpatched upstream
+`0.29.0.gfm.0` spells it `cmark_gfm_extensions_get_tasklist_state` — and on
+such a library 11 of the 20 suites died with the same raw
+`no entry for …`. But Debian 11 backports the rename into *its* `gfm.0` (its
+`libcmark-gfm-extensions0.symbols` lists the symbol at `@Base 0.29.0.gfm.0`)
+while still reporting `0.29.0.gfm.0` from `cmark_version()`. A `gfm.0` floor
+therefore admits the upstream build that crashes; a `gfm.1` floor rejects the
+Debian build that works. The two are indistinguishable by version because the
+constraint is not a version — it is the presence of one symbol, which
+distributions patch independently of the version they report. So the symbol is
+probed instead: that one binding is wrapped in a `guard` and raises
+`&cmark-library-unavailable` with reason `missing-entry-point`, naming the
+extensions library. The declared range is unchanged. See design spec §3.10.
 
 ### Added
 
@@ -70,8 +95,14 @@ FFI surface was added to remove one. See design spec §3.8.
   wins, the Linux triple table, and override parsing including the swapped
   and same-kind cases.
 - **`tests/test-library-loading.sps`** and **`tests/load-failed-probe.sps`** —
-  the override's validation rules and the `load-failed` path, the latter in a
-  subprocess because the failure happens at library-instantiation time.
+  the override's validation rules, the `load-failed` path, and the
+  `missing-entry-point` path. The last two run in a subprocess because the
+  failure happens at library-instantiation time. `missing-entry-point` is
+  reached without compiling or committing a stub: the decoy extensions
+  library is a symlink to the *resolved core library*, which loads, reports
+  an in-range version, and exports no `cmark_gfm_extensions_*` symbol at all
+  — the same shape as an unpatched `gfm.0`, from a file already on the
+  machine.
 - **`tests/test-option-bits.sps`** — asserts every cmark option constant now
   built in Scheme against `vendor/cmark-gfm/src/cmark-gfm.h`, which is what
   replaced the shim's job of reading them from the header.

@@ -29,6 +29,18 @@
 (guard (e ((cmark-library-unavailable? e)
            (printf "chez-cmark-gfm: no usable libcmark-gfm (~a)\n"
                    (cmark-library-unavailable-reason e))
+           ;; 'missing-entry-point is the one reason of the four where the
+           ;; library IS installed, IS loadable, and IS inside the supported
+           ;; range. The three install lines below are still the remedy -- a
+           ;; NEWER cmark-gfm is what fixes it -- but on their own they read
+           ;; as "you have not installed it", which is false here and sends
+           ;; the reader to a command that reinstalls the very build just
+           ;; rejected. Name the file and what it lacks first, the way the
+           ;; version-incompatible clause below names the range it rejected.
+           (when (eq? 'missing-entry-point (cmark-library-unavailable-reason e))
+             (printf "  ~a\n" (cmark-library-unavailable-path e))
+             (printf "  loaded and is in range, but has no cmark_gfm_extensions_get_tasklist_item_checked,\n")
+             (printf "  which arrived in 0.29.0.gfm.1. A newer cmark-gfm is what fixes this:\n"))
            (printf "  install it with:  apt install cmark-gfm   (Debian/Ubuntu)\n")
            (printf "                    brew install cmark-gfm  (macOS)\n")
            (printf "  or name both libraries in CHEZ_CMARK_GFM_LIBS.\n")

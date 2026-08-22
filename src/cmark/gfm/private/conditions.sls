@@ -93,6 +93,10 @@
   ;;                        paths to existing regular files, one core and one
   ;;                        extensions library
   ;;   'load-failed      -- load-shared-object raised on a validated path
+  ;;   'missing-entry-point -- the library loaded and its version is inside the
+  ;;                        supported range, but it predates an entry point
+  ;;                        this binding requires. `path` names the shared
+  ;;                        object that should have held the symbol.
   ;;
   ;; 'invalid-override deliberately covers several causes at once (wrong entry
   ;; count, a relative path, an absent file, two libraries of the same kind)

@@ -23,11 +23,14 @@
 ;;;   the supported-range check -> everything else.
 ;;; NOTE what this does and does not buy. It converts an out-of-RANGE library
 ;;; into &cmark-version-incompatible on both resolution paths. It cannot help
-;;; a library that is IN range but missing a symbol bound below: that still
-;;; dies raw, at whichever definition it cannot satisfy. Keeping
-;;; cmark-supported-version-range honest about the symbols actually bound here
-;;; is a review obligation, not something this gate enforces (design spec 3.8
-;;; is the worked example).
+;;; a library that is IN range but missing a symbol bound below -- that still
+;;; dies raw, at whichever definition it cannot satisfy -- EXCEPT for the one
+;;; symbol known to be absent from a library inside the range, which carries a
+;;; `guard` of its own at raw-tasklist-checked (design spec 3.10). The gate
+;;; covers the RANGE; that guard covers the one known hole in the CONTENTS.
+;;; Keeping cmark-supported-version-range honest about the symbols actually
+;;; bound here is still a review obligation, not something either check
+;;; enforces (design spec 3.8 is the worked example).
 (library (cmark gfm private native)
   (export ensure-native-loaded!
           version-supported? version-compatible?
@@ -196,9 +199,35 @@
   ;; only the low byte of the return register with the upper bits unspecified.
   ;; Declaring `int` would read whatever happens to be there. This is the job
   ;; a C wrapper used to do, done by the type declaration instead.
+  ;;
+  ;; GUARDED, and it is the only binding in this file that is. This entry
+  ;; point first shipped in 0.29.0.gfm.1; unpatched upstream 0.29.0.gfm.0
+  ;; spells it `char *cmark_gfm_extensions_get_tasklist_state`. Both report a
+  ;; version INSIDE cmark-supported-version-range, so version-checked above
+  ;; cannot tell them apart -- and raising the floor to gfm.1 is not the fix
+  ;; either: Debian 11 backports the rename into its gfm.0 (its own
+  ;; libcmark-gfm-extensions0.symbols lists this symbol at @Base
+  ;; 0.29.0.gfm.0) while still reporting 0.29.0.gfm.0 from cmark_version().
+  ;; A gfm.0 floor admits the upstream build that then crashes; a gfm.1 floor
+  ;; rejects the Debian build that works. The constraint is the PRESENCE OF
+  ;; THE SYMBOL, which distributions patch independently of the version they
+  ;; report, so the symbol is what gets probed. See design spec 3.10.
+  ;;
+  ;; Without this guard the import dies with a raw
+  ;;   Exception in foreign-procedure: no entry for "cmark_gfm_extensions_..."
+  ;; -- exactly the failure the ORDERING NOTE at the top says the version gate
+  ;; structurally cannot convert. A failed foreign-procedure resolution is
+  ;; catchable because the entry point is looked up when the expression is
+  ;; EVALUATED, which is inside this guard's dynamic extent.
+  ;;
+  ;; The path named is the EXTENSIONS library -- the cdr, not the car. This
+  ;; symbol lives there, and naming the core would send the reader to a file
+  ;; that was never going to hold it.
   (define raw-tasklist-checked
-    (foreign-procedure "cmark_gfm_extensions_get_tasklist_item_checked"
-                       (uptr) unsigned-8))
+    (guard (e (#t (raise (make-cmark-library-unavailable
+                          (cdr resolved-libraries) 'missing-entry-point))))
+      (foreign-procedure "cmark_gfm_extensions_get_tasklist_item_checked"
+                         (uptr) unsigned-8)))
 
   (define (tasklist-checked node) (not (zero? (raw-tasklist-checked node))))
 

@@ -40,6 +40,16 @@ nothing is compiled: importing ~(cmark gfm)~ locates a library on this
 machine and loads it, and one outside that range is refused with
 ~&cmark-version-incompatible~ rather than used.
 
+The range is not the whole contract, because one entry point this binding
+needs — ~cmark_gfm_extensions_get_tasklist_item_checked~ — arrived in
+~0.29.0.gfm.1~, and a version check cannot stand in for it: Debian 11
+backports the symbol into its ~gfm.0~ and still reports ~gfm.0~, so a floor
+that rejected upstream ~gfm.0~ would reject Debian's working one too. The
+symbol is probed instead. A library that satisfies the range but lacks it
+raises ~&cmark-library-unavailable~ with reason ~missing-entry-point~,
+naming the extensions library, rather than dying with a raw foreign-procedure
+error.
+
 *** Supported matrix
 
 Two rows, because two rows are what CI proves. 2.0 has *one* acquisition
