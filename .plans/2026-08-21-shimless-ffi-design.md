@@ -340,6 +340,36 @@ The accepted cost, stated rather than buried: on cmark-gfm older than 0.29.0.gfm
 other. The affected differential assertions ask the loaded library which behaviour to
 expect, and must keep discriminating on both sides of the boundary rather than skipping.
 
+### 3.10 The floor is a symbol, not a version
+
+CI and two independent audits confirmed that `(cmark gfm)` does not work on an *unpatched
+upstream* `0.29.0.gfm.0`: `cmark_gfm_extensions_get_tasklist_item_checked` first shipped in
+gfm.1 (gfm.0 spells it `char *cmark_gfm_extensions_get_tasklist_state`), so 11 of 20 suites
+die with a raw `Exception in foreign-procedure`.
+
+**A version check cannot fix this**, and that is the whole point. Debian 11 ships a
+*patched* gfm.0 that backports the rename — its own
+`libcmark-gfm-extensions0.symbols` lists the symbol at `@Base 0.29.0.gfm.0` — and it
+reports `0.29.0.gfm.0` from `cmark_version()`. So:
+
+- a floor of gfm.0 admits Debian 11 (correct) and upstream gfm.0 (which then crashes);
+- a floor of gfm.1 rejects upstream gfm.0 (correct) *and Debian 11* (wrong — it works).
+
+The two are indistinguishable by version because the constraint is not a version. **It is
+the presence of one entry point**, and distributions patch entry points independently of
+the version they report.
+
+**Decision: probe the symbol.** That one `foreign-procedure` is wrapped in a `guard` — a
+failed resolution is catchable, verified — and raises `&cmark-library-unavailable` with
+reason `missing-entry-point` naming the extensions library. This is true for both kinds of
+gfm.0 and requires no change to the declared range, which stays `(#x001d0000 .
+#x001dffff)`.
+
+It also generalises: any future library that satisfies the range but lacks an entry point
+this binding needs now fails diagnosably rather than with a raw FFI error. §4's version
+gate covers the *range*; this covers the *contents*, which is the half the gate structurally
+cannot see.
+
 ## 4. Version checking
 
 Two checks, at different times, for different reasons.
