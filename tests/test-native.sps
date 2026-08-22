@@ -122,7 +122,7 @@
 
 ;; --- I3: every option flag must move an independent, non-zero bit -----
 ;; The composition test above only ever exercises positions 1 and 2
-;; (validate-utf8, sourcepos) together. A shim where sourcepos aliased
+;; (validate-utf8, sourcepos) together. A table that aliased sourcepos to
 ;; validate-utf8, or where hardbreaks/nobreaks/smart/unsafe_html did
 ;; nothing at all -- including the security-relevant unsafe_html flag --
 ;; would still pass every assertion above this one.
@@ -141,14 +141,13 @@
     (and (for-all (lambda (x) (> x 0)) flags)
          (pairwise-distinct? flags))))
 
-;; --- I4: compiled-vs-runtime version comparison -------------------------
+;; --- I4: version range check -------------------------------------------
 ;; ensure-native-loaded! runs at most once per process (init-mutex plus
-;; the initialized? guard), against the real, matching shim and library,
-;; which always succeeds -- so its raise path is untested by anything
-;; that calls it. version-compatible? is the pure predicate it now gates
-;; on; calling it directly with synthetic values exercises both the
-;; compiled/runtime equality check and the range check independently,
-;; with no need for an actually mismatched library.
+;; the initialized? guard), against the real, matching library, which
+;; always succeeds -- so its raise path is untested by anything that calls
+;; it. version-compatible? is the pure predicate it now gates on; calling
+;; it directly with synthetic values exercises the range check with no
+;; need for an actually unsupported library.
 (test-assert "version-supported? accepts both ends of the configured range"
   (and (version-supported? #x001d0000)
        (version-supported? #x001dffff)))
@@ -159,23 +158,16 @@
 (test-assert "version-supported? rejects a version above the range"
   (not (version-supported? #x001e0000)))
 
-(test-assert "version-compatible? accepts equal compiled/runtime versions inside the range"
-  (version-compatible? #x001d000d #x001d000d))
+;; version-compatible? is now a one-argument alias for version-supported?
+;; (native.sls: there is no separate compiled version to compare any more,
+;; so there is nothing left for it to do beyond the range check already
+;; covered above). These two calls exist only to prove the alias itself is
+;; callable under its own name and agrees with version-supported?.
+(test-assert "version-compatible? accepts a version inside the range"
+  (version-compatible? #x001d000d))
 
-;; A gfm patch bump under a shim compiled against an earlier patch must be
-;; ACCEPTED -- the supported range is 0.29.0.gfm.x, so rejecting it would
-;; contradict the range the project publishes.
-(test-assert "version-compatible? accepts a gfm patch bump inside the range"
-  (version-compatible? #x001d000d #x001d000e))
-
-;; ...but a shim built against an unsupported header is rejected even when the
-;; runtime is fine. This is what checking `compiled` buys over checking runtime
-;; alone; without it this assertion passes vacuously.
-(test-assert "version-compatible? rejects a compiled version outside the range"
-  (not (version-compatible? #x001c0000 #x001d000d)))
-
-(test-assert "version-compatible? rejects an equal compiled/runtime pair outside the range"
-  (not (version-compatible? #x001c0000 #x001c0000)))
+(test-assert "version-compatible? rejects a version outside the range"
+  (not (version-compatible? #x001c0000)))
 
 ;; --- I2: shim-path validation and load wrapping -------------------------
 ;; native.sls's own shim-file/shim-loaded top-level bindings run once per
@@ -271,48 +263,8 @@
    (number->string (bitwise-and v #xff))))
 
 (test-equal "runtime-version-string agrees with the packed runtime version"
-  (decode-version (shim-runtime-version))
+  (decode-version (cmark-runtime-version))
   (runtime-version-string))
-
-(test-assert "the compiled and runtime versions are both in the supported range"
-  (and (version-supported? (shim-compiled-version))
-       (version-supported? (shim-runtime-version))))
-
-;; --- Stage 2: option bits are six DISTINCT bits ------------------------
-;; This is the only coverage validate-utf8? can have: the public API takes a
-;; Scheme string and string->utf8 always emits valid UTF-8, so
-;; CMARK_OPT_VALIDATE_UTF8 has no observable effect on any reachable input
-;; and no differential cell can discriminate it (design spec §5.6). Testing
-;; the BIT is honest; testing the behaviour would be an assertion that
-;; passes either way.
-(define (all-distinct? xs)
-  (cond ((null? xs) #t)
-        ((memv (car xs) (cdr xs)) #f)
-        (else (all-distinct? (cdr xs)))))
-
-(test-assert "each of the six option flags sets a distinct bit"
-  (all-distinct?
-   (list (option-bits #t #f #f #f #f #f)
-         (option-bits #f #t #f #f #f #f)
-         (option-bits #f #f #t #f #f #f)
-         (option-bits #f #f #f #t #f #f)
-         (option-bits #f #f #f #f #t #f)
-         (option-bits #f #f #f #f #f #t))))
-
-(test-assert "validate-utf8? is wired to a real bit even though its behaviour is unreachable"
-  (not (= (option-bits #t #f #f #f #f #f)
-          (option-bits #f #f #f #f #f #f))))
-
-;; Expected value is the sentinel 'differ, not bare #f, for the same reason
-;; documented above the NULL-mapping assertion: bare #f is also what a
-;; swallowed exception from either option-bits call would produce, which
-;; would make this assertion pass whether or not the two masks actually
-;; differ.
-(test-equal "all flags off is the default mask, and differs from all flags on"
-  'differ
-  (let ((a (option-bits #f #f #f #f #f #f))
-        (b (option-bits #t #t #t #f #t #t)))
-    (if (= a b) 'same 'differ)))
 
 ;; --- Stage 3: node accessors -------------------------------------------
 ;; Driven through call-with-native-document rather than a bare parser so the
@@ -435,24 +387,41 @@
 (test-equal "a plain item's type string is item"
   "item" (type-at "- plain\n" '("tasklist") '(0 0)))
 (test-equal "tasklist-checked distinguishes checked from unchecked"
-  '(1 0)
+  '(#t #f)
   (with-root task-md '("tasklist")
     (lambda (r)
       (list (tasklist-checked (walk r '(0 0)))
             (tasklist-checked (walk r '(0 1)))))))
-;; The shim wrapper's reason for existing: the underlying entry point returns
-;; C _Bool, whose upper return-register bits are unspecified. Values other
-;; than exactly 1 and 0 above would be the symptom.
-(test-equal "tasklist-checked returns exactly 1 or 0, never a stray bit pattern"
-  #t
-  (with-root task-md '("tasklist")
-    (lambda (r) (and (memv (tasklist-checked (walk r '(0 0))) '(0 1)) #t))))
 
 ;; alignment-bytes must not read through a NULL pointer.
 (test-equal "alignment-bytes yields zeros for a NULL array"
   '(0 0 0) (alignment-bytes 0 3))
 (test-equal "alignment-bytes yields the empty list for zero columns"
   '() (alignment-bytes 0 0))
+
+;; --- the allocator slot the shim used to hide ------------------------
+;; cmark_get_default_mem_allocator returns {calloc, realloc, free}. Freeing a
+;; renderer buffer with libc free() is NOT equivalent and is documented as
+;; forbidden; this asserts we are reading the right member. A reordered or
+;; resized struct cmark_mem shows up here rather than as a heap corruption.
+(test-assert "allocator exposes three distinct non-null function pointers"
+  (let ((slots (allocator-slots)))
+    (and (= 3 (length slots))
+         (for-all (lambda (s) (not (zero? s))) slots)
+         (not (= (car slots) (cadr slots)))
+         (not (= (cadr slots) (caddr slots)))
+         (not (= (car slots) (caddr slots))))))
+
+;; The counters are Scheme-side now. They count acquisitions this library
+;; makes, which is what the ownership contract is about; they were never a
+;; measure of the C heap.
+(test-assert "counters are always live"
+  (let ((before (live-counts)))
+    (count-parser-new!)
+    (let ((during (live-counts)))
+      (count-parser-free!)
+      (and (= (+ 1 (car before)) (car during))
+           (equal? before (live-counts))))))
 
 (test-end "native")
 

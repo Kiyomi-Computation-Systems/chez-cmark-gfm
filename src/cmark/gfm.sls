@@ -150,7 +150,7 @@
     (runtime-version-string))
 
   (define (cmark-gfm-version-compatible?)
-    (version-compatible? (shim-compiled-version) (shim-runtime-version)))
+    (version-compatible? (cmark-runtime-version)))
 
   ;; Probes rather than enumerates. cmark_list_syntax_extensions would hand
   ;; back a cmark_llist* to traverse and free; find-extension returns a

@@ -88,18 +88,5 @@
 
 (test-equal "all flags off is zero" 0 (option-bits #f #f #f #f #f #f))
 
-;; --- TRANSITIONAL: delete this block in Task 4, with the shim ----------
-;; Equivalence against chez_cmark_option_bits over all 64 combinations. This
-;; is a direct proof against the code being replaced; it exists to make the
-;; shim's removal safe and has no purpose afterwards.
-(test-assert "Scheme table agrees with the shim for all 64 combinations"
-  (let loop ((n 0))
-    (or (= n 64)
-        (let ((bit (lambda (i) (bitwise-bit-set? n i))))
-          (and (= (option-bits (bit 0) (bit 1) (bit 2) (bit 3) (bit 4) (bit 5))
-                  (shim-option-bits (bit 0) (bit 1) (bit 2) (bit 3) (bit 4) (bit 5)))
-               (loop (+ n 1)))))))
-;; --- end transitional block -------------------------------------------
-
 (test-end "option-bits")
 (exit (if (zero? (test-runner-fail-count runner)) 0 1))

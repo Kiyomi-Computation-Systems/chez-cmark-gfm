@@ -18,7 +18,6 @@
           cmark-opt-default cmark-opt-sourcepos cmark-opt-hardbreaks
           cmark-opt-nobreaks cmark-opt-validate-utf8 cmark-opt-smart
           cmark-opt-unsafe
-          shim-option-bits
           live-counts
           count-parser-new! count-parser-free!
           count-root-new!   count-root-free!
@@ -26,7 +25,8 @@
           parser-new parser-feed parser-finish parser-free
           node-free find-extension attach-extension
           parser-get-syntax-extensions render-html free-buffer
-          runtime-version-string shim-compiled-version shim-runtime-version
+          allocator-slots
+          runtime-version-string cmark-runtime-version
           render-xml render-commonmark render-plaintext
           node-first-child node-next node-type-string node-literal
           node-heading-level node-list-type node-list-delim node-list-start
@@ -41,7 +41,7 @@
   ;; conflict class already documented for `exit` (Task 8).
   (import (rnrs)
           (only (chezscheme)
-                load-shared-object foreign-procedure foreign-ref
+                load-shared-object foreign-procedure foreign-ref foreign-sizeof
                 file-regular? make-mutex with-mutex getenv)
           (cmark gfm private config)
           (cmark gfm private conditions))
@@ -108,32 +108,62 @@
   ;; an R6RS library body while still running before every binding below.
   (define shim-loaded (load-shim shim-file))
 
-  ;; --- shim bindings ----------------------------------------------------
-  (define shim-compiled-version
-    (foreign-procedure "chez_cmark_shim_compiled_version" () int))
-  (define shim-runtime-version
-    (foreign-procedure "chez_cmark_runtime_version" () int))
-  (define raw-option-bits
-    (foreign-procedure "chez_cmark_option_bits" (int int int int int int) int))
+  ;; --- version, straight from the library ------------------------------
+  (define cmark-runtime-version (foreign-procedure "cmark_version" () int))
+
+  ;; --- buffer release through cmark's own allocator ---------------------
+  ;; cmark_get_default_mem_allocator returns a pointer to
+  ;; struct cmark_mem { calloc; realloc; free; } -- three function pointers in
+  ;; that order. The third is the ONLY correct way to release a renderer
+  ;; buffer; libc free() is not equivalent and cmark's own header says so.
+  ;;
+  ;; Chez accepts an integer address where a name string normally goes, which
+  ;; is what makes calling through a struct member possible at all. The offset
+  ;; is an ABI assumption, checked by tests/test-native.sps "allocator exposes
+  ;; three distinct non-null function pointers".
+  (define default-mem-allocator
+    (foreign-procedure "cmark_get_default_mem_allocator" () uptr))
+
+  (define (allocator-slots)
+    (let ((mem (default-mem-allocator))
+          (w (foreign-sizeof 'void*)))
+      (list (foreign-ref 'uptr mem 0)
+            (foreign-ref 'uptr mem w)
+            (foreign-ref 'uptr mem (* 2 w)))))
+
   (define free-buffer
-    (foreign-procedure "chez_cmark_free_buffer" (uptr) void))
+    (foreign-procedure (caddr (allocator-slots)) (uptr) void))
 
-  (define count-parser-new!
-    (foreign-procedure "chez_cmark_count_parser_new" () void))
-  (define count-parser-free!
-    (foreign-procedure "chez_cmark_count_parser_free" () void))
-  (define count-root-new!
-    (foreign-procedure "chez_cmark_count_root_new" () void))
-  (define count-root-free!
-    (foreign-procedure "chez_cmark_count_root_free" () void))
-  (define count-buffer-new!
-    (foreign-procedure "chez_cmark_count_buffer_new" () void))
-  (define count-buffer-free!
-    (foreign-procedure "chez_cmark_count_buffer_free" () void))
+  ;; --- tasklist checked state -------------------------------------------
+  ;; `unsigned-8`, not `int`: the entry point returns C _Bool, which occupies
+  ;; only the low byte of the return register with the upper bits unspecified.
+  ;; Declaring `int` would read whatever happens to be there. This is the job
+  ;; the shim existed to do, done by the type declaration instead.
+  (define raw-tasklist-checked
+    (foreign-procedure "cmark_gfm_extensions_get_tasklist_item_checked"
+                       (uptr) unsigned-8))
 
-  (define live-parsers (foreign-procedure "chez_cmark_live_parsers" () long))
-  (define live-roots   (foreign-procedure "chez_cmark_live_roots" () long))
-  (define live-buffers (foreign-procedure "chez_cmark_live_buffers" () long))
+  (define (tasklist-checked node) (not (zero? (raw-tasklist-checked node))))
+
+  ;; --- allocation counters ----------------------------------------------
+  ;; Always on. Three fixnum increments per document is not a cost worth a
+  ;; build mode, and the C versions existed only so a prod build could compile
+  ;; them out -- which is what `make prod` and the flavor machinery were for.
+  ;; These count acquisitions THIS library makes; they were never a measure of
+  ;; the C heap. tests/test-lifecycle.sps reads them to prove pairing.
+  (define live-parser-count 0)
+  (define live-root-count 0)
+  (define live-buffer-count 0)
+
+  (define (count-parser-new!)  (set! live-parser-count (+ live-parser-count 1)))
+  (define (count-parser-free!) (set! live-parser-count (- live-parser-count 1)))
+  (define (count-root-new!)    (set! live-root-count   (+ live-root-count 1)))
+  (define (count-root-free!)   (set! live-root-count   (- live-root-count 1)))
+  (define (count-buffer-new!)  (set! live-buffer-count (+ live-buffer-count 1)))
+  (define (count-buffer-free!) (set! live-buffer-count (- live-buffer-count 1)))
+
+  (define (live-counts)
+    (list live-parser-count live-root-count live-buffer-count))
 
   ;; --- cmark bindings ---------------------------------------------------
   ;; Accessors returning `const char *` are declared `uptr`, not `string`,
@@ -222,10 +252,6 @@
     (foreign-procedure "cmark_gfm_extensions_get_table_alignments" (uptr) uptr))
   (define table-row-is-header
     (foreign-procedure "cmark_gfm_extensions_get_table_row_is_header" (uptr) int))
-  ;; Via the shim, NOT the cmark entry point directly: the underlying function
-  ;; returns C _Bool and binding it as int would read unspecified upper bits.
-  (define tasklist-checked
-    (foreign-procedure "chez_cmark_tasklist_checked" (uptr) int))
 
   ;; Copies `count` bytes out of a borrowed uint8_t array. Kept here rather
   ;; than in convert.sls so foreign-ref appears in exactly one library. A NULL
@@ -252,42 +278,21 @@
           (hi (cdr cmark-supported-version-range)))
       (and (>= runtime lo) (<= runtime hi))))
 
-  ;; design spec 6.3: initialisation compares the version the shim was
-  ;; COMPILED against to the version cmark_version() reports at RUNTIME. In
-  ;; an ordinary build these are identical -- the shim links directly
-  ;; against the library its own headers came from -- so any mismatch means
-  ;; the two have come apart, e.g. a shim built against one cmark-gfm
-  ;; checkout now loading a different library's runtime object because it
-  ;; was never rebuilt after an in-place library upgrade. The range check
-  ;; is kept alongside equality, not replaced by it: a compiled/runtime
-  ;; pair that agrees with itself but both predate what this binding
-  ;; supports must still be rejected.
-  ;; Compatible when BOTH the compile-time and runtime versions fall inside the
-  ;; supported range. Deliberately not `(= compiled runtime)`: the range spans
-  ;; 0.29.0.gfm.x, so exact equality would reject a runtime the project declares
-  ;; supported and force a shim rebuild on every upstream patch release. Checking
-  ;; `compiled` too catches a shim built against an unsupported header, which the
-  ;; runtime check alone would miss.
-  (define (version-compatible? compiled runtime)
-    (and (version-supported? compiled)
-         (version-supported? runtime)))
+  ;; There is no compile step any more, so there is no compiled-vs-runtime skew
+  ;; to detect: the only question is whether the library we loaded is one this
+  ;; binding supports. version-compatible? is retained as a one-argument alias
+  ;; so callers and tests keep a single name for the question.
+  (define (version-compatible? runtime) (version-supported? runtime))
 
-  ;; Idempotent. Fails closed on a compiled/runtime mismatch or an
-  ;; out-of-range version.
   (define (ensure-native-loaded!)
     (with-mutex init-mutex
       (unless initialized?
-        (let ((compiled (shim-compiled-version))
-              (runtime  (shim-runtime-version)))
-          (unless (version-compatible? compiled runtime)
-            (raise (make-cmark-version-incompatible compiled runtime))))
+        (let ((runtime (cmark-runtime-version)))
+          (unless (version-supported? runtime)
+            (raise (make-cmark-version-incompatible
+                    cmark-supported-version-range runtime))))
         (ensure-extensions-registered)
         (set! initialized? #t))))
-
-  (define (live-counts)
-    (list (live-parsers) (live-roots) (live-buffers)))
-
-  (define (bool->int x) (if x 1 0))
 
   ;; cmark's option bits, transcribed from vendor/cmark-gfm/src/cmark-gfm.h.
   ;; tests/test-option-bits.sps asserts every one of these against that header;
@@ -312,18 +317,6 @@
                      nobreaks?     cmark-opt-nobreaks)
                 smart?        cmark-opt-smart)
            unsafe-html?  cmark-opt-unsafe)))
-
-  ;; TRANSITIONAL (deleted in Task 4 with the shim): the C implementation the
-  ;; table above replaces, kept only so tests/test-option-bits.sps can prove
-  ;; the two agree across all 64 combinations.
-  (define (shim-option-bits validate-utf8? sourcepos? hardbreaks?
-                            nobreaks? smart? unsafe-html?)
-    (raw-option-bits (bool->int validate-utf8?)
-                     (bool->int sourcepos?)
-                     (bool->int hardbreaks?)
-                     (bool->int nobreaks?)
-                     (bool->int smart?)
-                     (bool->int unsafe-html?)))
 
   (define (runtime-version-string) (c-string->string (raw-version-string)))
 

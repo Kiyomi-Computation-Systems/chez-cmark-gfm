@@ -126,7 +126,7 @@
   (define (task-item-props p)
     (list (cons 'index (node-item-index p))
           (cons 'task? #t)
-          (cons 'checked? (not (zero? (tasklist-checked p))))))
+          (cons 'checked? (tasklist-checked p))))
 
   ;; Plan 7.4's default: preserve rather than discard, and never lose children
   ;; or literals. Preservation over a raise means a future cmark that adds a
