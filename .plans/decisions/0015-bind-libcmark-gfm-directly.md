@@ -34,16 +34,26 @@ nothing left for the build step to build.
 
 Delete `src/cmark-gfm-shim.{c,h}` and every build path that produced it. Bind
 `libcmark-gfm` and `libcmark-gfm-extensions` directly, and resolve both at runtime
-(ADR-0016). `src/cmark/gfm/private/native.sls` now binds 37 named cmark entry points
+(ADR-0016). `src/cmark/gfm/private/native.sls` now binds 36 named cmark entry points
 plus one bound by address; nothing of ours is compiled.
+
+It is 36 and not 37 because `cmark_node_get_item_index` is deliberately **not** among
+them. It was, and that made the declared `0.29.0.gfm.0` floor false: upstream added the
+entry point in `f040422`, first tagged `0.29.0.gfm.11`, so every older library — Debian
+11 and 12, Ubuntu 22.04 and 24.04 — failed at library-instantiation time with a raw Chez
+`no entry for "cmark_node_get_item_index"`. `convert.sls` computes the item's ordinal
+position from `cmark_node_get_list_start` and `cmark_node_get_list_type` on the parent
+list instead. That redefines the AST's `item` `index` from the number typed in the source
+to the item's position; the trade is argued in design spec §3.8 and recorded in the
+2.0.0 CHANGELOG's breaking-changes table.
 
 The five jobs that stood between Scheme and cmark, and what replaced each:
 
 | Shim job | Replacement | Where |
 |---|---|---|
-| `chez_cmark_shim_compiled_version` | deleted — no compile step, so no header/runtime skew can exist | `native.sls:288-292` |
+| `chez_cmark_shim_compiled_version` | deleted — no compile step, so no header/runtime skew can exist | `native.sls:286-290` |
 | `chez_cmark_runtime_version` | `(foreign-procedure "cmark_version" () int)` | `native.sls:119` |
-| `chez_cmark_option_bits` | six constants and the mask builder, in Scheme | `native.sls:304-326` |
+| `chez_cmark_option_bits` | six constants and the mask builder, in Scheme | `native.sls:302-324` |
 | `chez_cmark_free_buffer` | the third `void*` of `cmark_get_default_mem_allocator()`, called via its address | `native.sls:131-142` |
 | `chez_cmark_tasklist_checked` | `unsigned-8` as the result type, so only the defined byte of a C `_Bool` is read | `native.sls:149-153` |
 
@@ -108,11 +118,11 @@ Three alternatives were rejected:
   third `void*` of `struct cmark_mem`" was a compiler-checked member access in the
   shim; it is now `(foreign-ref 'uptr mem (* 2 (foreign-sizeof 'void*)))` at
   `native.sls:137-139`, believed rather than checked. The test at
-  `tests/test-native.sps:331-337` asserts the three slots are present, distinct, and
+  `tests/test-native.sps:340-346` asserts the three slots are present, distinct, and
   non-null, which catches a NULL slot, a duplicated slot, and a struct shrunk to fewer
   members. **It does not catch a reordering** — three distinct non-null pointers stay
   three distinct non-null pointers under any permutation — and
-  `tests/test-native.sps:320-330` says so in the source. The ordering guarantee rests on
+  `tests/test-native.sps:329-339` says so in the source. The ordering guarantee rests on
   `tests/test-differential.sps`, whose renders exercise the real release path through
   that exact slot, and on `make test-memory` (ADR-0003). A future cmark that inserted a
   member ahead of `free` would pass the slot test, and the first render would call

@@ -252,9 +252,18 @@
     (lambda (r)
       (let ((l (walk r '(0))))
         (list (node-list-type l) (node-list-start l))))))
-(test-equal "node-item-index reads the second item's index"
-  4 (with-root "3. one\n4. two\n" '()
-      (lambda (r) (node-item-index (walk r '(0 1))))))
+;; cmark_node_get_item_index is deliberately NOT bound: it first appears in
+;; 0.29.0.gfm.11, above this library's declared floor, so convert.sls derives
+;; an item's index from its parent list instead (design spec 3.8). What makes
+;; the PARENT the only node that can answer is that both list accessors are
+;; type-guarded (node.c) -- on an ITEM they report CMARK_NO_LIST and start 0,
+;; which would make every list look unordered and zero-based.
+(test-equal "the list accessors answer 0 on an item, not on its list"
+  '(0 0)
+  (with-root "3. one\n4. two\n" '()
+    (lambda (r)
+      (let ((i (walk r '(0 1))))
+        (list (node-list-type i) (node-list-start i))))))
 
 (test-equal "position accessors read the paragraph's span"
   '(3 1 3 4)

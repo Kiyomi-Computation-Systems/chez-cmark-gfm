@@ -90,8 +90,11 @@
   ;; Uniform key set with the task variant below (design spec 3.4): a
   ;; consumer never branches on key presence, and the key-set check compares a
   ;; fixed set rather than a conditional one.
-  (define (plain-item-props p)
-    (list (cons 'index (node-item-index p))
+  ;;
+  ;; `index` is supplied by the caller, not read from the node, so this takes
+  ;; it rather than a node pointer -- see item-index below.
+  (define (plain-item-props index)
+    (list (cons 'index index)
           (cons 'task? #f)
           (cons 'checked? #f)))
 
@@ -123,10 +126,47 @@
   ;; "tasklist" (extensions/tasklist.c:13-17). tasklist-checked alone cannot
   ;; distinguish an unchecked task from a non-task, so it is consulted only
   ;; after the type string has already established that this is a task item.
-  (define (task-item-props p)
-    (list (cons 'index (node-item-index p))
+  (define (task-item-props p index)
+    (list (cons 'index index)
           (cons 'task? #t)
           (cons 'checked? (tasklist-checked p))))
+
+  ;; --- an item's ordinal position ---------------------------------------
+  ;; `index` is computed here rather than read from the library.
+  ;; cmark_node_get_item_index was added upstream in 0.29.0.gfm.11, above
+  ;; this library's declared floor of 0.29.0.gfm.0, so binding it broke the
+  ;; import outright on Debian 11/12 and Ubuntu 22.04/24.04 (design spec
+  ;; 3.8). Nothing new is needed to replace it: convert-children already
+  ;; threads a zero-based sibling offset for table_cell alignment, and the
+  ;; node it walks IS the parent list.
+  ;;
+  ;; This is a REDEFINITION, not a reimplementation. The entry point returned
+  ;; node->as.list.start for an item, which the parser sets to the number
+  ;; literally typed; this is the item's ordinal position. `1. 1. 1.` was
+  ;; (1 1 1) and is now (1 2 3), and the literal numbers are no longer
+  ;; recoverable from the AST. cmark's own commonmark/man/plaintext renderers
+  ;; overwrite that field with exactly this computation --
+  ;; cmark_node_get_list_start(parent) for the first item, previous + 1 after
+  ;; (vendor/cmark-gfm/src/render.c:184-192) -- so the ordinal is cmark's own
+  ;; rendering semantics rather than an invention here.
+
+  ;; The enclosing list's start, or #f when the parent is not an ordered
+  ;; list. #f rather than 0 because the two answers differ: an ordered list
+  ;; may itself start at 0, numbering its items 0, 1, 2, while a BULLET list
+  ;; numbers every one of its items 0.
+  ;;
+  ;; Safe to ask of any parent, including a leaf: node.c type-guards both
+  ;; accessors, returning CMARK_NO_LIST and 0 unless node->type is
+  ;; CMARK_NODE_LIST. That guard is also why the parent has to be asked and
+  ;; not the item -- cmark_node_get_list_start on an ITEM answers 0 for every
+  ;; list, ordered or not.
+  (define (ordered-list-start p)
+    (and (= 2 (node-list-type p)) (node-list-start p)))
+
+  ;; 0 for a bullet list -- which is what a GFM task list is, so tasks index
+  ;; 0 too -- and for an item whose parent is not a list at all.
+  (define (item-index start offset)
+    (if start (+ start offset) 0))
 
   ;; Plan 7.4's default: preserve rather than discard, and never lose children
   ;; or literals. Preservation over a raise means a future cmark that adds a
@@ -174,11 +214,12 @@
      (make-node-entry "image"          'image          '(url title) link-props)
      (make-node-entry "list"           'list           '(kind start tight? delimiter)
                       list-props)
-     (make-node-entry "item"           'item           '(index task? checked?)
-                      plain-item-props)
+     ;; index is supplied positionally by convert-node/index, like table_cell
+     ;; alignment below, so these two declare the key but have no extractor
+     ;; of their own: an item's ordinal cannot be computed from the item.
+     (make-node-entry "item"           'item           '(index task? checked?) #f)
      (make-node-entry "strikethrough" 'strikethrough '() #f)
-     (make-node-entry "tasklist"     'item      '(index task? checked?)
-                      task-item-props)
+     (make-node-entry "tasklist"     'item      '(index task? checked?) #f)
      (make-node-entry "table"        'table     '(columns alignments) table-props)
      (make-node-entry "table_header" 'table-row '(header?) header-row-props)
      (make-node-entry "table_row"    'table-row '(header?) body-row-props)
@@ -223,34 +264,58 @@
       (raise (make-cmark-resource-limit 'too-many-nodes
                                        (convert-ctx-max-nodes ctx)))))
 
+  ;; The list start is read once per parent, and only when there is a child
+  ;; to spend it on: `p` here is every node in the document, the vast
+  ;; majority of them leaves, and a childless node must not pay two foreign
+  ;; calls to learn it is not a list.
   (define (convert-children p depth ctx)
-    (let loop ((c (node-first-child p)) (i 0) (acc '()))
-      (if (zero? c)
-          (reverse acc)
-          (loop (node-next c) (+ i 1)
-                (cons (convert-node/index c (copy-required (node-type-string c))
-                                          depth i ctx)
-                      acc)))))
+    (let ((first-child (node-first-child p)))
+      (if (zero? first-child)
+          '()
+          (let ((start (ordered-list-start p)))
+            (let loop ((c first-child) (i 0) (acc '()))
+              (if (zero? c)
+                  (reverse acc)
+                  (loop (node-next c) (+ i 1)
+                        (cons (convert-node/index
+                               c (copy-required (node-type-string c))
+                               depth start i ctx)
+                              acc))))))))
 
-  ;; Cell alignment is positional, so the child index has to reach the
-  ;; extractor. Only table_cell uses it; everything else ignores it.
-  (define (convert-node/index p type-string depth index ctx)
-    (if (string=? type-string "table_cell")
-        (let ((aligns (convert-ctx-column-alignments ctx)))
-          (with-node p type-string depth ctx
-                     (list (cons 'alignment
-                                 (if (< index (length aligns))
-                                     (list-ref aligns index)
-                                     'none)))))
-        (convert-node p type-string depth ctx)))
+  ;; Three node types have a property their own node cannot answer, and all
+  ;; three are answered here, from the parent's `start` and the child's
+  ;; zero-based `offset`:
+  ;;
+  ;;   table_cell -- alignment is positional, so the cell's column IS the
+  ;;   offset (see the column-alignments note on convert-ctx).
+  ;;   item, tasklist -- `index` is the ordinal position in the parent list.
+  ;;
+  ;; Everything else ignores both.
+  (define (convert-node/index p type-string depth start offset ctx)
+    (cond
+      ((string=? type-string "table_cell")
+       (let ((aligns (convert-ctx-column-alignments ctx)))
+         (with-node p type-string depth ctx
+                    (list (cons 'alignment
+                                (if (< offset (length aligns))
+                                    (list-ref aligns offset)
+                                    'none))))))
+      ((string=? type-string "item")
+       (with-node p type-string depth ctx
+                  (plain-item-props (item-index start offset))))
+      ((string=? type-string "tasklist")
+       (with-node p type-string depth ctx
+                  (task-item-props p (item-index start offset))))
+      (else (convert-node p type-string depth ctx))))
 
   ;; Both ceilings are checked on entry, before any child is visited, so
   ;; exceeding one raises instead of recursing further. The condition escapes
   ;; through call-with-native-document, whose after-thunk frees the parser and
   ;; root; the partially built Scheme tree is simply dropped.
   ;;
-  ;; properties-override is #f for every type except table_cell, whose
-  ;; alignment cannot be computed from the node alone.
+  ;; properties-override is #f for every type except the three whose
+  ;; properties cannot be computed from the node alone -- table_cell,
+  ;; item, and tasklist -- which convert-node/index supplies.
   (define (with-node p type-string depth ctx properties-override)
     (check-depth! depth ctx)
     (count-node! ctx)
@@ -276,13 +341,17 @@
                             props children source))))
 
   ;; Exported so tests can drive it directly (see the type-string note at
-  ;; the top of this file). table_cell is refused rather than silently
-  ;; producing an alignment-less table-cell node: convert-node/index is the
-  ;; only path that has the child index alignment is drawn from.
+  ;; the top of this file). The three parent-dependent types are refused
+  ;; rather than silently producing an alignment-less table-cell or an item
+  ;; with no index at all: convert-node/index is the only path that holds
+  ;; the parent's list start and the child's offset, which both are drawn
+  ;; from.
+  (define parent-dependent-type-strings '("table_cell" "item" "tasklist"))
+
   (define (convert-node p type-string depth ctx)
-    (when (string=? type-string "table_cell")
+    (when (member type-string parent-dependent-type-strings)
       (assertion-violation 'convert-node
-        "table_cell must be converted through convert-node/index, which supplies alignment positionally; direct calls cannot"
+        "table_cell, item, and tasklist must be converted through convert-node/index, which supplies their parent-dependent properties positionally; direct calls cannot"
         type-string))
     (with-node p type-string depth ctx #f))
 

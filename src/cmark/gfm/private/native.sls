@@ -31,7 +31,7 @@
           render-xml render-commonmark render-plaintext
           node-first-child node-next node-type-string node-literal
           node-heading-level node-list-type node-list-delim node-list-start
-          node-list-tight node-item-index node-fence-info
+          node-list-tight node-fence-info
           node-url node-title
           node-start-line node-start-column node-end-line node-end-column
           table-columns table-alignments table-row-is-header tasklist-checked
@@ -230,8 +230,6 @@
     (foreign-procedure "cmark_node_get_list_start" (uptr) int))
   (define node-list-tight
     (foreign-procedure "cmark_node_get_list_tight" (uptr) int))
-  (define node-item-index
-    (foreign-procedure "cmark_node_get_item_index" (uptr) int))
   (define node-start-line
     (foreign-procedure "cmark_node_get_start_line" (uptr) int))
   (define node-start-column

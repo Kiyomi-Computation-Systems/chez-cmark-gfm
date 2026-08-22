@@ -151,7 +151,7 @@ Rejected alternatives:
   `CHEZ_CMARK_GFM_LIBS` may legitimately name the unversioned symlinks from a `-dev`
   package, so selection is the user's. Verification is still ours: `cmark_version()` is
   read after loading and checked against the supported range on every path, override
-  included (`native.sls:294-302`). Entries are classified by **basename**, not whole
+  included (`native.sls:292-300`). Entries are classified by **basename**, not whole
   path, so a directory named `…cmark-gfm-extensions-cache…` cannot silently swap the
   pair (`discovery.sls:203-218`, `tests/test-discovery.sps:150-157`); order in the
   variable therefore does not matter.

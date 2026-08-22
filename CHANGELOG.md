@@ -24,6 +24,7 @@ behaviour. See ADR-0015, ADR-0016, ADR-0017.
 | `CHEZSCHEMELIBDIRS=src:fallback` | `CHEZSCHEMELIBDIRS=src` |
 | `make prod`, `make check-prod`, `make check-config` | removed. `make build` is now a discovery preflight: it compiles nothing and prints the library that would be loaded |
 | `HAVE_PKG`, `FLAVOR`, `CC`, `CFLAGS_*`, and the acquisition/flavor stamp machinery | removed. With no artifact there is no build mode to select and no mode flip to relink across |
+| `item` `index`, the number typed in the source | `item` `index`, the item's **ordinal position** — its list's `start` plus its offset among that list's items, and 0 for every item of a bullet list, a GFM task list being one. `1. 1. 1.` was `(1 1 1)` and is now `(1 2 3)`; `1. 5. 9.` was `(1 5 9)` and is now `(1 2 3)`. `1. 2. 3.` and `5. 6. 7.` are unchanged. The literal numbers are no longer recoverable from the AST |
 
 `invalid-override` and `load-failed` keep their names and meanings.
 `invalid-override` now covers a wider set of causes — wrong entry count, a
@@ -33,6 +34,20 @@ remedy is identical for all of them: name both libraries, by absolute path.
 `cmark-gfm-version-compatible?` keeps its name and arity. It now answers "is
 the loaded library inside the supported range", which is the only version
 question left once nothing is compiled against a header.
+
+The `index` redefinition is what makes the declared `0.29.0.gfm.0` floor
+*true*. `cmark_node_get_item_index`, which returned the literal number, was
+added upstream in `f040422` and first tagged in `0.29.0.gfm.11`; binding it
+killed `(import (cmark gfm))` outright — with a raw Chez
+`no entry for …`, not a structured condition — on every library below that,
+which is Debian 11 and 12 and Ubuntu 22.04 and 24.04. The ordinal is not an
+invention either: cmark's own commonmark, man, and plaintext renderers
+overwrite that field with exactly this number (`render.c:188-190`), so
+`markdown->commonmark` already renumbered `1. 1. 1.` to `1. 2. 3.`. It is
+computed from `cmark_node_get_list_start` and `cmark_node_get_list_type` on
+the parent list, both present since well before 0.29, plus the sibling
+offset `convert-children` already threaded for table-cell alignment — so no
+FFI surface was added to remove one. See design spec §3.8.
 
 ### Added
 
@@ -100,8 +115,21 @@ question left once nothing is compiled against a header.
   submodule, so those platforms worked with no system package; 2.0 compiles
   nothing and asks for a one-time source build instead. `README.org` gives
   the commands. Debian 11+, Ubuntu 22.04+, Arch, openSUSE Tumbleweed, NixOS,
-  Gentoo, Void, and Homebrew all package it, and every packaged version falls
-  inside the supported range.
+  Gentoo, Void, and Homebrew all package it; every packaged version falls
+  inside the supported range and exports every entry point this library
+  resolves at import, which is what the `index` redefinition above bought.
+- **The `0.29.0.gfm.0` floor holds for every *packaged* library, with one
+  caveat about an *upstream* `gfm.0` build.** Of the 36 entry points still
+  bound, 35 exist at every upstream 0.29 tag. The exception is
+  `cmark_gfm_extensions_get_tasklist_item_checked`, which first appears in
+  `0.29.0.gfm.1`; upstream `gfm.0` spells it
+  `cmark_gfm_extensions_get_tasklist_state` and returns `char *` instead.
+  This does not reach the documented install path — Debian and Ubuntu
+  backport the rename into their `0.29.0.gfm.0-N` packages, and bullseye's
+  `debian/libcmark-gfm-extensions0.symbols` lists the new name — but a
+  library built from an unpatched upstream `0.29.0.gfm.0` checkout would
+  still fail at import. The source-build instructions in `README.org` pin
+  `0.29.0.gfm.13`, so nothing this project documents reaches it.
 - **"`free` is the third `void*` in `struct cmark_mem`" is an ABI
   assumption**, where the shim had a compiler-checked member access. It is
   stable across the pinned 0.29 range and is covered by an allocator
