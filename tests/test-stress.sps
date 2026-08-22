@@ -99,7 +99,7 @@
   (markdown->sxml       doc opts))
 
 ;; live-counts is exported by (cmark gfm private native) and already returns
-;; (list (live-parsers) (live-roots) (live-buffers)) -- native.sls:283. Do not
+;; (list (live-parsers) (live-roots) (live-buffers)) -- native.sls:172. Do not
 ;; redefine it here; tests/test-lifecycle.sps calls the same procedure, so a
 ;; second spelling would drift from it.
 

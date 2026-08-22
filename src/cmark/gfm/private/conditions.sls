@@ -133,7 +133,7 @@
   ;; A tree handed to markdown-ast->sxml that the parser itself could never
   ;; produce -- e.g. a table row order only a caller-built or -rewritten AST
   ;; can create (design spec 3.4). Derives from &cmark-error directly, NOT
-  ;; from &cmark-invalid-input: conditions.sls:62-63 documents that type's
+  ;; from &cmark-invalid-input: conditions.sls:65-66 documents that type's
   ;; reasons as a closed set about raw Markdown text and option values, and
   ;; &cmark-unsupported-node was kept out of that family for the same
   ;; reason above -- a caller guarding bad documents must not silently
