@@ -67,7 +67,7 @@
 ;; ones from the `<b>` and `</b>` html-inlines, and two further top-level
 ;; blocks so `*TOP*` is a real container rather than a single-child wrapper.
 ;; The string was produced by running srl:sxml->html and then checked by
-;; reading it against README.org's table of documented deltas: `\n` between
+;; reading it against docs/sxml.md's table of documented deltas: `\n` between
 ;; blocks with no indentation at depth 1, NO indentation injected inside the
 ;; `<p>` (srl exempts an element with a bare-text child, the same rule the
 ;; `pre` assertion below depends on), and no trailing newline. `*TOP*`
