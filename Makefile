@@ -162,7 +162,7 @@ check-pins:
 # exist is a probe: if nothing in the suite's import chain ever reaches
 # (cmark gfm private native), the variable is never even read and the suite
 # passes untouched; if anything does reach it, native.sls's library body
-# raises &cmark-shim-unavailable at IMPORT time, before a single test runs,
+# raises &cmark-library-unavailable at IMPORT time, before a single test runs,
 # and the suite fails outright. Per AGENTS.md ("prefer a check to a
 # comment"): the check-pins comment above was itself violated in the same
 # commit that introduced it, and only started holding once it became a
