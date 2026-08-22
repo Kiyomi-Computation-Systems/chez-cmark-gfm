@@ -34,3 +34,12 @@ against a library that cannot load; the real probe raised
 The `markdown->html` call is what makes the difference — Chez does not
 instantiate `native.sls`'s body until a binding is referenced.
 **Reverted:** yes; scratch probe deleted.
+
+## Mutation D — the CI matrix grep still discriminates after repointing
+
+**Guards:** the Supported matrix names the Chez each CI job actually ran.
+**Mutation:** changed the macOS row in `docs/installing.md` from 10.4.1 to
+10.4.0.
+**Result:** FAILED — the anchored grep found no matching row, exactly as
+it did against README.org before the move.
+**Reverted:** yes.

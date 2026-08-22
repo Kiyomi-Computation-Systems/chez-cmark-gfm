@@ -63,7 +63,7 @@
            (printf "  install one inside that range:  apt install cmark-gfm   (Debian/Ubuntu)\n")
            (printf "                                  brew install cmark-gfm  (macOS)\n")
            (printf "  if that IS the package just rejected, build a supported release from\n")
-           (printf "  source -- README.org, \"RHEL, Fedora, and Alpine\", has the cmake recipe --\n")
+           (printf "  source -- docs/installing.md, \"RHEL, Fedora, and Alpine\", has the cmake recipe --\n")
            (printf "  and name both libraries in CHEZ_CMARK_GFM_LIBS if they land off the\n")
            (printf "  default search path.\n")
            (exit 1))

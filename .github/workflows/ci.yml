@@ -104,13 +104,13 @@ jobs:
           # version the table already contained -- a false diagnosis sending the
           # reader to edit correct prose.
           command -v grep >/dev/null || { echo "::error::grep is unavailable; this check cannot run."; exit 1; }
-          if ! grep -qF -e "$prefix " -e "$prefix|" README.org; then
-            echo "::error::README.org's Supported matrix does not name Chez $actual for the Linux row."
+          if ! grep -qF -e "$prefix " -e "$prefix|" docs/installing.md; then
+            echo "::error::docs/installing.md's Supported matrix does not name Chez $actual for the Linux row."
             echo "This runner now ships a different Chez than the table documents."
-            echo "Fix: edit the 'Supported matrix' table in README.org to say $actual."
+            echo "Fix: edit the 'Supported matrix' table in docs/installing.md to say $actual."
             echo "Do not pin the toolchain and do not delete this check -- the table is"
             echo "supposed to track whatever CI actually runs, not the other way around."
-            grep -n 'Linux/x86-64' README.org || true
+            grep -n 'Linux/x86-64' docs/installing.md || true
             exit 1
           fi
 
@@ -239,13 +239,13 @@ jobs:
           # version the table already contained -- a false diagnosis sending the
           # reader to edit correct prose.
           command -v grep >/dev/null || { echo "::error::grep is unavailable; this check cannot run."; exit 1; }
-          if ! grep -qF -e "$prefix " -e "$prefix|" README.org; then
-            echo "::error::README.org's Supported matrix does not name Chez $actual for the macOS row."
+          if ! grep -qF -e "$prefix " -e "$prefix|" docs/installing.md; then
+            echo "::error::docs/installing.md's Supported matrix does not name Chez $actual for the macOS row."
             echo "This runner now ships a different Chez than the table documents."
-            echo "Fix: edit the 'Supported matrix' table in README.org to say $actual."
+            echo "Fix: edit the 'Supported matrix' table in docs/installing.md to say $actual."
             echo "Do not pin the toolchain and do not delete this check -- the table is"
             echo "supposed to track whatever CI actually runs, not the other way around."
-            grep -n 'macOS/ARM64' README.org || true
+            grep -n 'macOS/ARM64' docs/installing.md || true
             exit 1
           fi
 
@@ -320,7 +320,7 @@ jobs:
           done < "$list"
           if [ "$rc" -ne 0 ]; then
             echo "2.0 compiles nothing on this path. If something here now builds C, the"
-            echo "'no compiler required' claim -- README.org's Installing section, and the"
+            echo "'no compiler required' claim -- docs/installing.md, and the"
             echo "akku-install job's exit criterion -- is false, and this step is the only"
             echo "place in CI that would notice."
             exit 1
@@ -340,7 +340,7 @@ jobs:
     # toolchain, git, and build tools already present, so building there
     # proves nothing about a clean machine -- which is exactly what
     # milestone 6's exit criterion is about. This job runs only what the
-    # README tells a reader to run.
+    # docs/installing.md tells a reader to run.
     container: ubuntu:24.04
     steps:
       # A bare container has no git, so checkout cannot run yet. This is the
@@ -356,7 +356,7 @@ jobs:
         with:
           submodules: recursive
 
-      # The SAME list README.org points readers at -- one copy, so this
+      # The SAME list docs/installing.md points readers at -- one copy, so this
       # cannot drift from the documentation. Must follow checkout, which is
       # what puts the file on disk.
       #
@@ -407,7 +407,7 @@ jobs:
 
       # CHEZ=chezscheme because Debian names the binary that way and the
       # Makefile defaults to `chez`.
-      - name: Build, exactly as the README says
+      - name: Build, exactly as docs/installing.md says
         run: make CHEZ=chezscheme build
 
       # No `make deps`, deliberately. The examples run under
