@@ -346,7 +346,7 @@ A `link` `href` and an `image` `src` take cmark's own rule, transcribed from
 `data:image/png`, `data:image/gif`, `data:image/jpeg`, and `data:image/webp`
 allowed through. A rejected URL yields an **empty** attribute value — not a
 raised condition and not a removed attribute — matching `html.c:387-391` and
-`html.c:405-409`. There is no customisation hook in 0.3.
+`html.c:405-409`. There is no customisation hook in 2.0.
 
 ```scheme
 (markdown->sxml "[x](javascript:alert(1))\n")
@@ -357,10 +357,12 @@ raised condition and not a removed attribute — matching `html.c:387-391` and
 ;; => (*TOP* (p (img (^ (src "data:image/png;base64,AAA") (alt "x")))))
 ```
 
-The adapter percent-encodes every byte outside `HREF_SAFE`
-(`src/houdini_href_e.c:32-44`) and **never touches `&` or `'`**. Those two
-are entity-escaped by whatever serializer you run; doing both halves in one
-place produces `%2520` or `&amp;amp;`, valid HTML carrying the wrong URL.
+The adapter's safe set is `HREF_SAFE` (`src/houdini_href_e.c:32-44`) plus
+`&` and `'`, which are absent from that table but added back here so the
+adapter **never touches** either; every other byte is percent-encoded.
+Those two are entity-escaped by whatever serializer you run instead; doing
+both halves in one place produces `%2520` or `&amp;amp;`, valid HTML
+carrying the wrong URL.
 
 ```scheme
 (markdown->sxml "[x](/café)\n")       ;; => (*TOP* (p (a (^ (href "/caf%C3%A9")) "x")))
@@ -382,7 +384,7 @@ cmark's own corpus (`spec.txt`, `extensions.txt`, `smart_punct.txt`, and
 > exported, not installed, and not something you can import from
 > `(cmark gfm)`. A conforming third-party serializer *will* differ.
 
-None of the differences below changes what the document means. Measured
+None of the differences below changes the document's structure. Measured
 against `wak-sxml-tools`' `srl:sxml->html`, the one this project tests
 conformance through:
 

@@ -7,10 +7,10 @@
 ;;; object loaded, so no assertion in it can pass by accident because of
 ;;; native behaviour. `make check-purity` enforces it.
 ;;;
-;;; The tree carries HTML VOCABULARY ONLY (ADR-0011). List delimiter, item
-;;; index, fence info past the first token, image child structure, and all
-;;; source positions are dropped here; markdown->ast remains the interface
-;;; for them. That is what makes ADR-0012's oracle total.
+;;; The tree carries HTML VOCABULARY ONLY (ADR-0011). List delimiter, fence
+;;; info past the first token, image child structure, and all source
+;;; positions are dropped here; markdown->ast remains the interface for
+;;; them. That is what makes ADR-0012's oracle total.
 ;;;
 ;;; Literals are carried VERBATIM. Escaping belongs to whatever serializer
 ;;; the caller runs; escaping here would double-escape on output.

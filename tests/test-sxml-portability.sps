@@ -30,7 +30,7 @@
 ;;; '\x40;-marked tree, srl:sxml->html does not raise: it treats '\x40; as
 ;;; an ordinary element name and nests the attribute pairs as child
 ;;; elements, so (a (\x40; (href "/x")) "l") serializes to
-;;; "<a><@><href>/x</href></@>l</a>". Silent, and wrong.
+;;; "<a><@>\n  <href>/x</href>\n</@>l</a>". Silent, and wrong.
 (import (rnrs)
         (srfi :64)
         (cmark gfm)
