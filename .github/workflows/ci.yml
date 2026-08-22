@@ -57,19 +57,16 @@ jobs:
             echo "::error::packaging/debian-prereqs.txt yielded no packages. That is a broken step, not an empty list -- do not install valgrind alone and cascade."
             exit 1
           fi
-          # cmark-gfm is added explicitly, NOT read from packaging/debian-prereqs.txt:
-          # that file still lists the pre-2.0 toolchain (chezscheme cmake pkg-config
-          # build-essential) and is scheduled to split in the documentation task
-          # (design spec 8.3) into an end-user list (cmark-gfm alone) plus whatever CI
-          # additionally needs. Editing that file is out of scope here (only this file
-          # changes for this task), so this line -- not the "one copy" file -- is what
-          # makes this job install a system libcmark-gfm at all until that split lands.
-          # valgrind is added here rather than in that file for the reason it always
-          # was: needed only by this job's memory step below, not to build or use the
-          # library.
-          echo "installing: valgrind cmark-gfm $pkgs"
+          # cmark-gfm now comes from packaging/debian-prereqs.txt like everything
+          # else -- it was briefly duplicated on this line while that file still
+          # listed the pre-2.0 toolchain. Do not re-add it here: a package named
+          # both in the file and in this step is exactly the second copy the
+          # file's header rule exists to prevent. valgrind stays here because it
+          # is needed only by this job's memory step below, not to build or use
+          # the library.
+          echo "installing: valgrind $pkgs"
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends valgrind cmark-gfm $pkgs
+          sudo apt-get install -y --no-install-recommends valgrind $pkgs
 
       # Recorded rather than asserted: the project's documented Chez floor came
       # from one developer's machine, not from testing. Whatever this prints is
@@ -306,6 +303,14 @@ jobs:
       # The SAME list README.org points readers at -- one copy, so this
       # cannot drift from the documentation. Must follow checkout, which is
       # what puts the file on disk.
+      #
+      # That file carries two COMMENT-LABELLED sections (runtime, then the
+      # dev packages the vendored oracle needs), and this extraction takes
+      # every uncommented line, so the container gets both. The labels are for
+      # the reader; splitting them mechanically would mean this job and the
+      # linux job reading different files, which is the drift the header rule
+      # forbids. The "no compiler required" claim is proved by the
+      # akku-install job and by macos's assert-no-C-artifact step, not here.
       - name: Install the documented prerequisites
         run: |
           set -eu
@@ -395,8 +400,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # chezscheme and cmark-gfm are the same runtime pair every other job
-      # installs. akku is NOT a Debian/Ubuntu package -- checked directly
+      # chezscheme and cmark-gfm are named here rather than read from
+      # packaging/debian-prereqs.txt, deliberately: that file also carries the
+      # dev packages (cmake, build-essential) the vendored oracle needs, and
+      # installing a compiler on the job whose whole point is "no compiler
+      # required" would make it green for a reason it does not claim. This is
+      # the runtime half of that file, and nothing else.
+      #
+      # akku is NOT a Debian/Ubuntu package -- checked directly
       # against packages.ubuntu.com and packages.debian.org, no suite in
       # either carries it -- so it cannot be added to this line; it is
       # installed from its own upstream release in the next step, rather

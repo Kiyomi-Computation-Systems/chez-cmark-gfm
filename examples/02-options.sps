@@ -2,7 +2,7 @@
 ;;; Options are immutable records built from named symbols.
 ;;;
 ;;; Run it:
-;;;   CHEZSCHEMELIBDIRS=src:fallback chez --program examples/02-options.sps
+;;;   CHEZSCHEMELIBDIRS=src chez --program examples/02-options.sps
 (import (rnrs) (cmark gfm))
 
 (define (line . parts)

@@ -2,9 +2,9 @@
 ;;; Plan 16, criterion 15: the core library has no dependency on a
 ;;; documentation-site framework. True today by construction -- Akku.manifest
 ;;; names two Scheme libraries, both dev-only, and nothing else -- but
-;;; nothing was checking it, which is exactly the shape of bug check-pins and
-;;; check-config already exist for: two things that must agree, with nothing
-;;; noticing if they stop.
+;;; nothing was checking it, which is exactly the shape of bug check-pins
+;;; already exists for: two things that must agree, with nothing noticing if
+;;; they stop.
 ;;;
 ;;; Three assertions, not one, and they guard different regressions:
 ;;;   1. No declared dependency's name matches a known documentation-site

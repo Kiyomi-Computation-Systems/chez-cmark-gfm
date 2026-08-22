@@ -3,7 +3,7 @@
 ;;; caller can catch the whole family or discriminate precisely.
 ;;;
 ;;; Run it:
-;;;   CHEZSCHEMELIBDIRS=src:fallback chez --program examples/05-errors.sps
+;;;   CHEZSCHEMELIBDIRS=src chez --program examples/05-errors.sps
 (import (rnrs) (cmark gfm))
 
 (define (line . parts)

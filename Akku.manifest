@@ -1,9 +1,24 @@
 #!r6rs ; -*- scheme -*-
 (import (akku format manifest))
 
-(akku-package ("chez-cmark-gfm" "1.0.0")
+;; No `depends` clause and no `scripts` clause, both deliberately.
+;;
+;; depends: (cmark gfm) needs no Scheme library at runtime -- it binds
+;; libcmark-gfm directly and finds it on the host. chez-srfi and
+;; wak-sxml-tools are the test suite's, not a consumer's, so they stay in
+;; depends/dev. tests/test-manifest-deps.sps asserts `depends` is exactly
+;; empty and that `depends/dev` is exactly the set below, so a new dependency
+;; of either kind must update that literal in the same commit.
+;;
+;; scripts: Akku's script mechanism would run a build, but it prompts for
+;; approval on every install until the package is vetted in the index -- for
+;; downstream dependants too -- and run-cmd ignores exit status, so a failed
+;; build would report success. 2.0 has nothing to build, so none of that has
+;; to be weighed. See ADR-0017.
+(akku-package ("chez-cmark-gfm" "2.0.0")
   (synopsis "CommonMark and GitHub Flavored Markdown for Chez Scheme")
   (authors "Kiyomi Computation Systems LLC")
+  (homepage "https://github.com/Kiyomi-Computation-Systems/chez-cmark-gfm")
   (license "BSD-3-Clause")
   (depends/dev ("chez-srfi" "^0.0.0-akku.181.7879b52")
                ("wak-sxml-tools" "^0.0.0-akku.1.5c14730")))
