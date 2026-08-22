@@ -100,6 +100,18 @@
                        (number->string (source-position-end-column p)) "\"")
         "")))
 
+;; The tasklist extension's XML attribute is NOT emitted by every library in
+;; the supported range. `extensions/tasklist.c` gained an `xml_attr` callback
+;; -- the thing that returns ` completed="true"` / ` completed="false"` -- only
+;; at 0.29.0.gfm.1; at 0.29.0.gfm.0 the file has no such function and the XML
+;; renderer emits no `completed` attribute for a task-list item at all.
+;; Emitting it unconditionally therefore diverges from a real gfm.0 library
+;; exactly the way the unconditional MAX_INDENT cap above diverged from gfm.6,
+;; so this asks the loaded library rather than assuming either branch.
+(define tasklist-attr-floor (encode-version 0 29 0 1))
+(define (cmark-tasklist-has-completed-attr?)
+  (>= (parse-version-string (cmark-gfm-version)) tasklist-attr-floor))
+
 ;; xml.c:55-59: the extension's attribute function runs before the type
 ;; switch, so these come first. in-header? is threaded down the walk because
 ;; align is emitted only for a cell whose PARENT row is a header
@@ -107,8 +119,10 @@
 (define (extension-attributes n ts in-header?)
   (cond
     ((string=? ts "tasklist")
-     (if (markdown-node-property n 'checked?)
-         " completed=\"true\"" " completed=\"false\""))
+     (cond
+       ((not (cmark-tasklist-has-completed-attr?)) "")
+       ((markdown-node-property n 'checked?) " completed=\"true\"")
+       (else " completed=\"false\"")))
     ((and (string=? ts "table_cell") in-header?)
      (let ((a (markdown-node-property n 'alignment)))
        (if (memq a '(left center right))
