@@ -1777,6 +1777,23 @@ Keep it terse; depth is deferred to a future `docs/` tree.
   development list (`cmake`, `build-essential`, `pkg-config`), preserving the
   "one copy, deliberately" property — `README.org` and `ci.yml` both read this file.
 
+  **This is load-bearing for CI, not just documentation.** Two consequences Task 7 could
+  not close from inside `ci.yml`:
+
+  1. **The `clean-install` job is red until this lands.** It installs *strictly* from this
+     file — deliberately, because its purpose is to prove the documented steps work on a
+     bare container. The file currently lists the pre-2.0 toolchain
+     (`chezscheme cmake pkg-config build-essential`) and no `cmark-gfm`, so `make build`
+     fails there for want of a library. Adding `cmark-gfm` is what turns that job green.
+  2. **Then remove the `linux` job's explicit `cmark-gfm` install.** Task 7 added it as a
+     stopgap, with a comment saying exactly that, because it could not edit this file.
+     Once the package is in the file, that line is a second copy of the list — precisely
+     what the file's header rule exists to prevent. Delete it, let the job read the file,
+     and drop the stopgap comment with it.
+
+  Re-read `.github/workflows/ci.yml` after editing the file rather than assuming the
+  stopgap comment marks the only place that needs updating.
+
 - [ ] **Step 4: Write the CHANGELOG entry**
 
 A `## 2.0.0` section with a **Breaking changes** table mapping every old name to its new
