@@ -931,6 +931,20 @@ In `tests/test-native.sps`, delete the assertions naming `shim-compiled-version`
 (now covered by `tests/test-option-bits.sps`). Replace uses of `(shim-runtime-version)`
 with `(cmark-runtime-version)`.
 
+Two related points, both deliberate:
+
+- **The `:103-114` and `:124-142` option-bits assertions stay.** They test the wiring of
+  `native.sls`'s exported `option-bits`, which is this suite's subject;
+  `tests/test-option-bits.sps` tests the constant *values* against the header. Different
+  subjects, so the overlap is not redundancy worth deleting. Only the `:281-300` block
+  goes, because its own comment claims it is "the only coverage validate-utf8? can have"
+  — which Task 2's header-parity test made false.
+- **Update the stale comment at `:124-129`.** It currently reasons about "A *shim* where
+  sourcepos aliased validate-utf8" — there is no shim after this task. Rewrite that
+  sentence to refer to the Scheme table instead, keeping the point intact: the
+  composition test above it only exercises two flag positions, so a table that aliased
+  two flags or wired one to nothing would still pass everything above this assertion.
+
 In `tests/test-lifecycle.sps:55-59`, the check discriminated dev from prod builds.
 Counters are always on now, so replace it with the unconditional form:
 
