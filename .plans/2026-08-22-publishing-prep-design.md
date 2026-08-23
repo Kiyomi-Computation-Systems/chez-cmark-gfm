@@ -150,12 +150,12 @@ The real obligation is transcribed expression in shipped source:
 
 | This tree | Transcribed from | Upstream license |
 |---|---|---|
-| `src/cmark/gfm/sxml.sls:97-108`, the `HREF_SAFE` set | `houdini_href_e.c:32-45` | MIT, vmg/houdini, (C) 2012 Vicent Marti |
+| `src/cmark/gfm/sxml.sls:97-108`, the `HREF_SAFE` set | `houdini_href_e.c:32-44` | MIT, vmg/houdini, (C) 2012 Vicent Marti |
 | `src/cmark/gfm/sxml.sls:153-174`, the dangerous-scheme rule | `scanners.re:345-354` | BSD-3, cmark-gfm |
 | `tests/spec-corpus.sls`, the corpus parser | `test/spec_tests.py:89-120` | BSD-3, cmark's `test/` software |
 
 The first was verified against the vendored source rather than taken from
-the comment: bytes 32-47 of `HREF_SAFE` are
+the comment: bytes 32-47 of `HREF_SAFE` (the table spans lines 32-44) are
 `0,1,0,1,1,1,0,0,1,1,1,1,1,1,1,1` — space and `"` unsafe, `&` and `'`
 unsafe — matching the `!#$%()*+,-./` set `sxml.sls` carries and its note
 that `&` and `'` are excluded because houdini entity-escapes them

@@ -4,7 +4,7 @@
 ;;; Not under src/: this ships with the tests, and the library is reachable
 ;;; because the Makefile puts tests/ on CHEZ_LIBDIRS.
 ;;;
-;;; Transcribed from vendor/cmark-gfm/test/spec_tests.py:89-120. Five
+;;; Transcribed from vendor/cmark-gfm/test/spec_tests.py:89-126. Five
 ;;; details, each of which corrupts the corpus silently if missed:
 ;;;
 ;;;   1. The opening fence is EXACTLY 32 backticks followed by " example".
