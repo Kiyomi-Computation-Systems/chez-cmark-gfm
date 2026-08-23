@@ -94,7 +94,7 @@ header `tests/test-option-bits.sps` parses — and `make deps` checks those
 out. The differential suites' CLI oracle is `$(CMARK_CLI)`, which defaults
 to the `cmark-gfm` on `PATH` that the system package installed.
 
-## Installing system-wide
+## Installing with `make install`
 
 Chez has no system-wide R6RS library directory. With nothing set,
 `(library-directories)` is `(("." . "."))` — the current directory and
@@ -102,14 +102,20 @@ nothing else. So installing does not remove the need for
 `CHEZSCHEMELIBDIRS`; it gives you one stable location to point it at
 instead of a path into a source checkout.
 
+`PREFIX` defaults to `/usr/local`, which is root-owned on macOS and on
+Debian alike — and on a stock Apple Silicon machine `/usr/local/lib` does
+not exist at all — so `make install` with the default prefix fails with
+`mkdir: /usr/local/lib: Permission denied` unless you are root. Install
+into a prefix you own instead:
+
 ```sh
-make install PREFIX=/usr/local      # -> /usr/local/lib/chez-cmark-gfm/cmark/
+make install PREFIX=$HOME/.local    # -> $HOME/.local/lib/chez-cmark-gfm/cmark/
 ```
 
 `make install` prints the export line to add to your shell profile:
 
 ```sh
-export CHEZSCHEMELIBDIRS=/usr/local/lib/chez-cmark-gfm:
+export CHEZSCHEMELIBDIRS=$HOME/.local/lib/chez-cmark-gfm:
 ```
 
 **This names the parent, not the `cmark/` directory printed above.**
@@ -126,12 +132,21 @@ CHEZSCHEMELIBDIRS=/tmp/foo    =>  (("/tmp/foo" . "/tmp/foo"))
 CHEZSCHEMELIBDIRS=/tmp/foo:   =>  (("/tmp/foo" . "/tmp/foo") ("." . "."))
 ```
 
+Installing system-wide is the same command under `sudo`, and undoing it
+needs the same privileges the install did:
+
+```sh
+sudo make install PREFIX=/usr/local
+sudo make uninstall PREFIX=/usr/local
+```
+
 `PREFIX` names the root, and by default the tree lands in
 `<PREFIX>/lib/chez-cmark-gfm`; set `LIBDIR` instead to choose that directory
-outright.
-`make uninstall PREFIX=/usr/local` removes it. Packagers can set `DESTDIR`.
-Nothing is compiled — the install copies `.sls` files and finds
-`libcmark-gfm` on the host at import time.
+outright. `make uninstall PREFIX=...` removes the `cmark/` tree it installed
+and the directory holding it — and nothing else under the prefix, which
+`make check-install` asserts against a temporary prefix rather than leaving
+to trust. Packagers can set `DESTDIR`. Nothing is compiled — the install
+copies `.sls` files and finds `libcmark-gfm` on the host at import time.
 
 ## RHEL, Fedora, and Alpine
 

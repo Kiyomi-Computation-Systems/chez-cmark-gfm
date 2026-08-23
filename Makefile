@@ -366,22 +366,82 @@ examples: build ## Run every examples/*.sps and diff against examples/expected/
 # resolve-cmark-libraries would take the override branch and raise
 # &cmark-library-unavailable reason invalid-override -- a failure that
 # looks like a broken install but is really a broken check.
-check-install: ## Install to a temp prefix and prove (cmark gfm) loads from it alone
+#
+# The probe runs with the export line `install` actually PRINTS, parsed out
+# of its real output -- not with a path this recipe spells out for itself.
+# A path hardcoded here guards nothing: that printed line is the most-copied
+# thing this project emits, and while this check named its own path, the
+# printed one could be changed to the deeper cmark/ subdirectory -- the exact
+# mistake docs/installing.md warns readers about -- and still pass green.
+# AGENTS.md, first rule: a check that cannot fail is worse than no check.
+#
+# The probe runs from an empty scratch directory rather than the repo root,
+# so the "." that the trailing colon keeps on the search path is genuinely
+# empty. Only the extracted directory can resolve (cmark gfm), which is the
+# property under test; from the repo root a stray ./cmark would satisfy the
+# import and hide a wrong printed path.
+#
+# uninstall is exercised here too, against the same temp prefix -- it is
+# install's twin, is documented in README.org and docs/installing.md, and
+# until now was run by no target and no CI job. The keep-me marker is not
+# decoration: an rm -rf one level too high would take the whole prefix with
+# it, and "the tree is gone" alone cannot tell that apart from success.
+check-install: ## Install to a temp prefix, prove install's own printed export line works, then uninstall
 	@set -eu; \
 	tmp="$$(mktemp -d)"; \
 	trap 'rm -rf "$$tmp"' EXIT INT TERM; \
-	$(MAKE) --no-print-directory install PREFIX="$$tmp" >/dev/null; \
-	echo "=== check-install: importing from $$tmp/lib/chez-cmark-gfm alone ==="; \
-	if env -u CHEZ_CMARK_GFM_LIBS \
-	     CHEZSCHEMELIBDIRS="$$tmp/lib/chez-cmark-gfm" \
-	     $(CHEZ) --program tests/install-probe.sps; then \
+	prefix="$$tmp/prefix"; \
+	out="$$tmp/install.out"; \
+	probecwd="$$tmp/empty"; \
+	mkdir -p "$$probecwd"; \
+	$(MAKE) --no-print-directory install PREFIX="$$prefix" >"$$out"; \
+	libdirs="$$(sed -n 's/^[[:space:]]*export CHEZSCHEMELIBDIRS=//p' "$$out")"; \
+	if [ -z "$$libdirs" ]; then \
+	  echo "check-install: FAILED -- make install printed no" >&2; \
+	  echo "'export CHEZSCHEMELIBDIRS=...' line for this check to test. That" >&2; \
+	  echo "line is the install target's entire user-facing output." >&2; \
+	  exit 1; \
+	fi; \
+	case "$$libdirs" in \
+	  *:) ;; \
+	  *) echo "check-install: FAILED -- make install printed" >&2; \
+	     echo "    export CHEZSCHEMELIBDIRS=$$libdirs" >&2; \
+	     echo "with no TRAILING COLON. Assigning that variable REPLACES Chez's" >&2; \
+	     echo "search path instead of extending it, so without the colon '.' is" >&2; \
+	     echo "dropped and relative imports stop resolving." >&2; \
+	     exit 1;; \
+	esac; \
+	echo "=== check-install: importing with the line install printed: $$libdirs ==="; \
+	if ( cd "$$probecwd" && env -u CHEZ_CMARK_GFM_LIBS \
+	       CHEZSCHEMELIBDIRS="$$libdirs" \
+	       $(CHEZ) --program "$(CURDIR)/tests/install-probe.sps" ); then \
 	  echo "check-install: an installed tree imports and renders"; \
 	else \
-	  echo "check-install: FAILED -- the tree installed at $$tmp could not" >&2; \
-	  echo "render a document with CHEZSCHEMELIBDIRS naming only that" >&2; \
-	  echo "directory. Check the install target's copy step." >&2; \
+	  echo "check-install: FAILED -- the export line make install printed," >&2; \
+	  echo "    export CHEZSCHEMELIBDIRS=$$libdirs" >&2; \
+	  echo "does not render a document against the tree it just installed under" >&2; \
+	  echo "$$prefix. Either the copy step or that printed line is wrong -- note" >&2; \
+	  echo "that (cmark gfm) resolves to <libdir>/cmark/gfm.sls, so the line must" >&2; \
+	  echo "name the PARENT of cmark/, not cmark/ itself." >&2; \
 	  exit 1; \
-	fi
+	fi; \
+	mkdir -p "$$prefix/lib/keep-me"; \
+	touch "$$prefix/lib/keep-me/marker"; \
+	echo "=== check-install: uninstalling from $$prefix ==="; \
+	$(MAKE) --no-print-directory uninstall PREFIX="$$prefix" >/dev/null; \
+	if [ -e "$$prefix/lib/chez-cmark-gfm" ]; then \
+	  echo "check-install: FAILED -- make uninstall left" >&2; \
+	  echo "$$prefix/lib/chez-cmark-gfm behind. It must remove the tree that" >&2; \
+	  echo "make install created." >&2; \
+	  exit 1; \
+	fi; \
+	if [ ! -e "$$prefix/lib/keep-me/marker" ]; then \
+	  echo "check-install: FAILED -- make uninstall removed" >&2; \
+	  echo "$$prefix/lib/keep-me/marker, which make install never created." >&2; \
+	  echo "uninstall must remove its own tree and nothing else." >&2; \
+	  exit 1; \
+	fi; \
+	echo "check-install: uninstall removed its own tree and left the prefix intact"
 
 # Copies .sls files and nothing else. 2.0 compiles nothing (ADR-0015), and
 # the install path must not quietly acquire a build step.

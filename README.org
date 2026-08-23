@@ -71,17 +71,30 @@ make build CHEZ=chezscheme    # Debian/Ubuntu
 would be loaded, or exits non-zero naming the remedy. Running it is optional —
 importing ~(cmark gfm)~ performs the same discovery either way.
 
-** System-wide
+** With ~make install~
+
+Install into a prefix you own — no privileges, no compiler:
 
 #+begin_src sh
-make install PREFIX=/usr/local
-export CHEZSCHEMELIBDIRS=/usr/local/lib/chez-cmark-gfm:
+make install PREFIX=$HOME/.local
+export CHEZSCHEMELIBDIRS=$HOME/.local/lib/chez-cmark-gfm:
 #+end_src
 
 *The trailing colon is not a typo.* Assigning ~CHEZSCHEMELIBDIRS~ *replaces*
 Chez's search path rather than extending it, so without the colon ~.~ is
-dropped and relative imports stop resolving. ~make install~ prints the line
-that way. ~make uninstall PREFIX=...~ removes the tree.
+dropped and relative imports stop resolving. ~make install~ prints that line
+itself, and ~make check-install~ runs the line it printed.
+
+Installing system-wide is the same command under ~sudo~: the default prefix
+is root-owned on macOS and Debian alike, and its ~lib~ subdirectory may not
+exist yet.
+
+#+begin_src sh
+sudo make install PREFIX=/usr/local
+#+end_src
+
+~make uninstall PREFIX=...~ removes the tree again, under whichever
+privileges the install needed.
 
 ** Running your program
 

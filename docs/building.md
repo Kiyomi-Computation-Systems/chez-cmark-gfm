@@ -176,13 +176,23 @@ make check-install
 
 installs to a fresh `mktemp -d` prefix — never the real `PREFIX` — by
 invoking `make install` itself with that temporary path, then runs a probe
-program with `CHEZSCHEMELIBDIRS` pointed at *nothing but* the installed
-tree and `CHEZ_CMARK_GFM_LIBS` explicitly **unset** rather than merely
+program with `CHEZ_CMARK_GFM_LIBS` explicitly **unset** rather than merely
 empty (`getenv` returns `""` for a set-but-empty variable, and an empty
 string is truthy in Scheme, so leaving it merely empty would silently take
 the override branch and fail with `invalid-override` — a result that looks
 like a broken install but is really a broken check). The temp directory is
 removed on exit either way.
+
+`CHEZSCHEMELIBDIRS` for that probe is **parsed out of `make install`'s own
+output** — the `export CHEZSCHEMELIBDIRS=` line it prints — rather than
+spelled out again here. That line is the most-copied thing this project
+emits, and a path hardcoded in the check would guard nothing: the printed
+line could name the deeper `cmark/` subdirectory, the exact mistake
+[installing.md](installing.md#installing-with-make-install) warns readers
+about, and the check would still pass. The extraction also asserts the
+trailing colon survives. The probe runs from an empty scratch directory, not
+the repo root, so the `.` that colon keeps on the search path cannot resolve
+`(cmark gfm)` by accident and mask a wrong printed path.
 
 The probe does not just import `(cmark gfm)` — it calls `markdown->html`
 and checks the literal rendered string. Chez instantiates an imported
@@ -192,6 +202,11 @@ would report success against an install that cannot possibly work. Calling
 in and checking a real result is what makes a pass mean the copied tree is
 not just present, but actually loadable and usable with nothing else on
 the library path.
+
+The same temp prefix is then handed to `make uninstall`, which must leave
+neither the installed tree behind nor a marker file planted beside it under
+the prefix — `uninstall` is `install`'s twin, and an untested one is what
+[AGENTS.md](../AGENTS.md) forbids.
 
 ## The dev REPL
 
