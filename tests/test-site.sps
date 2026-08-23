@@ -125,7 +125,8 @@
   (page->document '(("ast.md" . "The AST") ("sxml.md" . "SXML"))
                   "ast.md" "The AST"
                   '(*TOP* (h2 (^ (id "node-shape")) "Node shape"))
-                  '((2 "Node shape" "node-shape"))))
+                  '((2 "Node shape" "node-shape"))
+                  '("options.md" . "Options") '("sxml.md" . "SXML")))
 
 (test-assert "the document is rooted at html"
   (and (pair? doc-out) (eq? (car doc-out) '*TOP*)
@@ -148,6 +149,21 @@
          (not (string-contains-sub? s "&amp;"))
          (not (string-contains-sub? s "&lt;"))
          (not (string-contains-sub? s "&gt;")))))
+
+;; --- template: mode-toggle icon and prev/next footer nav ----------------
+(test-assert "the mode toggle carries the knob icon"
+  (string-contains-sub? (sxml->html doc-out) "class=\"knob\""))
+(test-assert "the footer nav links the previous and next pages"
+  (let ((s (sxml->html doc-out)))
+    (and (string-contains-sub? s "class=\"pagenav\"")
+         (string-contains-sub? s "href=\"options.html\"")
+         (string-contains-sub? s "href=\"sxml.html\"")
+         (string-contains-sub? s "class=\"next\""))))
+(test-assert "a page with no neighbours (the home page) has no footer nav"
+  (not (string-contains-sub?
+        (sxml->html (page->document '(("index.md" . "Home")) "index.md" "Home"
+                                    '(*TOP* (h1 "Home")) '() #f #f))
+        "class=\"pagenav\"")))
 
 (test-end "site")
 (exit (if (zero? (test-runner-fail-count runner)) 0 1))
