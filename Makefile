@@ -78,7 +78,7 @@ MEMORY_TESTS := $(filter-out tests/test-differential.sps,$(TESTS))
 # continuation handling -- a backslash-wrapped .PHONY hides every
 # continuation-line target from that check and adds a bogus `\`
 # pseudo-target. Found and fixed once already, in commit 3f5552c.
-.PHONY: all build deps check-pins check-purity check-help check-install examples dev help install uninstall test test-memory vendor clean deps-info
+.PHONY: all build deps check-pins check-purity check-help check-install examples site dev help install uninstall test test-memory vendor clean deps-info
 
 help: ## Show this help message
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_.-]+:.*?## / \
@@ -368,6 +368,17 @@ examples: build ## Run every examples/*.sps and diff against examples/expected/
 	if [ $$fail -eq 0 ]; then echo "ALL EXAMPLES PASSED"; \
 	else echo "EXAMPLES FAILED"; fi; \
 	exit $$fail
+
+# The tree under build/ (gitignored): reads site/index.md + docs/*.md,
+# renders through (site render), writes build/site/*.html plus a copy of
+# site/style.css. SITE_REF overrides the git ref used for the ../-escape
+# rewrite in generated links; defaults to "main".
+site: build ## Generate the static docs site into build/site/
+	@mkdir -p build/site
+	@CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) SITE_REF="$${SITE_REF:-main}" \
+	  $(CHEZ) --program build-site.sps
+	@cp site/style.css build/site/style.css
+	@echo "site: build/site ready (open build/site/index.html)"
 
 # CHEZ_CMARK_GFM_LIBS is UNSET here, not set empty. `(getenv "X")` returns
 # "" for an empty-but-set variable, and "" is truthy in Scheme, so
