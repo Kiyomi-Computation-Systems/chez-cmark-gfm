@@ -3,52 +3,6 @@
 All notable changes to this project are documented here. This project follows
 [Semantic Versioning](https://semver.org).
 
-## [Unreleased]
-
-### Documentation
-
-- `README.org` cut from 643 lines to 150. Reference material moved to
-  eight pages under `docs/`: installing, usage, options, the AST, SXML
-  (serializing included), errors, memory ownership, and building.
-- Dropped the 1.0-vs-2.0 comparison table. Nobody consumed 1.0; the
-  history is in this file.
-- `NOTICE` now states the obligation that actually applies — expression
-  transcribed from cmark-gfm into `src/cmark/gfm/sxml.sls`,
-  `tests/spec-corpus.sls`, and `tests/sxml-html-serializer.sls`, each cited
-  by file and line — and drops four licenses nothing here derives from
-  (`buffer`/`chunk`, `utf8proc`, `normalize.py`, and the CC-BY-SA spec
-  text).
-- Corrected cmark-gfm's license label in `NOTICE`: it is **BSD-2-Clause**,
-  not BSD-3. `vendor/cmark-gfm/COPYING` carries no endorsement clause, and
-  cmark-gfm's own README says "BSD2-licensed". chez-cmark-gfm's own license
-  is untouched and really is BSD-3-Clause — a different project under a
-  different license.
-- Added `CONTRIBUTING.md`, `SECURITY.md`, and GitHub issue/PR templates.
-
-### Added
-
-- `make help` lists every target, and `make check-help` fails when one is
-  undocumented.
-- `make install` / `make uninstall` copy `src/cmark/**.sls` to
-  `$(PREFIX)/lib/chez-cmark-gfm` for consumers not using Akku. Nothing is
-  compiled. Chez has no system-wide R6RS library directory, so the target
-  prints the `CHEZSCHEMELIBDIRS` line to add — with the trailing colon
-  that keeps `.` on the search path.
-- `make check-install` installs to a temporary prefix and renders a
-  document with `CHEZSCHEMELIBDIRS` naming only that directory.
-
-### Changed
-
-- The two CI steps that grep the Supported matrix, and the preflight's
-  cmake-recipe pointer, now name `docs/installing.md`.
-- CI now runs `make check-help` and `make check-install`. Both targets were
-  added to the Makefile but invoked by no workflow step, and neither is a
-  prerequisite of `build`, `test`, `check-purity`, or `examples` — so
-  neither was reached transitively either. `check-install` runs on both
-  Linux and macOS, which is not one run duplicated: discovery hardcodes a
-  different candidate directory list *and* a different filename shape per
-  platform, so a break in either branch is invisible to the other job.
-
 ## [2.0.0] — 2026-08-22
 
 The C shim is gone. `(cmark gfm)` binds `libcmark-gfm` directly and locates it
@@ -161,6 +115,16 @@ extensions library. The declared range is unchanged. See design spec §3.10.
   remedy for any condition, so the reason symbol is the only half of the
   assertion that discriminates.
 
+- `make help` lists every target, and `make check-help` fails when one is
+  undocumented.
+- `make install` / `make uninstall` copy `src/cmark/**.sls` to
+  `$(PREFIX)/lib/chez-cmark-gfm` for consumers not using Akku. Nothing is
+  compiled. Chez has no system-wide R6RS library directory, so the target
+  prints the `CHEZSCHEMELIBDIRS` line to add — with the trailing colon
+  that keeps `.` on the search path.
+- `make check-install` installs to a temporary prefix and renders a
+  document with `CHEZSCHEMELIBDIRS` naming only that directory.
+
 ### Removed
 
 - **The C shim** — `src/cmark-gfm-shim.c` (71 lines) and
@@ -185,6 +149,38 @@ extensions library. The declared range is unchanged. See design spec §3.10.
   dependency: the 744-example corpus, the header `test-option-bits.sps`
   parses, and a CLI build to point `CMARK_CLI` at. The differential suites'
   default oracle is the `cmark-gfm` the system package puts on `PATH`.
+
+### Changed
+
+- The two CI steps that grep the Supported matrix, and the preflight's
+  cmake-recipe pointer, now name `docs/installing.md`.
+- CI now runs `make check-help` and `make check-install`. Both targets were
+  added to the Makefile but invoked by no workflow step, and neither is a
+  prerequisite of `build`, `test`, `check-purity`, or `examples` — so
+  neither was reached transitively either. `check-install` runs on both
+  Linux and macOS, which is not one run duplicated: discovery hardcodes a
+  different candidate directory list *and* a different filename shape per
+  platform, so a break in either branch is invisible to the other job.
+
+### Documentation
+
+- `README.org` cut from 643 lines to 165. Reference material moved to
+  eight pages under `docs/`: installing, usage, options, the AST, SXML
+  (serializing included), errors, memory ownership, and building.
+- Dropped the 1.0-vs-2.0 comparison table. Nobody consumed 1.0; the
+  history is in this file.
+- `NOTICE` now states the obligation that actually applies — expression
+  transcribed from cmark-gfm into `src/cmark/gfm/sxml.sls`,
+  `tests/spec-corpus.sls`, and `tests/sxml-html-serializer.sls`, each cited
+  by file and line — and drops four licenses nothing here derives from
+  (`buffer`/`chunk`, `utf8proc`, `normalize.py`, and the CC-BY-SA spec
+  text).
+- Corrected cmark-gfm's license label in `NOTICE`: it is **BSD-2-Clause**,
+  not BSD-3. `vendor/cmark-gfm/COPYING` carries no endorsement clause, and
+  cmark-gfm's own README says "BSD2-licensed". chez-cmark-gfm's own license
+  is untouched and really is BSD-3-Clause — a different project under a
+  different license.
+- Added `CONTRIBUTING.md`, `SECURITY.md`, and GitHub issue/PR templates.
 
 ### Notes
 
