@@ -24,12 +24,18 @@ development dependency:
                           test/spec_tests.py:89-126    (cmark-gfm, BSD-2-Clause)
 
   tests/sxml-html-serializer.sls  the tag-formatting tables, from
-                                   src/html.c, extensions/table.c, and
-                                   extensions/tasklist.c:125-128
+                                   extensions/tasklist.c:125-128, plus many
+                                   scattered lines of src/html.c and
+                                   extensions/table.c, each cited
+                                   individually in that file
                                    (cmark-gfm, BSD-2-Clause)
 
   tests/sxml-html-serializer.sls  the escape-html procedure, from
-                                   src/houdini_html_e.c:18-33   (houdini, MIT)
+                                   src/houdini_html_e.c:35-62   (houdini, MIT)
+
+  tests/sxml-html-serializer.sls  the escape-href procedure's entity half,
+                                   from src/houdini_href_e.c:64-76
+                                   (houdini, MIT)
 
 The test software in cmark-gfm's test/ is under the same BSD-2-Clause
 text, so the one copy below covers both. src/cmark/gfm/private/native.sls
