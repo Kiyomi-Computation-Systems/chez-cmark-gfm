@@ -18,20 +18,28 @@ development dependency:
                           src/houdini_href_e.c:32-44   (houdini, MIT)
 
   src/cmark/gfm/sxml.sls  the dangerous-URL scheme rule, from
-                          src/scanners.re:345-354      (cmark-gfm, BSD-3)
+                          src/scanners.re:345-354      (cmark-gfm, BSD-2-Clause)
 
   tests/spec-corpus.sls   the corpus parser, from
-                          test/spec_tests.py:89-126    (cmark-gfm, BSD-3)
+                          test/spec_tests.py:89-126    (cmark-gfm, BSD-2-Clause)
 
-The test software in cmark-gfm's test/ is under the same BSD-3 text, so
-the one copy below covers both. src/cmark/gfm/private/native.sls also
-transcribes the CMARK_OPT_* values from src/cmark-gfm.h, but those are
-interface constants, not expression.
+  tests/sxml-html-serializer.sls  the tag-formatting tables, from
+                                   src/html.c, extensions/table.c, and
+                                   extensions/tasklist.c:125-128
+                                   (cmark-gfm, BSD-2-Clause)
 
-COPYING's other four blocks are absent on purpose: nothing here derives
-from buffer/chunk, utf8proc, normalize.py, or the CC-BY-SA spec text.
-The example corpus is read from vendor/cmark-gfm/test/ at test time and
-never copied in.
+  tests/sxml-html-serializer.sls  the escape-html procedure, from
+                                   src/houdini_html_e.c:18-33   (houdini, MIT)
+
+The test software in cmark-gfm's test/ is under the same BSD-2-Clause
+text, so the one copy below covers both. src/cmark/gfm/private/native.sls
+also transcribes the CMARK_OPT_* values from src/cmark-gfm.h, but those
+are interface constants, not expression.
+
+vendor/cmark-gfm/COPYING's other four blocks are absent on purpose:
+nothing here derives from buffer/chunk, utf8proc, normalize.py, or the
+CC-BY-SA spec text. The example corpus is read from
+vendor/cmark-gfm/test/ at test time and never copied in.
 
 
 cmark-gfm
@@ -68,7 +76,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 houdini
 -------
 
-houdini_href_e.c derives from https://github.com/vmg/houdini
+houdini_href_e.c and houdini_html_e.c derive from
+https://github.com/vmg/houdini
 
 Copyright (C) 2012 Vicent Martí
 
