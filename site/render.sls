@@ -18,11 +18,11 @@
   ;; heading level, h1 through h6, because every heading is a legitimate
   ;; anchor target -- a cross-page link to `page.md#the-page-title` (its h1)
   ;; must resolve just as one to `page.md#some-section` does. The rail,
-  ;; though, lists sections under "On this page"; it must not turn the
-  ;; page's own h1 title into an entry linking to itself. So: the registry
-  ;; keeps every slug, and only the copy handed to page->document is
-  ;; filtered to level > 1.
-  (define (rail-toc toc) (filter (lambda (entry) (> (car entry) 1)) toc))
+  ;; though, lists only top-level sections under "On this page"; it must not
+  ;; turn the page's own h1 title or individual h3 API entries into rail
+  ;; items. So: the registry keeps every slug, and only the copy handed to
+  ;; page->document is filtered to level 2.
+  (define (rail-toc toc) (filter (lambda (entry) (= (car entry) 2)) toc))
 
   ;; Design spec S4: site/index.md "is reached from the wordmark, not
   ;; listed as a nav item" -- the wordmark's own href="index.html" lives in

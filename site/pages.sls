@@ -8,6 +8,7 @@
     '(("index.md"      . "Home")
       ("installing.md" . "Installing")
       ("usage.md"      . "Usage")
+      ("reference.md"  . "API reference")
       ("options.md"    . "Options")
       ("ast.md"        . "The AST")
       ("sxml.md"       . "SXML")

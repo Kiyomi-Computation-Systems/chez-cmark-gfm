@@ -78,7 +78,7 @@ MEMORY_TESTS := $(filter-out tests/test-differential.sps,$(TESTS))
 # continuation handling -- a backslash-wrapped .PHONY hides every
 # continuation-line target from that check and adds a bogus `\`
 # pseudo-target. Found and fixed once already, in commit 3f5552c.
-.PHONY: all build deps check-pins check-purity check-help check-install check-site examples site dev help install uninstall test test-memory vendor clean deps-info
+.PHONY: all build deps check-pins check-purity check-help check-install check-reference check-site examples site dev help install uninstall test test-memory vendor clean deps-info
 
 help: ## Show this help message
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_.-]+:.*?## / \
@@ -380,11 +380,17 @@ site: build ## Generate the static docs site into build/site/
 	@cp site/style.css build/site/style.css
 	@echo "site: build/site ready (open build/site/index.html)"
 
+# Static source/reference comparison. Reads the R6RS library/export forms
+# without importing (cmark gfm), so this gate has no native dependency.
+check-reference: ## Verify API reference modules and bindings match source exports
+	@CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) \
+	  $(CHEZ) --program tests/reference-check.sps
+
 # Asserts on render-site's return value in memory -- no build/site/ write,
 # no dependency on `site` itself. tests/site-check.sps is a plain program,
 # not a tests/test-*.sps suite, precisely so it stays off `make test`'s
 # glob and lives on this target instead (see its own header comment).
-check-site: build ## Build the site in memory and assert links, anchors, nav, and no <pre> reflow
+check-site: check-reference build ## Build the site in memory and assert links, anchors, nav, and no <pre> reflow
 	@CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) SITE_REF="$${SITE_REF:-main}" \
 	  $(CHEZ) --program tests/site-check.sps
 

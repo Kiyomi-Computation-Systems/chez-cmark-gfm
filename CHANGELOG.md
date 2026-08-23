@@ -7,6 +7,10 @@ All notable changes to this project are documented here. This project follows
 
 ### Added
 
+- A source-checked [API reference](docs/reference.md) for all six public
+  modules and 85 exported bindings. `make check-reference` compares its module
+  and binding coverage against the R6RS export declarations, and
+  `make check-site` runs that gate before rendering the documentation site.
 - A static documentation site generated from `docs/*.md` and an authored
   `site/index.md`, rendered entirely through `markdown->sxml` → transform →
   serialize and deployed to GitHub Pages. Flexoki theme, sidebar + per-page
