@@ -17,6 +17,29 @@
   (define (toc-item entry)
     `(a (^ (href ,(string-append "#" (caddr entry)))) ,(cadr entry)))
 
+  ;; Prev/next footer nav. `prev`/`next` are each a (file . label) pair or #f
+  ;; (the ends of the sequence, and the home page, have no neighbour on one
+  ;; or both sides). Returns a list to splice: the .pagenav div when either
+  ;; neighbour exists, or '() so the home page gets no footer nav at all.
+  ;; A missing side is an empty <span> so flex space-between still pins the
+  ;; present link to its edge. Arrows are U+2190/U+2192 (not '<'/'>', which
+  ;; the pre-safe serializer would escape).
+  (define (pagenav prev next)
+    (if (or prev next)
+        (list
+         `(div (^ (class "pagenav"))
+           ,(if prev
+                `(a (^ (href ,(md->html-name (car prev))))
+                    (span (^ (class "lbl")) "Previous")
+                    ,(string-append "\x2190; " (cdr prev)))
+                '(span))
+           ,(if next
+                `(a (^ (href ,(md->html-name (car next))) (class "next"))
+                    (span (^ (class "lbl")) "Next")
+                    ,(string-append (cdr next) " \x2192;"))
+                '(span))))
+        '()))
+
   ;; theme: prefers-color-scheme + a persisted toggle (localStorage). Pinned
   ;; on load so the CSS and the label never disagree (see the preview bug).
   ;;
@@ -36,7 +59,7 @@
      "l.textContent=x==='dark'?'Light mode':'Dark mode';}a(m());"
      "b.addEventListener('click',function(){a(r.getAttribute('data-mode')==='dark'?'light':'dark');});})();"))
 
-  (define (page->document nav current title body toc)
+  (define (page->document nav current title body toc prev next)
     `(*TOP*
       (html
        (head
@@ -47,13 +70,14 @@
        (body
         (div (^ (class "topbar"))
              (button (^ (id "theme") (class "toggle") (aria-label "Toggle theme"))
+                     (span (^ (class "knob") (aria-hidden "true")))
                      (span (^ (id "theme-label")) "Dark mode")))
         (div (^ (class "layout"))
              (aside (^ (class "side"))
                     (a (^ (class "mark") (href "index.html")) "chez-cmark-gfm")
                     (nav ,@(map (nav-item current) nav)))
              (main (^ (class "main"))
-                   (div (^ (class "col")) ,@(cdr body)))   ; splice *TOP* children
+                   (div (^ (class "col")) ,@(cdr body) ,@(pagenav prev next)))
              (aside (^ (class "toc"))
                     (div (^ (class "lbl")) "On this page")
                     ,@(map toc-item toc)))

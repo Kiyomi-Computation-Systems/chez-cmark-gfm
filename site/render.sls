@@ -33,6 +33,17 @@
   ;; handed to page->document as the nav -- not on `pages` itself.
   (define nav (filter (lambda (entry) (not (string=? (car entry) "index.md"))) pages))
 
+  ;; Prev/next neighbours for a page's footer nav, over the `nav` order (the
+  ;; docs, index.md excluded). Returns (values prev next), each a
+  ;; (file . label) pair or #f. A page not in `nav` (index.md itself) yields
+  ;; (values #f #f), so the home page renders no footer nav.
+  (define (neighbors name)
+    (let loop ((ps nav) (prev #f))
+      (cond ((null? ps) (values #f #f))
+            ((string=? (caar ps) name)
+             (values prev (if (null? (cdr ps)) #f (cadr ps))))
+            (else (loop (cdr ps) (car ps))))))
+
   ;; Pass 1: parse + slug every page, building the id-registry.
   ;; Pass 2: rewrite links against the full registry, then template.
   ;;
@@ -58,10 +69,11 @@
         (if (null? ps)
             (make-site-result (reverse pages-out) registry (reverse leaked))
             (let* ((pg (car ps)) (name (car pg)) (body (cadr pg)) (toc (caddr pg)))
-              (let-values (((body* dangling) (rewrite-links body registry name ref)))
+              (let-values (((body* dangling) (rewrite-links body registry name ref))
+                           ((prev next) (neighbors name)))
                 (loop (cdr ps)
                       (cons (cons name
                                   (page->document nav name (label-for name)
-                                                   body* (rail-toc toc)))
+                                                   body* (rail-toc toc) prev next))
                             pages-out)
                       (append (reverse dangling) leaked)))))))))

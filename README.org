@@ -17,6 +17,8 @@ that AST to SXML in HTML vocabulary, for the serializer of your choosing.
 It is safe by default: raw HTML and unsafe link schemes are suppressed unless
 you ask for them by name.
 
+💡 Use it to build a static site like [[https://kiyomi-computation-systems.github.io/chez-cmark-gfm/][this one]].
+
 It *compiles nothing*. There is no C shim and no generated configuration —
 importing ~(cmark gfm)~ locates a libcmark-gfm on this machine and loads it —
 so installing needs no compiler, no CMake, and no submodule checkout.
