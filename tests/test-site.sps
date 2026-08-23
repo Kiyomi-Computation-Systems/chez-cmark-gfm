@@ -44,5 +44,8 @@
   "<pre><code>(define (f x)\n    (g\n      x))\n</code></pre>"
   (sxml->html '(pre (code "(define (f x)\n    (g\n      x))\n"))))
 
+(test-equal "a *COMMENT* node renders as an HTML comment, not a bogus tag"
+  "<!-- raw HTML omitted -->" (sxml->html '(*COMMENT* " raw HTML omitted ")))
+
 (test-end "site")
 (exit (if (zero? (test-runner-fail-count runner)) 0 1))

@@ -37,6 +37,8 @@
       ((string? node) (put-string p (escape-text node)))
       ((and (pair? node) (eq? (car node) '*TOP*))
        (for-each (lambda (k) (emit k p) (put-string p "\n")) (cdr node)))
+      ((and (pair? node) (eq? (car node) '*COMMENT*))
+       (put-string p "<!--") (put-string p (cadr node)) (put-string p "-->"))
       ((pair? node)
        (let* ((tag (car node))
               (rest (cdr node))
