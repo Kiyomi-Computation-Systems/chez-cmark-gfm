@@ -1,6 +1,6 @@
 #!r6rs
 ;; PURE SUITE. Imports no library that loads a shared object.
-(import (rnrs) (srfi :64) (site slug) (site serializer) (site transform))
+(import (rnrs) (srfi :64) (site slug) (site serializer) (site transform) (site links))
 
 (define runner (test-runner-simple))
 (test-runner-current runner)
@@ -64,6 +64,35 @@
   (test-equal "⚠️ blockquotes are rewrapped as a warning callout div"
     '(*TOP* (div (^ (class "callout warning")) (blockquote (p "⚠️ The AST is untrusted."))))
     body))
+
+;; --- links: the rewrite rules -------------------------------------------
+(define reg '(("options.md" . ("resource-limits")) ("ast.md" . ("node-shape"))))
+(define (rw body page) (let-values (((b d) (rewrite-links body reg page "v2.0.0"))) b))
+
+(test-equal "doc .md link (with anchor) becomes .html, anchor kept"
+  '(*TOP* (p (a (^ (href "options.html#resource-limits")) "x")))
+  (rw '(*TOP* (p (a (^ (href "options.md#resource-limits")) "x"))) "ast.md"))
+(test-equal "bare doc .md link becomes .html"
+  '(*TOP* (p (a (^ (href "ast.html")) "x")))
+  (rw '(*TOP* (p (a (^ (href "ast.md")) "x"))) "options.md"))
+(test-equal "same-page anchor is left as-is"
+  '(*TOP* (p (a (^ (href "#node-shape")) "x")))
+  (rw '(*TOP* (p (a (^ (href "#node-shape")) "x"))) "ast.md"))
+(test-equal "a ../ escape is pinned to the GitHub blob at the ref"
+  '(*TOP* (p (a (^ (href "https://github.com/Kiyomi-Computation-Systems/chez-cmark-gfm/blob/v2.0.0/examples/01-rendering.sps")) "x")))
+  (rw '(*TOP* (p (a (^ (href "../examples/01-rendering.sps")) "x"))) "usage.md"))
+(test-equal "an absolute URL is untouched"
+  '(*TOP* (p (a (^ (href "https://example.com")) "x")))
+  (rw '(*TOP* (p (a (^ (href "https://example.com")) "x"))) "ast.md"))
+(test-equal "CRUX: a javascript: URL in a code block is NOT a link, untouched"
+  '(*TOP* (pre (code "[x](javascript:alert(1))")))
+  (rw '(*TOP* (pre (code "[x](javascript:alert(1))"))) "sxml.md"))
+
+;; --- links: danglers are reported ---------------------------------------
+(let-values (((b d) (rewrite-links
+                      '(*TOP* (a (^ (href "options.md#nonesuch")) "x")) reg "ast.md" "v2.0.0")))
+  (test-equal "an anchor absent from the registry is reported as a dangler"
+    '(("ast.md" . "options.md#nonesuch")) d))
 
 (test-end "site")
 (exit (if (zero? (test-runner-fail-count runner)) 0 1))
