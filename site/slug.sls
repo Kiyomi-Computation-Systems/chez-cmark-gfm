@@ -40,7 +40,7 @@
             ((string? n) (put-string p n))
             ((pair? n)
              (cond
-               ((and (pair? (car n)) (eq? (caar n) '^)) #f) ; skip attrs
+               ((eq? (car n) '^) #f)                        ; skip attrs
                ((symbol? (car n)) (for-each walk (cdr n)))  ; element: skip tag
                (else (for-each walk n))))
             (else #f))))))

@@ -26,5 +26,8 @@
   '("options" "options-1" "options-2")
   (let ((s (make-slugger))) (list (s "Options") (s "Options") (s "Options"))))
 
+(test-equal "heading-text skips the ^ attr node and inline tags"
+  "Some text" (heading-text '(h2 (^ (id "foo")) "Some " (code "text"))))
+
 (test-end "site")
 (exit (if (zero? (test-runner-fail-count runner)) 0 1))
