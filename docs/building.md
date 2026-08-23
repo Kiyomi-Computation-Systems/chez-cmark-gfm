@@ -52,14 +52,16 @@ make help
 ```
 
 is the live list — generated from a `## description` comment on each
-`.PHONY` target's own line in the `Makefile`, so it cannot describe a
-target that does not exist. `make check-help` is what keeps that true: it
-fails if any `.PHONY` target lacks one, so a target can't go undocumented
-and a description can't go stale next to a renamed target without the
-build itself catching it. That makes `make help` the one list of targets
-worth keeping — a second one here would only be a copy for it to drift
-from, which is why this page describes what a target *does* rather than
-enumerating what targets *exist*.
+target's own line in the `Makefile`. `make check-help` fails if any
+`.PHONY` target lacks one, so a real target can't go undocumented and a
+description can't go stale next to a renamed target without the build
+itself catching it. That check runs one direction only: it does not
+confirm a described target is real, so a stray `## `-commented line for a
+target that was never added to `.PHONY` — and does not work — would still
+show up in `make help` uncaught. That's still why this page doesn't
+duplicate the target list: a second one here would only be a copy for
+`make help` to drift from, which is why it describes what a target *does*
+rather than enumerating what targets *exist*.
 
 One target the house convention expects is deliberately absent: there is
 no `make prod`. 2.0 compiles nothing at all (ADR-0015) — `make build` is a
@@ -165,8 +167,10 @@ moment an example accidentally started depending on something this
 library does not itself ship. A few other pages under `docs/` lean on that
 directly — [usage.md](usage.md), [ast.md](ast.md), and
 [errors.md](errors.md) each cite their own `examples/NN-*.sps` file by name
-for the samples drawn from it verbatim, rather than restating the code
-inline, and this target is what keeps that citation honest.
+and adapt code from it inline rather than embedding the file by reference.
+This target keeps the cited file itself from going stale; it does not
+re-check an adapted copy against it, so a page that adapts code says so
+directly.
 
 ## make check-install
 

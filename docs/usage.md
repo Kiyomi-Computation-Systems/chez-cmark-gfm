@@ -36,11 +36,13 @@ exactly as it was:
 ;; base still has smart? #f -- cmark-options-with returned a third record.
 ```
 
-Both blocks above are drawn from
+The blocks above are adapted from
 [`examples/01-rendering.sps`](../examples/01-rendering.sps) and
 [`examples/02-options.sps`](../examples/02-options.sps). `make examples` runs
 every file under `examples/` and diffs its output against a pinned
-expectation, so they cannot go stale silently.
+expectation, so those two files cannot go stale silently — but these
+adapted copies are not re-checked against them, so verify by eye if either
+file changes.
 
 Parsing to a Scheme-owned tree is [ast.md](ast.md); converting to SXML is
 [sxml.md](sxml.md). Every condition any entry point on this page can raise
