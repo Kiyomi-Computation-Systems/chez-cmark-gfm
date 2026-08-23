@@ -27,7 +27,15 @@ SRFI_SRC     := vendor/chez-srfi
 SXMLT_SRC    := vendor/wak-sxml-tools
 COMMON_SRC   := vendor/wak-common
 SRFI_LIBS    := $(BUILD_DIR)/scheme-libs
-CHEZ_LIBDIRS := src:tests:$(SRFI_LIBS)
+# "." (repo root), not "site", is what puts (site slug) on the path: Chez
+# resolves a library's FULL name as a path under each libdir -- (cmark gfm)
+# needs libdir "src" because the file is src/cmark/gfm.sls, i.e. the libdir
+# is the PARENT of the first path segment, not that segment itself. So
+# (site slug) at site/slug.sls needs the repo root on CHEZ_LIBDIRS, not
+# "site" (which would only resolve a bare (slug), or (site slug) nested a
+# second time at site/site/slug.sls). Verified empirically: CHEZSCHEMELIBDIRS
+# =site alone cannot find (site slug); =. can.
+CHEZ_LIBDIRS := src:tests:.:$(SRFI_LIBS)
 TESTS        := $(wildcard tests/test-*.sps)
 
 # The differential suite spawns ~400 cmark-gfm subprocesses. Those are separate
@@ -70,7 +78,7 @@ MEMORY_TESTS := $(filter-out tests/test-differential.sps,$(TESTS))
 # continuation handling -- a backslash-wrapped .PHONY hides every
 # continuation-line target from that check and adds a bogus `\`
 # pseudo-target. Found and fixed once already, in commit 3f5552c.
-.PHONY: all build deps check-pins check-purity check-help check-install examples dev help install uninstall test test-memory vendor clean deps-info
+.PHONY: all build deps check-pins check-purity check-help check-install check-site examples site dev help install uninstall test test-memory vendor clean deps-info
 
 help: ## Show this help message
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_.-]+:.*?## / \
@@ -210,7 +218,7 @@ check-pins: ## Verify the submodule commits and Akku.lock name the same revision
 # what trips this.
 check-purity: build deps ## Verify the pure suites import no native code
 	@fail=0; \
-	for t in tests/test-options.sps tests/test-ast.sps tests/test-sxml.sps tests/test-example-coverage.sps tests/test-manifest-deps.sps; do \
+	for t in tests/test-options.sps tests/test-ast.sps tests/test-sxml.sps tests/test-example-coverage.sps tests/test-manifest-deps.sps tests/test-site.sps; do \
 	  echo "=== check-purity: $$t, CHEZ_CMARK_GFM_LIBS poisoned ==="; \
 	  if CHEZ_CMARK_GFM_LIBS=/nonexistent CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) \
 	      $(CHEZ) --program $$t; then \
@@ -360,6 +368,25 @@ examples: build ## Run every examples/*.sps and diff against examples/expected/
 	if [ $$fail -eq 0 ]; then echo "ALL EXAMPLES PASSED"; \
 	else echo "EXAMPLES FAILED"; fi; \
 	exit $$fail
+
+# The tree under build/ (gitignored): reads site/index.md + docs/*.md,
+# renders through (site render), writes build/site/*.html plus a copy of
+# site/style.css. SITE_REF overrides the git ref used for the ../-escape
+# rewrite in generated links; defaults to "main".
+site: build ## Generate the static docs site into build/site/
+	@mkdir -p build/site
+	@CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) SITE_REF="$${SITE_REF:-main}" \
+	  $(CHEZ) --program build-site.sps
+	@cp site/style.css build/site/style.css
+	@echo "site: build/site ready (open build/site/index.html)"
+
+# Asserts on render-site's return value in memory -- no build/site/ write,
+# no dependency on `site` itself. tests/site-check.sps is a plain program,
+# not a tests/test-*.sps suite, precisely so it stays off `make test`'s
+# glob and lives on this target instead (see its own header comment).
+check-site: build ## Build the site in memory and assert links, anchors, nav, and no <pre> reflow
+	@CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) SITE_REF="$${SITE_REF:-main}" \
+	  $(CHEZ) --program tests/site-check.sps
 
 # CHEZ_CMARK_GFM_LIBS is UNSET here, not set empty. `(getenv "X")` returns
 # "" for an empty-but-set variable, and "" is truthy in Scheme, so
