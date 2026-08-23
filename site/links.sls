@@ -43,7 +43,9 @@
                     (target-page (string-append base ".md"))
                     (slug (and anchor (substring anchor 1 (string-length anchor)))))
                (values (string-append base ".html" (or anchor ""))
-                       (and slug (not (registry-has? registry target-page slug)))))
+                       (not (and (assoc target-page registry)
+                                 (or (not slug)
+                                     (registry-has? registry target-page slug))))))
              (values target #f))))))          ; unrecognised: leave, don't dangle
 
   ;; Rewrite href/src targets across the SXML tree rooted at `body`, given
@@ -53,13 +55,16 @@
   ;; Returns (values new-body danglers); danglers is a list of
   ;; (page . original-target) in document order.
   ;;
-  ;; Only href/src attribute VALUES are ever rewritten. Everything else --
-  ;; every string, every non-href/src attribute -- passes through `eq?`-at
-  ;; the-leaf untouched. That is what keeps a "javascript:" URL sitting as
-  ;; text inside (pre (code "...")) safe: it is a string child, never an
-  ;; attribute value, so it is never a candidate for rewriting in the first
-  ;; place -- there is no text-scanning pass that could mistake it for a
-  ;; link.
+  ;; Only href/src attribute VALUES are ever rewritten, and only on (a) and
+  ;; (img) elements -- walk-node gates on the tag before attr-map ever runs,
+  ;; so an href/src carried by any other element passes through unchanged by
+  ;; construction, not by coincidence of what the doc body happens to emit.
+  ;; Everything else -- every string, every non-href/src attribute -- passes
+  ;; through `eq?`-at-the-leaf untouched. That is what keeps a "javascript:"
+  ;; URL sitting as text inside (pre (code "...")) safe: it is a string
+  ;; child, never an attribute value, so it is never a candidate for
+  ;; rewriting in the first place -- there is no text-scanning pass that
+  ;; could mistake it for a link.
   (define (rewrite-links body registry page ref)
     (let ((danglers '()))
 
@@ -92,14 +97,19 @@
             (let ((head (walk-node (car nodes))))
               (cons head (walk-children (cdr nodes))))))
 
-      ;; A leading (^ ...) in an element's tail is its attribute list;
-      ;; rewrite it via walk-attrs and recurse into the remaining children.
-      ;; Strings (and any other non-pair leaf) come back unchanged.
+      ;; A leading (^ ...) in an element's tail is its attribute list. Only
+      ;; (a) and (img) elements ever carry href/src, so the rewrite is gated
+      ;; on the tag itself: walk-attrs runs for those two tags, and every
+      ;; other tag's attribute list passes through unchanged. Either way we
+      ;; still recurse into the remaining children. Strings (and any other
+      ;; non-pair leaf) come back unchanged.
       (define (walk-node node)
         (if (pair? node)
             (let ((tag (car node)) (rest (cdr node)))
               (if (and (pair? rest) (pair? (car rest)) (eq? (caar rest) '^))
-                  (cons tag (cons (cons '^ (walk-attrs (cdar rest)))
+                  (cons tag (cons (cons '^ (if (memq tag '(a img))
+                                                (walk-attrs (cdar rest))
+                                                (cdar rest)))
                                   (walk-children (cdr rest))))
                   (cons tag (walk-children rest))))
             node))

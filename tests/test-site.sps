@@ -87,12 +87,30 @@
 (test-equal "CRUX: a javascript: URL in a code block is NOT a link, untouched"
   '(*TOP* (pre (code "[x](javascript:alert(1))")))
   (rw '(*TOP* (pre (code "[x](javascript:alert(1))"))) "sxml.md"))
+(test-equal "CRUX: href on a non-a/img element is left untouched (structural gate)"
+  '(*TOP* (span (^ (href "options.md")) "x"))
+  (rw '(*TOP* (span (^ (href "options.md")) "x")) "ast.md"))
 
 ;; --- links: danglers are reported ---------------------------------------
 (let-values (((b d) (rewrite-links
                       '(*TOP* (a (^ (href "options.md#nonesuch")) "x")) reg "ast.md" "v2.0.0")))
   (test-equal "an anchor absent from the registry is reported as a dangler"
     '(("ast.md" . "options.md#nonesuch")) d))
+
+(let-values (((b d) (rewrite-links
+                      '(*TOP* (a (^ (href "missing.md")) "x")) reg "ast.md" "v2.0.0")))
+  (test-equal "a bare .md link to a page absent from the registry is a dangler"
+    '(("ast.md" . "missing.md")) d))
+
+(let-values (((b d) (rewrite-links
+                      '(*TOP* (a (^ (href "options.md")) "x")) reg "ast.md" "v2.0.0")))
+  (test-equal "a bare .md link to a page present in the registry is NOT a dangler (regression)"
+    '() d))
+
+(let-values (((b d) (rewrite-links
+                      '(*TOP* (a (^ (href "missing.md#foo")) "x")) reg "ast.md" "v2.0.0")))
+  (test-equal "an anchored .md link to a page absent from the registry is a dangler"
+    '(("ast.md" . "missing.md#foo")) d))
 
 (test-end "site")
 (exit (if (zero? (test-runner-fail-count runner)) 0 1))
