@@ -40,6 +40,7 @@ matching `cmark-gfm` shared library already on the machine and loads it.
 
 - [Installing](installing.md) — get Chez Scheme and a system `cmark-gfm` in place.
 - [Usage](usage.md) — the four render functions, and the options record they all take.
+- [API reference](reference.md) — every public module and exported binding.
 - [Options](options.md) — every parser and render option, and what each one changes.
 - [The AST](ast.md) — the immutable parse tree `markdown->ast` returns, and its node properties.
 - [SXML](sxml.md) — the AST as a walkable, serializable SXML tree.

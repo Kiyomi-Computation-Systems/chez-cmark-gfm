@@ -31,7 +31,7 @@
 ;; is the point: the anchor is only knowable after B is slugged.
 (define inputs
   '(("index.md" . "# Home\n\nSee [node shape](ast.md#node-shape).\n")
-    ("ast.md"   . "# The AST\n\n## Node shape\n\ntext\n")))
+    ("ast.md"   . "# The AST\n\n## Node shape\n\ntext\n\n### Node detail\n\nmore text\n")))
 
 (define r (render-site inputs "v2.0.0"))
 
@@ -40,20 +40,19 @@
 
 ;; The id-registry carries EVERY heading's slug, h1 through h6 -- every
 ;; heading is a linkable anchor target, so cross-page anchor resolution
-;; must be able to see the h1 too. ast.md has two headings, "# The AST"
-;; (slug "the-ast") and "## Node shape" (slug "node-shape"), so both are
-;; in the registry, in document order. (This corrects the task brief's
+;; must be able to see the h1 and h3 too. ast.md has three headings, so all
+;; three are in the registry, in document order. (This corrects the task brief's
 ;; sample expectation of '("node-shape"), which omitted the h1 slug.)
 (test-equal "the registry carries every one of a page's heading slugs, including its h1"
-  '("the-ast" "node-shape")
+  '("the-ast" "node-shape" "node-detail")
   (cond ((assoc "ast.md" (site-result-registry r)) => cdr) (else 'missing)))
 
 (test-equal "a resolvable cross-page anchor does not dangle"
   '() (site-result-leaked r))
 
 ;; The registry (all headings) is not the same list as the rendered "On
-;; this page" rail (sections only, level > 1): the rail must show ast.md's
-;; h2 but must NOT turn its own h1 page title into a rail entry. Checked
+;; this page" rail (top-level sections only): the rail must show ast.md's
+;; h2 but must NOT turn its own h1 page title or h3 detail into rail entries. Checked
 ;; on the actual rendered-and-serialized document, not the internal toc,
 ;; so this exercises render-site's wiring into (site template) end to end.
 ;; The leading '#' is what distinguishes a rail link (href="#the-ast")
@@ -66,6 +65,12 @@
       (string-contains-sub? html "#node-shape"))
     (test-assert "the rail does NOT link the h1 anchor (page title is not a rail entry)"
       (not (string-contains-sub? html "#the-ast")))
+    (test-equal "an h3 remains a rendered link target"
+      'present
+      (if (string-contains-sub? html "id=\"node-detail\"") 'present 'missing))
+    (test-equal "the rail lists h2 sections, not h3 binding details"
+      'agree
+      (if (string-contains-sub? html "href=\"#node-detail\"") 'h3-leaked-into-rail 'agree))
     ;; Design spec S4: site/index.md "is reached from the wordmark, not
     ;; listed as a nav item". The wordmark (site/template.sls) always emits
     ;; href="index.html"; if index.md also re-entered the sidebar nav (the

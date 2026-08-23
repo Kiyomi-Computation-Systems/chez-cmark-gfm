@@ -141,6 +141,7 @@ verify it by eye if either file changes.
 
 | [[file:docs/installing.md][Installing]]   | Prerequisites, Akku, system-wide install, and every acquisition path |
 | [[file:docs/usage.md][Usage]]             | The four renderers, and which library got loaded                    |
+| [[file:docs/reference.md][API reference]] | Every public module and exported binding                            |
 | [[file:docs/options.md][Options]]         | Every option, its default, and the two that conflict                |
 | [[file:docs/ast.md][The AST]]             | Node shape, properties by type, traversal, resource limits          |
 | [[file:docs/sxml.md][SXML]]               | The adapter, the full mapping, and choosing a serializer            |
