@@ -1,6 +1,6 @@
 #!r6rs
 ;; PURE SUITE. Imports no library that loads a shared object.
-(import (rnrs) (srfi :64) (site slug))
+(import (rnrs) (srfi :64) (site slug) (site serializer))
 
 (define runner (test-runner-simple))
 (test-runner-current runner)
@@ -28,6 +28,21 @@
 
 (test-equal "heading-text skips the ^ attr node and inline tags"
   "Some text" (heading-text '(h2 (^ (id "foo")) "Some " (code "text"))))
+
+;; --- serializer: escaping, void elements, the caret marker --------------
+(test-equal "text is escaped on output, not before"
+  "<p>a &amp; &lt;b&gt;</p>" (sxml->html '(p "a & <b>")))
+(test-equal "attributes render from the caret marker and are quoted"
+  "<a href=\"/x\">l</a>" (sxml->html '(a (^ (href "/x")) "l")))
+(test-equal "void elements self-close without a body"
+  "<hr>" (sxml->html '(hr)))
+(test-equal "*TOP* is a fragment: it emits its children only"
+  "<h1>a</h1>\n<p>b</p>\n" (sxml->html '(*TOP* (h1 "a") (p "b"))))
+
+;; --- the load-bearing property: <pre> content is never reflowed ---------
+(test-equal "indentation inside pre/code is content, preserved byte-for-byte"
+  "<pre><code>(define (f x)\n    (g\n      x))\n</code></pre>"
+  (sxml->html '(pre (code "(define (f x)\n    (g\n      x))\n"))))
 
 (test-end "site")
 (exit (if (zero? (test-runner-fail-count runner)) 0 1))
