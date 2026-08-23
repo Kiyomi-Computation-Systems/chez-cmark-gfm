@@ -18,8 +18,13 @@ labels: bug
 
 **Minimal reproduction**
 
-Ideally a small standalone `.sps`, run as
+Ideally a small standalone `.sps`, run the same way `(cmark gfm)` already
+resolves for you: from a clone,
 `CHEZSCHEMELIBDIRS=src chez --program repro.sps` (`chezscheme` on
-Debian/Ubuntu). Include the Markdown input if the bug depends on it.
+Debian/Ubuntu); under Akku, `. .akku/bin/activate` first, then
+`chez --program repro.sps`; after `make install`, the
+`CHEZSCHEMELIBDIRS` export line `make install` printed for you, then
+`chez --program repro.sps`. Include the Markdown input if the bug depends
+on it.
 
 **Does `make test` pass locally?**
