@@ -95,3 +95,21 @@ reason given above, not because the check cannot catch a broken slug
 algorithm — its second attempt, targeting the same code with the same
 kind of change, proves that it can. `make check-site` and `make
 check-help` are both green on the committed tree.
+
+## Summary table (Task 10)
+
+| Mutation | Guards | Result | Reverted |
+|---|---|---|---|
+| A — drop `("building.md" . "Building")` from `site/pages.sls` | every `docs/*.md` on disk appears in the site nav, and vice versa | FAILED by name — `nav completeness FAILED. missing-from-site/pages.sls=(building.md)` | yes |
+| B, 1st attempt — keep `.` in `slugify` (the brief's original suggestion) | generated heading slugs match the anchors `docs/*.md` hand-wrote in prose | PASSED — inert, not a gap: no heading in the real corpus contains a literal `.`, so the mutation changes no real slug. Superseded by B, 2nd attempt below rather than left as the recorded result | n/a — no code left changed |
+| B, 2nd attempt (substituted) — keep `,` in `slugify` instead | same invariant, exercised against real content (`docs/installing.md`'s "RHEL, Fedora, and Alpine" heading, linked same-page and cross-page) | FAILED by name — `anchor resolution FAILED. danglers=((installing.md . #rhel-fedora-and-alpine) (building.md . installing.md#rhel-fedora-and-alpine))` | yes |
+| C — force `rewrite-target`'s `.md`-suffix branch to `(if #f ...)` in `site/links.sls` | no relative `.md` href/src reaches the serialized HTML | FAILED by name — `a relative .md link leaked into index.md: (installing.md usage.md options.md ast.md sxml.md errors.md memory.md building.md)` | yes |
+| D — inject a newline + 2-space indent before every child in `site/serializer.sls`'s `emit` | the serializer never injects whitespace into an element's children (load-bearing for `<pre><code>`) | FAILED by name — `<pre> reflow FAILED: <pre>\n  <code>\n  a\n        b\n</code></pre>` | yes |
+
+No invariant is recorded as UNCOVERED. B's first attempt reported PASS, but
+the summary above already establishes why that is a property of today's
+corpus (no heading uses a literal `.`) and not a blind spot in
+`check-site`'s mechanism — `tests/test-site-render.sps` proves the
+mechanism directly against a synthetic fixture, and B's second attempt
+reproduces the same proof against real content. Every mutation's diff was
+empty and `make check-site` was green again before moving to the next.

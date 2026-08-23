@@ -3,6 +3,18 @@
 All notable changes to this project are documented here. This project follows
 [Semantic Versioning](https://semver.org).
 
+## Unreleased
+
+### Added
+
+- A static documentation site generated from `docs/*.md` and an authored
+  `site/index.md`, rendered entirely through `markdown->sxml` → transform →
+  serialize and deployed to GitHub Pages. Flexoki theme, sidebar + per-page
+  TOC. `make site` builds it into `build/site/` (nothing committed);
+  `make check-site` asserts nav completeness, anchor resolution, no `.md`
+  leak, and no `<pre>` reflow. `.github/workflows/pages.yml` deploys on a
+  `v*` tag.
+
 ## [2.0.0] — 2026-08-22
 
 The C shim is gone. `(cmark gfm)` binds `libcmark-gfm` directly and locates it
