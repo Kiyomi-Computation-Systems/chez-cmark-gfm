@@ -39,6 +39,20 @@ jobs:
         with:
           submodules: recursive
 
+      # First, because it needs nothing: no Chez, no submodules, no apt. The
+      # target is awk and grep over the Makefile, so it can run before the
+      # toolchain exists and reports a target added without a `## ` line in
+      # seconds instead of after a full install. `make help` is what
+      # CONTRIBUTING.md and docs/building.md send readers to, and it rots the
+      # moment a target arrives undocumented.
+      #
+      # HERE and nowhere else, deliberately: this reads one file that does
+      # not vary by platform, so a second copy on the macos job would
+      # duplicate a result rather than test anything new. Contrast the
+      # installed-tree check below, which is per-platform for a real reason.
+      - name: Check every .PHONY target is documented in `make help`
+        run: make check-help
+
       # packaging/debian-prereqs.txt is the single source for the build/test
       # package list (see its header comment). valgrind is added here rather
       # than in that file because it is needed only by this job's memory
@@ -79,11 +93,12 @@ jobs:
           echo "cc:       $(cc --version | head -1)"
           echo "cmark-gfm CLI (apt): $(cmark-gfm --version | head -1)"
 
-      # The README matrix decays silently the moment a runner image bumps
-      # Chez. This makes that a build failure instead. Deliberately asserts
-      # agreement with what THIS run used -- it does not pin a version, which
-      # would fight the "recorded rather than asserted" note above.
-      - name: Check the README matrix names the Chez this job ran
+      # The docs/installing.md matrix decays silently the moment a runner
+      # image bumps Chez. This makes that a build failure instead.
+      # Deliberately asserts agreement with what THIS run used -- it does not
+      # pin a version, which would fight the "recorded rather than asserted"
+      # note above.
+      - name: Check the docs/installing.md matrix names the Chez this job ran
         run: |
           set -eu
           actual=$( (chezscheme --version 2>&1 || scheme --version 2>&1) | tr -d '[:space:]')
@@ -104,13 +119,13 @@ jobs:
           # version the table already contained -- a false diagnosis sending the
           # reader to edit correct prose.
           command -v grep >/dev/null || { echo "::error::grep is unavailable; this check cannot run."; exit 1; }
-          if ! grep -qF -e "$prefix " -e "$prefix|" README.org; then
-            echo "::error::README.org's Supported matrix does not name Chez $actual for the Linux row."
+          if ! grep -qF -e "$prefix " -e "$prefix|" docs/installing.md; then
+            echo "::error::docs/installing.md's Supported matrix does not name Chez $actual for the Linux row."
             echo "This runner now ships a different Chez than the table documents."
-            echo "Fix: edit the 'Supported matrix' table in README.org to say $actual."
+            echo "Fix: edit the 'Supported matrix' table in docs/installing.md to say $actual."
             echo "Do not pin the toolchain and do not delete this check -- the table is"
             echo "supposed to track whatever CI actually runs, not the other way around."
-            grep -n 'Linux/x86-64' README.org || true
+            grep -n 'Linux/x86-64' docs/installing.md || true
             exit 1
           fi
 
@@ -138,12 +153,12 @@ jobs:
       # that alone is enough for the corpus and the header -- so nothing in
       # `make test` actually needs this cmake build to have run; $(CMARK_CLI)
       # defaults to the apt-installed `cmark-gfm` on PATH, not a vendor-built
-      # binary. This step is kept anyway, as a regression guard: README.org's
-      # RHEL/Fedora/Alpine remedy (8.2) tells those readers to build this
-      # exact pinned submodule themselves, and nothing else in CI would
-      # notice if that stopped working. cmake and build-essential are
-      # installed for this, not for anything of ours -- 2.0 compiles no shim
-      # on any platform.
+      # binary. This step is kept anyway, as a regression guard:
+      # docs/installing.md's RHEL/Fedora/Alpine remedy (8.2) tells those
+      # readers to build this exact pinned submodule themselves, and nothing
+      # else in CI would notice if that stopped working. cmake and
+      # build-essential are installed for this, not for anything of ours --
+      # 2.0 compiles no shim on any platform.
       - name: Build vendored cmark-gfm (dev dependency -- corpus, header, CLI oracle)
         run: make vendor
 
@@ -153,6 +168,30 @@ jobs:
       # above.
       - name: Build (discovery preflight)
         run: make build
+
+      # `make build` above proves a libcmark-gfm resolves from the SOURCE
+      # tree. This proves it for an INSTALLED one: `make install` into a temp
+      # prefix, then render a document with CHEZSCHEMELIBDIRS naming that
+      # prefix alone and CHEZ_CMARK_GFM_LIBS unset. Nothing else in this
+      # workflow runs `make install` at all, so without this step the install
+      # contract -- the thing docs/installing.md tells every reader to run --
+      # is the one path CI never exercises.
+      #
+      # Runs on BOTH this job and macos, and not merely because a second run
+      # is cheap. src/cmark/gfm/private/discovery.sls hardcodes a different
+      # candidate list AND a different filename shape per platform: macOS
+      # searches /opt/homebrew/lib, /usr/local/lib, /opt/local/lib for
+      # `libcmark-gfm.<version>.dylib`, while Linux searches /usr/local/lib, a
+      # multiarch triple directory derived at runtime from `machine-type`,
+      # /usr/lib and /usr/lib64 for `libcmark-gfm.so.<version>`. Those are
+      # separate branches; a break in either is invisible to the other job.
+      #
+      # Placed after "Resolve the Chez binary": CHEZ arrives from the
+      # environment that step wrote, which the Makefile's `CHEZ ?= chez`
+      # yields to. Before it, this would run `chez`, which Ubuntu does not
+      # ship, and fail for a reason it does not claim.
+      - name: Check an installed tree imports and renders (apt libcmark-gfm)
+        run: make check-install
 
       # options.sls and ast.sls must import no library that loads a shared
       # object, directly or transitively -- that purity is what makes every
@@ -222,7 +261,7 @@ jobs:
 
       # Equivalent to the linux job's check above (same rationale: the table
       # tracks what "Report versions" printed, and is not a pinned version).
-      - name: Check the README matrix names the Chez this job ran
+      - name: Check the docs/installing.md matrix names the Chez this job ran
         run: |
           set -eu
           actual=$(chez --version 2>&1 | tr -d '[:space:]')
@@ -239,13 +278,13 @@ jobs:
           # version the table already contained -- a false diagnosis sending the
           # reader to edit correct prose.
           command -v grep >/dev/null || { echo "::error::grep is unavailable; this check cannot run."; exit 1; }
-          if ! grep -qF -e "$prefix " -e "$prefix|" README.org; then
-            echo "::error::README.org's Supported matrix does not name Chez $actual for the macOS row."
+          if ! grep -qF -e "$prefix " -e "$prefix|" docs/installing.md; then
+            echo "::error::docs/installing.md's Supported matrix does not name Chez $actual for the macOS row."
             echo "This runner now ships a different Chez than the table documents."
-            echo "Fix: edit the 'Supported matrix' table in README.org to say $actual."
+            echo "Fix: edit the 'Supported matrix' table in docs/installing.md to say $actual."
             echo "Do not pin the toolchain and do not delete this check -- the table is"
             echo "supposed to track whatever CI actually runs, not the other way around."
-            grep -n 'macOS/ARM64' README.org || true
+            grep -n 'macOS/ARM64' docs/installing.md || true
             exit 1
           fi
 
@@ -320,12 +359,30 @@ jobs:
           done < "$list"
           if [ "$rc" -ne 0 ]; then
             echo "2.0 compiles nothing on this path. If something here now builds C, the"
-            echo "'no compiler required' claim -- README.org's Installing section, and the"
+            echo "'no compiler required' claim -- docs/installing.md, and the"
             echo "akku-install job's exit criterion -- is false, and this step is the only"
             echo "place in CI that would notice."
             exit 1
           fi
           echo "no compiled object or shared library outside vendor/: nothing compiled C"
+
+      # The Homebrew half of the installed-tree check; the linux job's copy
+      # carries the full rationale, including why two runs are not one run
+      # duplicated. What only this one reaches: the macOS candidate list
+      # (/opt/homebrew/lib first) and the `libcmark-gfm.<version>.dylib`
+      # filename shape. The linux job cannot go red for a break in either.
+      #
+      # No CHEZ override, matching this job's `make build`/`make test` above:
+      # Homebrew names the binary `chez`, which is already the Makefile's
+      # default.
+      #
+      # After "assert no C artifact", not before, so that step's claim stays
+      # scoped to what its comment says it walks -- what `make build && make
+      # test` left behind. This step installs into a `mktemp -d` outside the
+      # working tree and removes it on its own trap, so it neither feeds nor
+      # weakens that walk either way.
+      - name: Check an installed tree imports and renders (Homebrew libcmark-gfm)
+        run: make check-install
 
       # ASan only. LeakSanitizer is unsupported on macOS/ARM64, so this catches
       # use-after-free and overflows but CANNOT support a leak claim. Do not
@@ -339,13 +396,13 @@ jobs:
     # A bare container, NOT the runner image. ubuntu-latest arrives with a
     # toolchain, git, and build tools already present, so building there
     # proves nothing about a clean machine -- which is exactly what
-    # milestone 6's exit criterion is about. This job runs only what the
-    # README tells a reader to run.
+    # milestone 6's exit criterion is about. This job runs only what
+    # docs/installing.md tells a reader to run.
     container: ubuntu:24.04
     steps:
       # A bare container has no git, so checkout cannot run yet. This is the
-      # only thing installed that the README does not list, and it is needed
-      # to obtain the repository at all rather than to build it.
+      # only thing installed that docs/installing.md does not list, and it is
+      # needed to obtain the repository at all rather than to build it.
       - name: Bootstrap enough to check out
         run: |
           set -eu
@@ -356,7 +413,7 @@ jobs:
         with:
           submodules: recursive
 
-      # The SAME list README.org points readers at -- one copy, so this
+      # The SAME list docs/installing.md points readers at -- one copy, so this
       # cannot drift from the documentation. Must follow checkout, which is
       # what puts the file on disk.
       #
@@ -407,7 +464,7 @@ jobs:
 
       # CHEZ=chezscheme because Debian names the binary that way and the
       # Makefile defaults to `chez`.
-      - name: Build, exactly as the README says
+      - name: Build, exactly as docs/installing.md says
         run: make CHEZ=chezscheme build
 
       # No `make deps`, deliberately. The examples run under

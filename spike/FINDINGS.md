@@ -1,5 +1,14 @@
 # Stage 0 Findings
 
+> **Historical record, not current instructions.** This is the pre-2.0
+> compatibility spike (commit `3752e78`), written when the acquisition
+> path was `pkg-config` against a system-installed library. ADR-0015
+> removed that path — 2.0 finds `libcmark-gfm` by scanning a fixed list of
+> directories instead, with no `pkg-config` step anywhere. The toolchain
+> table and commands below describe the spike's environment at the time,
+> not how to install or build this project today; see
+> [docs/installing.md](../docs/installing.md) for that.
+
 ## Toolchain
 
 | Item | Value |

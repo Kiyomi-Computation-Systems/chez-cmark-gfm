@@ -14,6 +14,15 @@ VENDOR_BUILD:= $(BUILD_DIR)/vendor
 # PATH is not the one to test against.
 CMARK_CLI ?= cmark-gfm
 
+# Install prefix for `make install`. Chez has NO system-wide R6RS library
+# directory -- (library-directories) is (("." . ".")) with nothing set --
+# so installing here does not make CHEZSCHEMELIBDIRS unnecessary. What it
+# buys is one canonical location and one stable variable instead of a path
+# into a source checkout.
+PREFIX  ?= /usr/local
+LIBDIR  ?= $(PREFIX)/lib/chez-cmark-gfm
+DESTDIR ?=
+
 SRFI_SRC     := vendor/chez-srfi
 SXMLT_SRC    := vendor/wak-sxml-tools
 COMMON_SRC   := vendor/wak-common
@@ -56,18 +65,41 @@ TESTS        := $(wildcard tests/test-*.sps)
 # work that would be lost".
 MEMORY_TESTS := $(filter-out tests/test-differential.sps,$(TESTS))
 
-.PHONY: all build deps check-pins check-purity examples dev test test-memory vendor clean deps-info
+# MUST stay on one physical line. check-help extracts targets with
+# `awk '/^\.PHONY:/ ...'`, which matches one physical line and has no
+# continuation handling -- a backslash-wrapped .PHONY hides every
+# continuation-line target from that check and adds a bogus `\`
+# pseudo-target. Found and fixed once already, in commit 3f5552c.
+.PHONY: all build deps check-pins check-purity check-help check-install examples dev help install uninstall test test-memory vendor clean deps-info
 
-all: build
+help: ## Show this help message
+	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_.-]+:.*?## / \
+	  { printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 
-deps-info:
+# `help` cannot rot: a .PHONY target added without a `## ` description on
+# its own line fails this check. Lifted from chez-libuv, which runs the
+# same pair.
+check-help: ## Fail if any .PHONY target is undocumented in `make help`
+	@missing=0; \
+	targets=$$(awk '/^\.PHONY:/ { $$1 = ""; print }' Makefile); \
+	for t in $$targets; do \
+	  grep -qE "^$$t:.*## " Makefile || { \
+	    echo "check-help: target '$$t' has no '## ' description on its own line" >&2; \
+	    missing=1; \
+	  }; \
+	done; \
+	exit $$missing
+
+all: build ## Alias for build
+
+deps-info: ## Report which cmark-gfm CLI the differential suites will use
 	@echo "cmark-gfm CLI    : $(CMARK_CLI)"
 
 # There is no compiled artifact in 2.0. `build` answers the question the
 # install contract raises instead: is a usable libcmark-gfm present, and which
 # one would be loaded? Kept as a canonical target because that question is
 # worth one command.
-build:
+build: ## Verify a usable libcmark-gfm is present and name which one loads
 	@CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) $(CHEZ) --program tests/preflight.sps
 
 # Scheme dependencies. chez-srfi, wak-sxml-tools, and wak-common are each
@@ -134,7 +166,7 @@ build:
 # always ran to end of file. Anchoring on the tarball's own name_version
 # convention removes both: the pattern can only match the target package's
 # own line, so which line comes first no longer matters.
-check-pins:
+check-pins: ## Verify the submodule commits and Akku.lock name the same revisions
 	@fail=0; \
 	for pair in "$(SRFI_SRC):chez-srfi" "$(SXMLT_SRC):wak-sxml-tools" "$(COMMON_SRC):wak-common"; do \
 	  src=$${pair%%:*}; name=$${pair##*:}; \
@@ -176,7 +208,7 @@ check-pins:
 # silently elsewhere. That is not a gap in practice: a real accidental
 # dependency is something one of them actually CALLS, and that is exactly
 # what trips this.
-check-purity: build deps
+check-purity: build deps ## Verify the pure suites import no native code
 	@fail=0; \
 	for t in tests/test-options.sps tests/test-ast.sps tests/test-sxml.sps tests/test-example-coverage.sps tests/test-manifest-deps.sps; do \
 	  echo "=== check-purity: $$t, CHEZ_CMARK_GFM_LIBS poisoned ==="; \
@@ -215,7 +247,7 @@ check-purity: build deps
 # recorded gitlink, so running it from both paths disturbs neither -- and the
 # corpus has to be at the pinned commit either way, since it is the same
 # submodule commit either path resolves to.
-deps:
+deps: ## Vendor chez-srfi and the wak libraries into build/scheme-libs
 	git submodule update --init $(VENDOR_DIR)
 	git submodule update --init $(SRFI_SRC)
 	mkdir -p $(SRFI_LIBS)/srfi
@@ -238,7 +270,7 @@ deps:
 	ln -sfn $(abspath $(SRFI_LIBS))/wak/private/include/compat.chezscheme.sls \
 	        $(abspath $(SRFI_LIBS))/wak/private/include/compat.sls
 
-vendor:
+vendor: ## Build the vendored cmark-gfm (dev dependency: corpus, header, CLI oracle)
 	git submodule update --init --recursive
 	cmake -S $(VENDOR_DIR) -B $(VENDOR_BUILD) \
 	  -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
@@ -246,12 +278,12 @@ vendor:
 	  -DCMARK_TESTS=OFF -DCMARK_SHARED=ON -DCMARK_STATIC=OFF
 	cmake --build $(VENDOR_BUILD) -j
 
-dev: build deps
+dev: build deps ## Start a REPL with the library path set
 	CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) $(CHEZ)
 
 # Each suite sets its own exit status. Keep going after a failure so one
 # broken suite cannot hide the others, then fail the target if any failed.
-test: build deps check-pins
+test: build deps check-pins ## Run every tests/test-*.sps suite
 	@fail=0; \
 	for t in $(TESTS); do \
 	  echo "=== $$t ==="; \
@@ -261,7 +293,7 @@ test: build deps check-pins
 	else echo "SUITE FAILED"; fi; \
 	exit $$fail
 
-test-memory: build deps check-pins
+test-memory: build deps check-pins ## Run the suites under Valgrind (Linux) or ASan (macOS)
 ifeq ($(UNAME_S),Linux)
 	@for t in $(MEMORY_TESTS); do \
 	  CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) CMARK_CLI=$(CMARK_CLI) \
@@ -291,7 +323,7 @@ else
 	  sh -c 'for t in $(MEMORY_TESTS); do $(CHEZ) --program $$t || exit 1; done'
 endif
 
-clean:
+clean: ## Remove build/ and tests/tmp
 	rm -rf $(BUILD_DIR) tests/tmp
 
 EXAMPLES := $(wildcard examples/*.sps)
@@ -304,7 +336,7 @@ EXAMPLES := $(wildcard examples/*.sps)
 #
 # Each examples/NN-name.sps pairs with examples/expected/NN.out. Keeps going
 # after a failure so one stale example cannot hide the others.
-examples: build
+examples: build ## Run every examples/*.sps and diff against examples/expected/
 	@mkdir -p tests/tmp; \
 	fail=0; \
 	for e in $(EXAMPLES); do \
@@ -328,3 +360,110 @@ examples: build
 	if [ $$fail -eq 0 ]; then echo "ALL EXAMPLES PASSED"; \
 	else echo "EXAMPLES FAILED"; fi; \
 	exit $$fail
+
+# CHEZ_CMARK_GFM_LIBS is UNSET here, not set empty. `(getenv "X")` returns
+# "" for an empty-but-set variable, and "" is truthy in Scheme, so
+# resolve-cmark-libraries would take the override branch and raise
+# &cmark-library-unavailable reason invalid-override -- a failure that
+# looks like a broken install but is really a broken check.
+#
+# The probe runs with the export line `install` actually PRINTS, parsed out
+# of its real output -- not with a path this recipe spells out for itself.
+# A path hardcoded here guards nothing: that printed line is the most-copied
+# thing this project emits, and while this check named its own path, the
+# printed one could be changed to the deeper cmark/ subdirectory -- the exact
+# mistake docs/installing.md warns readers about -- and still pass green.
+# AGENTS.md, first rule: a check that cannot fail is worse than no check.
+#
+# The probe runs from an empty scratch directory rather than the repo root,
+# so the "." that the trailing colon keeps on the search path is genuinely
+# empty. Only the extracted directory can resolve (cmark gfm), which is the
+# property under test; from the repo root a stray ./cmark would satisfy the
+# import and hide a wrong printed path.
+#
+# uninstall is exercised here too, against the same temp prefix -- it is
+# install's twin, is documented in README.org and docs/installing.md, and
+# until now was run by no target and no CI job. The keep-me marker is not
+# decoration: an rm -rf one level too high would take the whole prefix with
+# it, and "the tree is gone" alone cannot tell that apart from success.
+check-install: ## Install to a temp prefix, prove install's own printed export line works, then uninstall
+	@set -eu; \
+	tmp="$$(mktemp -d)"; \
+	trap 'rm -rf "$$tmp"' EXIT INT TERM; \
+	prefix="$$tmp/prefix"; \
+	out="$$tmp/install.out"; \
+	probecwd="$$tmp/empty"; \
+	mkdir -p "$$probecwd"; \
+	$(MAKE) --no-print-directory install PREFIX="$$prefix" >"$$out"; \
+	libdirs="$$(sed -n 's/^[[:space:]]*export CHEZSCHEMELIBDIRS=//p' "$$out")"; \
+	if [ -z "$$libdirs" ]; then \
+	  echo "check-install: FAILED -- make install printed no" >&2; \
+	  echo "'export CHEZSCHEMELIBDIRS=...' line for this check to test. That" >&2; \
+	  echo "line is the install target's entire user-facing output." >&2; \
+	  exit 1; \
+	fi; \
+	case "$$libdirs" in \
+	  *:) ;; \
+	  *) echo "check-install: FAILED -- make install printed" >&2; \
+	     echo "    export CHEZSCHEMELIBDIRS=$$libdirs" >&2; \
+	     echo "with no TRAILING COLON. Assigning that variable REPLACES Chez's" >&2; \
+	     echo "search path instead of extending it, so without the colon '.' is" >&2; \
+	     echo "dropped and relative imports stop resolving." >&2; \
+	     exit 1;; \
+	esac; \
+	echo "=== check-install: importing with the line install printed: $$libdirs ==="; \
+	if ( cd "$$probecwd" && env -u CHEZ_CMARK_GFM_LIBS \
+	       CHEZSCHEMELIBDIRS="$$libdirs" \
+	       $(CHEZ) --program "$(CURDIR)/tests/install-probe.sps" ); then \
+	  echo "check-install: an installed tree imports and renders"; \
+	else \
+	  echo "check-install: FAILED -- the export line make install printed," >&2; \
+	  echo "    export CHEZSCHEMELIBDIRS=$$libdirs" >&2; \
+	  echo "does not render a document against the tree it just installed under" >&2; \
+	  echo "$$prefix. Either the copy step or that printed line is wrong -- note" >&2; \
+	  echo "that (cmark gfm) resolves to <libdir>/cmark/gfm.sls, so the line must" >&2; \
+	  echo "name the PARENT of cmark/, not cmark/ itself." >&2; \
+	  exit 1; \
+	fi; \
+	mkdir -p "$$prefix/lib/keep-me"; \
+	touch "$$prefix/lib/keep-me/marker"; \
+	echo "=== check-install: uninstalling from $$prefix ==="; \
+	$(MAKE) --no-print-directory uninstall PREFIX="$$prefix" >/dev/null; \
+	if [ -e "$$prefix/lib/chez-cmark-gfm" ]; then \
+	  echo "check-install: FAILED -- make uninstall left" >&2; \
+	  echo "$$prefix/lib/chez-cmark-gfm behind. It must remove the tree that" >&2; \
+	  echo "make install created." >&2; \
+	  exit 1; \
+	fi; \
+	if [ ! -e "$$prefix/lib/keep-me/marker" ]; then \
+	  echo "check-install: FAILED -- make uninstall removed" >&2; \
+	  echo "$$prefix/lib/keep-me/marker, which make install never created." >&2; \
+	  echo "uninstall must remove its own tree and nothing else." >&2; \
+	  exit 1; \
+	fi; \
+	echo "check-install: uninstall removed its own tree and left the prefix intact"
+
+# Copies .sls files and nothing else. 2.0 compiles nothing (ADR-0015), and
+# the install path must not quietly acquire a build step.
+install: ## Copy src/cmark/**.sls into $(DESTDIR)$(LIBDIR) and print the export line
+	@set -eu; \
+	dest="$(DESTDIR)$(LIBDIR)"; \
+	find src/cmark -name '*.sls' | while read -r f; do \
+	  rel="$${f#src/}"; \
+	  mkdir -p "$$dest/$$(dirname "$$rel")"; \
+	  cp "$$f" "$$dest/$$rel"; \
+	done; \
+	echo "installed to $$dest"; \
+	echo; \
+	echo "Add this to your shell profile. The TRAILING COLON matters:"; \
+	echo "without it Chez replaces its search path outright and drops"; \
+	echo "\".\", so relative imports stop resolving."; \
+	echo; \
+	echo "    export CHEZSCHEMELIBDIRS=$(LIBDIR):"
+
+uninstall: ## Remove the tree installed by `make install`
+	@set -eu; \
+	dest="$(DESTDIR)$(LIBDIR)"; \
+	rm -rf "$$dest/cmark"; \
+	rmdir "$$dest" 2>/dev/null || true; \
+	echo "removed $$dest/cmark"
