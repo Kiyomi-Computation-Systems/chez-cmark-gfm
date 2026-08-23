@@ -12,6 +12,17 @@
             ((string=? needle (substring hay i (+ i n))) #t)
             (else (loop (+ i 1)))))))
 
+;; Non-overlapping occurrence count. Safe for this file's one use
+;; (needle = "href=\"index.html\""): that string cannot overlap itself, so
+;; advancing the scan past each match by the full needle length never skips
+;; a real match.
+(define (count-substring hay needle)
+  (let ((h (string-length hay)) (n (string-length needle)))
+    (let loop ((i 0) (count 0))
+      (cond ((> (+ i n) h) count)
+            ((string=? needle (substring hay i (+ i n))) (loop (+ i n) (+ count 1)))
+            (else (loop (+ i 1) count))))))
+
 (define runner (test-runner-simple))
 (test-runner-current runner)
 (test-begin "site-render")
@@ -54,7 +65,16 @@
     (test-assert "the rail links the h2 anchor"
       (string-contains-sub? html "#node-shape"))
     (test-assert "the rail does NOT link the h1 anchor (page title is not a rail entry)"
-      (not (string-contains-sub? html "#the-ast")))))
+      (not (string-contains-sub? html "#the-ast")))
+    ;; Design spec S4: site/index.md "is reached from the wordmark, not
+    ;; listed as a nav item". The wordmark (site/template.sls) always emits
+    ;; href="index.html"; if index.md also re-entered the sidebar nav (the
+    ;; bug this guards), a second href="index.html" would appear for its
+    ;; nav link. Counting is the discriminating assertion: a bare
+    ;; string-contains-sub? would pass in both the correct and buggy cases,
+    ;; since the wordmark's occurrence alone already satisfies it.
+    (test-equal "index.html is linked exactly once -- the wordmark, not a nav item"
+      1 (count-substring html "href=\"index.html\""))))
 
 ;; Break the target: the anchor now dangles.
 (define r2 (render-site

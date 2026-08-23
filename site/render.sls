@@ -24,6 +24,15 @@
   ;; filtered to level > 1.
   (define (rail-toc toc) (filter (lambda (entry) (> (car entry) 1)) toc))
 
+  ;; Design spec S4: site/index.md "is reached from the wordmark, not
+  ;; listed as a nav item" -- the wordmark's own href="index.html" lives in
+  ;; site/template.sls and is unconditional. `pages` (site/pages.sls) still
+  ;; carries the index.md entry because read-site-inputs and check-site's
+  ;; nav-completeness check both need it (the latter compares its non-index
+  ;; entries to docs/*.md), so the filtering happens here, once, on the copy
+  ;; handed to page->document as the nav -- not on `pages` itself.
+  (define nav (filter (lambda (entry) (not (string=? (car entry) "index.md"))) pages))
+
   ;; Pass 1: parse + slug every page, building the id-registry.
   ;; Pass 2: rewrite links against the full registry, then template.
   ;;
@@ -52,7 +61,7 @@
               (let-values (((body* dangling) (rewrite-links body registry name ref)))
                 (loop (cdr ps)
                       (cons (cons name
-                                  (page->document pages name (label-for name)
+                                  (page->document nav name (label-for name)
                                                    body* (rail-toc toc)))
                             pages-out)
                       (append (reverse dangling) leaked)))))))))
