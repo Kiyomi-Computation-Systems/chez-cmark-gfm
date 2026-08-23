@@ -7,7 +7,7 @@ Scope: documentation and packaging only. No library behaviour changes.
 ## Goal
 
 Make the repository suitable for a public open-source release. Today's
-`README.org` is 642 lines and reads as a design document: it argues *why*
+`README.org` is 643 lines and reads as a design document: it argues *why*
 at every turn, which is right for `.plans/` and wrong for the file a
 stranger reads first. A reader arriving from a search result should be able
 to install, render one document, and find the reference page for whatever
