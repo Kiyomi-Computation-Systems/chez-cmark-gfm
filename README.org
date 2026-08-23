@@ -47,8 +47,10 @@ the library is looked for in are all in [[file:docs/installing.md][docs/installi
 
 ** With Akku
 
-Run from a clone of this repository — ~akku install~ reads ~Akku.manifest~
-from the current directory.
+Needs the [[https://gitlab.com/akkuscm/akku][akku]] command itself, which this repo does not install for you.
+Run from a clone — ~akku install~ reads ~Akku.manifest~ from the current
+directory; this package is not on Akku's own index, so that's the only
+installation path proven here.
 
 #+begin_src sh
 akku install

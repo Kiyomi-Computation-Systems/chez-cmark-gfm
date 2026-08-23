@@ -71,10 +71,21 @@ letting the claim go stale.
 
 ## With Akku
 
+Needs the [Akku](https://gitlab.com/akkuscm/akku) command itself; nothing
+here installs it for you, and no Linux distribution packages it either —
+CI installs it from Akku's own release tarball rather than a system
+package (the `install akku` step in
+[ci.yml](../.github/workflows/ci.yml)).
+
 `Akku.manifest` declares the package's name, version, license, homepage, and
 its development-only dependencies; `Akku.lock` is committed. It names no
 libraries — Akku infers those from the file tree — and carries no `scripts`
 clause, because there is nothing to build (ADR-0017).
+
+Run from a clone: `akku install` reads `Akku.manifest` out of the current
+directory rather than resolving a package name. This package is not
+published to Akku's own index, so that clone-and-install form is the only
+installation path anything here verifies.
 
 ```sh
 akku install
