@@ -117,9 +117,10 @@ reads it from the AST, which preserves it — see [ast.md](ast.md).
 
 **The default attribute marker is deliberately not the SXML specification's
 `@`.** Both serializers reachable on this platform mark an attribute list
-`^` — `wak-sxml-tools` (`sxml-tools/upstream/sxml-tools.scm:44-48`) and
-`wak-htmlprag` (`htmlprag/htmlprag.scm:334`) — and neither recognises `@` at
-all.
+`^` — `wak-sxml-tools` (`sxml-tools/upstream/sxml-tools.scm:44-48`, resolvable
+under `vendor/wak-sxml-tools/`) and `wak-htmlprag`
+(`htmlprag/htmlprag.scm:334`, a package this repository does not vendor) —
+and neither recognises `@` at all.
 
 Handed a `@`-marked tree, `srl:sxml->html` does not raise. It treats the
 marker as an ordinary element name and nests every attribute pair as child
