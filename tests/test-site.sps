@@ -1,6 +1,14 @@
 #!r6rs
 ;; PURE SUITE. Imports no library that loads a shared object.
-(import (rnrs) (srfi :64) (site slug) (site serializer) (site transform) (site links))
+(import (rnrs) (srfi :64) (site slug) (site serializer) (site transform) (site links)
+        (site template))
+
+(define (string-contains-sub? hay needle)
+  (let ((h (string-length hay)) (n (string-length needle)))
+    (let loop ((i 0))
+      (cond ((> (+ i n) h) #f)
+            ((string=? needle (substring hay i (+ i n))) #t)
+            (else (loop (+ i 1)))))))
 
 (define runner (test-runner-simple))
 (test-runner-current runner)
@@ -111,6 +119,35 @@
                       '(*TOP* (a (^ (href "missing.md#foo")) "x")) reg "ast.md" "v2.0.0")))
   (test-equal "an anchored .md link to a page absent from the registry is a dangler"
     '(("ast.md" . "missing.md#foo")) d))
+
+;; --- template: the shell places nav, current marker, body, and TOC ------
+(define doc-out
+  (page->document '(("ast.md" . "The AST") ("sxml.md" . "SXML"))
+                  "ast.md" "The AST"
+                  '(*TOP* (h2 (^ (id "node-shape")) "Node shape"))
+                  '((2 "Node shape" "node-shape"))))
+
+(test-assert "the document is rooted at html"
+  (and (pair? doc-out) (eq? (car doc-out) '*TOP*)
+       (eq? (car (cadr doc-out)) 'html)))
+(test-assert "the stylesheet is linked in head"
+  (let ((s (sxml->html doc-out)))
+    (and (string-contains-sub? s "<link") (string-contains-sub? s "style.css"))))
+(test-assert "the current page is marked in the nav"
+  (string-contains-sub? (sxml->html doc-out) "aria-current=\"page\""))
+(test-assert "the TOC lists the page's headings"
+  (string-contains-sub? (sxml->html doc-out) "#node-shape"))
+(test-assert "CRUX: the embedded theme script survives serialization unescaped"
+  ;; The serializer HTML-escapes every text node, including a <script>'s.
+  ;; Browsers do not decode entities inside <script>, so if the script ever
+  ;; grew a '<', '>', or '&' it would come out corrupted. It doesn't
+  ;; contain any (=== and nested ternaries stand in for </>/&&), so no
+  ;; escape entity should appear anywhere in the rendered document.
+  (let ((s (sxml->html doc-out)))
+    (and (string-contains-sub? s "<script>(function(){var r=document.documentElement")
+         (not (string-contains-sub? s "&amp;"))
+         (not (string-contains-sub? s "&lt;"))
+         (not (string-contains-sub? s "&gt;")))))
 
 (test-end "site")
 (exit (if (zero? (test-runner-fail-count runner)) 0 1))
