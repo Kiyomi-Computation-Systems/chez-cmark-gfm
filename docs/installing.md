@@ -43,7 +43,11 @@ error.
 
 2.0 has **one** acquisition path — the system package — so the rows differ in
 where cmark-gfm came from, not in how it was built; ADR-0015 amends
-ADR-0001's two paths away. **Windows is not supported** (ADR-0004).
+ADR-0001's two paths away. **Windows is not supported** (ADR-0004). The
+table below is what CI actually runs and proves, not the complete set of
+configurations that work: Intel macOS, for instance, is untested rather
+than unsupported — discovery scans `/usr/local/lib` regardless of Mac
+architecture (see [What make build does](#what-make-build-does)).
 
 | Platform              | Chez   | cmark-gfm from | Memory evidence                                    |
 |-----------------------|--------|----------------|----------------------------------------------------|
