@@ -1,0 +1,77 @@
+name: Pages
+
+# Builds the docs-site generator's output (Task 8: `make site`, gated by
+# `make check-site`) and deploys it to GitHub Pages on a release tag. This
+# workflow commits nothing -- build/site/ is produced fresh in CI and handed
+# to actions/deploy-pages as an artifact.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One Pages deployment at a time. cancel-in-progress stays false, deliberately:
+# a mid-flight deploy should finish and publish, not be torn out from under a
+# reader, so a second tag pushed while one is running queues instead of
+# racing it.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # Package names copied from .github/workflows/ci.yml's akku-install and
+      # no-library jobs (e.g. "sudo apt-get install -y --no-install-recommends
+      # chezscheme cmark-gfm"), which match packaging/debian-prereqs.txt's
+      # "to USE the library" section -- chezscheme and cmark-gfm, nothing
+      # else. NOT libcmark-gfm-dev/libcmark-gfm-extensions-dev: no such apt
+      # packages are installed anywhere in ci.yml (those strings appear there
+      # only as decoy .so filenames in a test comment). 2.0 compiles no shim
+      # and discovers the runtime library on the host at import time, so no
+      # -dev package or compiler is needed to build or check the site either
+      # -- cmake/pkg-config/build-essential (packaging/debian-prereqs.txt's
+      # "to DEVELOP on it" section) are for `make vendor` only, which this
+      # workflow never runs.
+      - name: Install Chez and cmark-gfm
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends chezscheme cmark-gfm
+
+      - name: Vendor Scheme deps
+        run: make deps
+
+      # CHEZ=chezscheme: Ubuntu names the binary chezscheme; the Makefile
+      # defaults to chez (same override ci.yml's clean-install/no-library jobs
+      # use). SITE_REF is the pushed tag -- $GITHUB_REF_NAME on a tag push, or
+      # the selected ref on a manual workflow_dispatch run -- so out-of-site
+      # links in the generated pages pin to this release rather than "main".
+      - name: Gate the site
+        run: make check-site CHEZ=chezscheme SITE_REF="${GITHUB_REF_NAME}"
+
+      - name: Build the site
+        run: make site CHEZ=chezscheme SITE_REF="${GITHUB_REF_NAME}"
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
