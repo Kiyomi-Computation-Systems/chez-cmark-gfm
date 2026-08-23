@@ -49,9 +49,14 @@ verbatim, `default-cmark-options` included. Details are in [ast.md](ast.md).
 ```
 
 `cmark-options?` is the type predicate. `cmark-options-with`, every
-renderer, and `markdown->ast` all check it on their options argument before
-doing anything else — passing something else raises
-`&cmark-invalid-option` with key `#f` and reason `invalid-value`.
+renderer, and `markdown->ast` all check it on their options argument —
+passing something else raises `&cmark-invalid-option` with key `#f` and
+reason `invalid-value`. That check runs before anything else for every
+entry point except one: the three-argument form of `markdown->commonmark`
+and `markdown->plaintext` checks its width argument *first*, so a call
+that gets both the width and the options record wrong raises on `width`
+(reason `invalid-width`), not on the options record — see
+[Wrap width](usage.md#wrap-width).
 
 Both constructors run their result through the same validation, so nothing
 built by `cmark-options-with` can carry a value the original construction
