@@ -135,10 +135,14 @@ verify it by eye if either file changes.
 
 * Contributing
 
-Issues and pull requests are welcome. ~make help~ lists every target and
-[[file:docs/building.md][docs/building.md]] says what each one checks; a pull request is expected to keep
-~make test~, ~make examples~, and the ~check-*~ targets green. A change in
-behaviour needs a test that fails against the old behaviour.
+Issues and pull requests are welcome — see [[file:CONTRIBUTING.md][CONTRIBUTING.md]] for the full guide.
+~make help~ lists every target and [[file:docs/building.md][docs/building.md]] says what each one checks; a
+pull request is expected to keep ~make test~, ~make examples~, and the
+~check-*~ targets green. A change in behaviour needs a test that fails
+against the old behaviour.
+
+Please report suspected vulnerabilities privately rather than in a public
+issue — see [[file:SECURITY.md][SECURITY.md]].
 
 * License
 
