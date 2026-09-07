@@ -2,7 +2,9 @@ name: CI
 
 # Linux is the gate for every memory claim (ADR-0003). LeakSanitizer does not
 # exist on macOS/ARM64, so a green macOS run was never evidence of no leaks --
-# only Valgrind on Linux can support that claim.
+# only Valgrind on Linux can support that claim, and it now does so on `main`
+# and `v*` tags rather than on every commit (see RUN_MEMORY on the linux job,
+# which carries the trade and the per-branch escape hatch).
 #
 # THERE IS NO macos JOB, deliberately. GitHub bills macOS runners at 10x the
 # Linux rate, and macOS is the primary development platform -- the machine
@@ -42,9 +44,25 @@ name: CI
 
 on:
   push:
+    # tags is NEW and is not decoration. Valgrind runs on main and on release
+    # tags (see RUN_MEMORY below), and before this line a `v*` tag triggered
+    # NO ci.yml run at all -- only pages.yml, which deploys the docs site and
+    # runs no suite. "Also on tags" would have meant "never on tags", and the
+    # one ref where leak evidence matters most would have been the one ref
+    # that never gathered it.
     branches: [main]
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      # run_memory, NOT run-memory. A hyphen is not an identifier character in
+      # GitHub's expression language, so `inputs.run-memory` is ambiguous with
+      # a subtraction and is not a property access. Bracket notation would work
+      # too; an underscore needs no explaining at the point of use.
+      run_memory:
+        description: "Run the Valgrind step on this ref even though it is not main or a tag"
+        type: boolean
+        default: false
 
 # Cancel superseded runs on the same ref.
 concurrency:
@@ -53,8 +71,31 @@ concurrency:
 
 jobs:
   linux:
-    name: linux (apt + valgrind)
+    name: linux (apt + valgrind on main/tags)
     runs-on: ubuntu-latest
+    # ONE definition of "this run gathers leak evidence", read by the apt line
+    # and the Memory step below. Two copies of this condition would drift into
+    # the worst possible pair: valgrind installed and never run (waste), or the
+    # step enabled on a runner that has no valgrind (red for a reason it does
+    # not claim).
+    #
+    # Valgrind is 10-50x native and was running on every push and every PR
+    # commit. It now runs on main, on `v*` tags, and on a manual dispatch that
+    # asks for it. What that does NOT weaken: every correctness suite still
+    # runs on every PR under `make test` -- test-memory re-runs those same
+    # suites under instrumentation and adds no case of its own, so a PR loses
+    # the leak dimension only, not coverage. What it DOES mean: a leak can now
+    # reach main and be found by the post-merge run rather than blocked in
+    # review. That is the accepted trade; `gh workflow run ci.yml --ref
+    # <branch> -f run_memory=true` is the escape hatch for a PR that touches
+    # the FFI, and PRs on that path should use it.
+    #
+    # `inputs` is empty on a push event, so the third clause is guarded by
+    # event_name rather than relying on how a missing input coerces.
+    env:
+      RUN_MEMORY: ${{ github.ref == 'refs/heads/main'
+                      || startsWith(github.ref, 'refs/tags/v')
+                      || (github.event_name == 'workflow_dispatch' && inputs.run_memory) }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -100,9 +141,17 @@ jobs:
           # file's header rule exists to prevent. valgrind stays here because it
           # is needed only by this job's memory step below, not to build or use
           # the library.
-          echo "installing: valgrind $pkgs"
+          # valgrind only when this run will actually use it -- see RUN_MEMORY
+          # at the top of this job. Installing a 10x-unused tool on every PR is
+          # the same waste the memory step itself was trimmed for.
+          # A full if/else, not `[ ... ] && vg=valgrind`: that idiom escapes
+          # `set -e` only because it is not the last command in the script,
+          # which is a fact about where it sits, not about what it does. One
+          # reordering later it would abort the step on a PR.
+          if [ "${RUN_MEMORY:-false}" = "true" ]; then vg="valgrind"; else vg=""; fi
+          echo "installing: $vg $pkgs"
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends valgrind $pkgs
+          sudo apt-get install -y --no-install-recommends $vg $pkgs
 
       # Recorded rather than asserted: the project's documented Chez floor came
       # from one developer's machine, not from testing. Whatever this prints is
@@ -110,7 +159,13 @@ jobs:
       - name: Report versions
         run: |
           echo "chez:     $(chezscheme --version 2>&1 || scheme --version 2>&1)"
-          echo "valgrind: $(valgrind --version)"
+          # Not installed unless this run gathers leak evidence, so this
+          # reports its absence rather than failing the step on a PR.
+          if command -v valgrind >/dev/null; then
+            echo "valgrind: $(valgrind --version)"
+          else
+            echo "valgrind: not installed (RUN_MEMORY=${RUN_MEMORY:-unset}; main and v* tags only)"
+          fi
           echo "cmake:    $(cmake --version | head -1)"
           echo "cc:       $(cc --version | head -1)"
           echo "cmark-gfm CLI (apt): $(cmark-gfm --version | head -1)"
@@ -362,11 +417,35 @@ jobs:
           fi
           echo "no compiled object or shared library outside vendor/ and build/vendor: nothing of ours compiled C"
 
-      # The reason this job exists. Valgrind needs no instrumentation of Chez or
-      # cmark and is the only tool in this project that can substantiate a leak
-      # claim. Failure here blocks merge.
-      - name: Memory (valgrind)
+      # Valgrind needs no instrumentation of Chez or cmark and is the only tool
+      # in this project that can substantiate a leak claim. Failure here blocks
+      # the merge into main, or the tag.
+      #
+      # `if:`, deliberately, rather than an early `exit 0` inside the script.
+      # A step that returns success without running is a green tick nobody can
+      # tell from a real one, and a leak claim is exactly the thing that must
+      # never be green for the wrong reason (file header). Skipped renders grey
+      # and the step name says why.
+      - name: Memory (valgrind -- main and tags only)
+        if: env.RUN_MEMORY == 'true'
         run: make test-memory
+
+      # Says out loud, in the run summary, that this run holds no leak
+      # evidence. Without it the only trace is a grey step someone has to
+      # notice the absence of, and "the checks were green" would quietly come
+      # to mean something weaker on a PR than it does on main.
+      - name: Note that no leak evidence was gathered
+        if: env.RUN_MEMORY != 'true'
+        env:
+          # Through env, NOT interpolated into the script body. github.head_ref
+          # is a branch name an outside contributor chooses, so on a fork PR a
+          # branch called `$(...)` would otherwise be substituted into this
+          # script by the runner and executed before bash ever saw it. Reaching
+          # it as an environment variable, bash expands the value but does not
+          # re-evaluate it. actionlint flags the interpolated form.
+          HEAD_REF: ${{ github.head_ref || github.ref_name }}
+        run: |
+          echo "::notice title=No leak evidence::Valgrind did not run on this ref (main and v* tags only). Every correctness suite still ran under 'make test'; what is missing is the leak dimension. For a PR touching the FFI or discovery, re-run with: gh workflow run ci.yml --ref $HEAD_REF -f run_memory=true"
 
       # `make test` reporting success on a failing suite would silently void
       # every other check in this workflow, so verify the contract itself.

@@ -56,7 +56,7 @@ since the macOS CI job was removed for cost, they are not.
 | Platform              | Chez   | cmark-gfm from | Memory evidence                                    | Verified by                  |
 |-----------------------|--------|----------------|----------------------------------------------------|------------------------------|
 | macOS/ARM64 (Homebrew)| 10.4.1 | `brew`         | ASan only — **no leak claim**                      | maintainer, locally, per release |
-| Linux/x86-64 (apt)    | 9.5.8  | `apt`          | Valgrind clean, historically — **unverified here** | every CI run                 |
+| Linux/x86-64 (apt)    | 9.5.8  | `apt`          | Valgrind clean, historically — **unverified here** | every CI run; Valgrind on `main` + tags |
 
 Two further CI jobs cover what neither row does: `no-library` installs Chez
 and deliberately no cmark-gfm, asserting `make build` fails, reports reason
@@ -67,7 +67,12 @@ the same remedy for every condition; `akku-install` installs from
 environment.
 
 The floor is **9.5.8**. LeakSanitizer does not exist on macOS/ARM64, so only
-the Linux row can support a leak claim (ADR-0003).
+the Linux row can support a leak claim (ADR-0003) — and it supports one for
+the commits it actually ran on. Valgrind is 10–50x native, so it runs on
+`main` and on `v*` tags, not on every pull request; a release tag therefore
+always carries fresh leak evidence, while an individual PR ordinarily does
+not. `gh workflow run ci.yml --ref <branch> -f run_memory=true` asks for it
+on a branch.
 
 A CI step asserts the **Linux row** against the version that job actually
 ran, so a runner-image bump fails the build until the table is updated

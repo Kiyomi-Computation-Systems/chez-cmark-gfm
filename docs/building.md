@@ -95,7 +95,11 @@ here instruments and so add no coverage — under whichever instrumentation
 the platform supports:
 
 - **Linux**: Valgrind, `--leak-check=full --show-leak-kinds=definite
-  --error-exitcode=9`. A leak is a hard failure.
+  --error-exitcode=9`. A leak is a hard failure. In CI this runs on `main`
+  and on `v*` tags, not on every pull request — it is 10–50x native, and
+  the suites it re-runs have already run uninstrumented under `make test`.
+  Locally it is unconditional; run it before pushing anything that touches
+  native allocation.
 - **macOS**: an AddressSanitizer preload, with leak detection explicitly
   off (`ASAN_OPTIONS=detect_leaks=0`). LeakSanitizer does not exist on
   macOS/ARM64, so this run catches corruption and use-after-free but
