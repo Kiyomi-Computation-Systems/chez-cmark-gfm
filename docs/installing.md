@@ -44,15 +44,19 @@ error.
 2.0 has **one** acquisition path — the system package — so the rows differ in
 where cmark-gfm came from, not in how it was built; ADR-0015 amends
 ADR-0001's two paths away. **Windows is not supported** (ADR-0004). The
-table below is what CI actually runs and proves, not the complete set of
-configurations that work: Intel macOS, for instance, is untested rather
-than unsupported — discovery scans `/usr/local/lib` regardless of Mac
-architecture (see [What make build does](#what-make-build-does)).
+table below is not the complete set of configurations that work: Intel
+macOS, for instance, is untested rather than unsupported — discovery scans
+`/usr/local/lib` regardless of Mac architecture (see
+[What make build does](#what-make-build-does)).
 
-| Platform              | Chez   | cmark-gfm from | Memory evidence                                    |
-|-----------------------|--------|----------------|----------------------------------------------------|
-| macOS/ARM64 (Homebrew)| 10.4.1 | `brew`         | ASan only — **no leak claim**                      |
-| Linux/x86-64 (apt)    | 9.5.8  | `apt`          | Valgrind clean, historically — **unverified here** |
+The **Verified by** column is the important one. The two rows are not
+equally attested and never were, but they used to be checked the same way;
+since the macOS CI job was removed for cost, they are not.
+
+| Platform              | Chez   | cmark-gfm from | Memory evidence                                    | Verified by                  |
+|-----------------------|--------|----------------|----------------------------------------------------|------------------------------|
+| macOS/ARM64 (Homebrew)| 10.4.1 | `brew`         | ASan only — **no leak claim**                      | maintainer, locally, per release |
+| Linux/x86-64 (apt)    | 9.5.8  | `apt`          | Valgrind clean, historically — **unverified here** | every CI run                 |
 
 Two further CI jobs cover what neither row does: `no-library` installs Chez
 and deliberately no cmark-gfm, asserting `make build` fails, reports reason
@@ -65,9 +69,16 @@ environment.
 The floor is **9.5.8**. LeakSanitizer does not exist on macOS/ARM64, so only
 the Linux row can support a leak claim (ADR-0003).
 
-A CI step asserts this table against the versions each job actually ran, so
-a runner-image bump fails the build until the table is updated rather than
-letting the claim go stale.
+A CI step asserts the **Linux row** against the version that job actually
+ran, so a runner-image bump fails the build until the table is updated
+rather than letting the claim go stale. There is no such step for the macOS
+row any more: GitHub bills macOS runners at ten times the Linux rate, and
+that job re-ran, minutes later, what the maintainer had just run on the
+machine the change was written on. The macOS row now records `make test`,
+`make check-install` and `make test-memory` run by hand before a release
+tag, and its Chez version is maintained by hand with them — treat it as a
+report, not as a gate. `.github/workflows/ci.yml`'s header names exactly
+what stopped being checked.
 
 ## With Akku
 

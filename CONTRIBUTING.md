@@ -48,6 +48,16 @@ A PR must keep these green — they are what CI runs:
   process exit status, and a suite missing that line reports success
   forever.
 
+**CI runs on Linux only.** There is no macOS job — GitHub bills those
+runners at ten times the Linux rate, and the job repeated what the author
+had just run locally. If your change touches
+`src/cmark/gfm/private/discovery.sls`, note that its macOS and Linux
+branches search different directories for differently named files, and CI
+can only go red for the Linux one. Run the gates above on a Mac yourself
+before asking for a review of anything on that path;
+`.github/workflows/ci.yml`'s header lists what is no longer checked
+automatically.
+
 ## Conventions
 
 - [Conventional Commits](https://www.conventionalcommits.org): `feat:`,
