@@ -1,18 +1,10 @@
 #!r6rs
 ;;; Direct native renderers.
 ;;;
-;;; Every renderer runs INSIDE call-with-native-document's body, reading the
-;;; root, option bits, and extension list through scope.sls's checked
-;;; accessors. That is what enforces ADR-0005 -- the parser must outlive the
-;;; render call, because cmark_parser_free releases the same syntax-extension
-;;; list cmark_render_html walks. No new guard is needed: a dead handle
-;;; raises before any renderer is reached.
+;;; Render inside call-with-native-document: freeing the parser also frees the
+;;; syntax-extension list consumed by cmark_render_html.
 ;;;
-;;; Width is an argument here rather than a field of the options record.
-;;; markdown->html and markdown->xml are fixed at arity 2, so passing a width
-;;; to them is an arity error at the call site instead of a silently ignored
-;;; field. That mirrors cmark's own factoring: option bits go to both parser
-;;; and renderer, width goes only to some renderers.
+;;; Width is an argument only to renderers that support it.
 (library (cmark gfm render)
   (export markdown->html markdown->commonmark markdown->plaintext markdown->xml)
   (import (rnrs)
@@ -32,9 +24,7 @@
   (define (options->native-names o)
     (map extension->native-name (cmark-options-extensions o)))
 
-  ;; Validated before anything native is acquired, so a bad width leaves no
-  ;; resource to clean up. Stage 1 shipped exactly this bug for extension
-  ;; names; see tests/test-lifecycle.sps's I1 group.
+  ;; Validate before acquiring native resources.
   (define (check-width w)
     (unless (and (integer? w) (exact? w) (>= w 0))
       (raise (make-cmark-invalid-option 'width 'invalid-width)))
@@ -45,9 +35,7 @@
       (raise (make-cmark-invalid-option #f 'invalid-value)))
     o)
 
-  ;; make-buffer-for receives the live handle and returns a thunk. Keeping it
-  ;; a thunk means the buffer address is produced inside
-  ;; call-with-render-buffer and never rests in a variable here.
+  ;; The thunk creates the buffer inside its cleanup scope.
   (define (render markdown o format make-buffer-for)
     (check-options o)
     (call-with-native-document
@@ -55,18 +43,21 @@
      (lambda (h) (call-with-render-buffer format (make-buffer-for h)))
      (cmark-options-max-input-bytes o)))
 
+  ;; markdown->html : string cmark-options -> string
   (define (markdown->html markdown o)
     (render markdown o 'html
             (lambda (h)
               (lambda ()
                 (render-html (doc-root h) (doc-option-bits h) (doc-extensions h))))))
 
+  ;; markdown->xml : string cmark-options -> string
   (define (markdown->xml markdown o)
     (render markdown o 'xml
             (lambda (h)
               (lambda ()
                 (render-xml (doc-root h) (doc-option-bits h))))))
 
+  ;; markdown->commonmark : string cmark-options [exact-nonnegative-integer] -> string
   (define markdown->commonmark
     (case-lambda
       ((markdown o) (markdown->commonmark markdown o 0))
@@ -77,6 +68,7 @@
                    (lambda ()
                      (render-commonmark (doc-root h) (doc-option-bits h) w))))))))
 
+  ;; markdown->plaintext : string cmark-options [exact-nonnegative-integer] -> string
   (define markdown->plaintext
     (case-lambda
       ((markdown o) (markdown->plaintext markdown o 0))

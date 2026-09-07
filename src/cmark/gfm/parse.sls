@@ -1,22 +1,8 @@
 #!r6rs
-;;; markdown->ast -- the public AST entry point.
+;;; Public Markdown-to-AST entry point.
 ;;;
-;;; This library exists so that the public procedure is layer 3. convert.sls
-;;; is layer 2 and must not import the options record; parse.sls unpacks the
-;;; record into primitives, exactly as render.sls unpacks it into option bits.
-;;;
-;;; The arity is the API. (markdown->ast md) uses default-ast-options, whose
-;;; only difference from default-cmark-options is source-positions? #t; the
-;;; two-argument form honours the caller's record verbatim. That is ADR-0009's
-;;; per-entry-point default, delivered as ordinary data rather than as a third
-;;; "unset" state inside the options record.
-;;;
-;;; Positions are governed by the SAME flag the parse used, never by a
-;;; separate switch. CMARK_OPT_SOURCEPOS is not merely a rendering flag: with
-;;; it off, cmark skips a correction (vendor/cmark-gfm/src/inlines.c:292-296)
-;;; that leaves multi-line code spans and raw inline HTML with wrong end
-;;; positions, and the error propagates to later inlines in the same block. So
-;;; positions are attached only when they were parsed correctly.
+;;; Attach positions only when CMARK_OPT_SOURCEPOS was used for parsing;
+;;; cmark can otherwise report inaccurate inline end positions.
 (library (cmark gfm parse)
   (export markdown->ast)
   (import (rnrs)
@@ -34,13 +20,13 @@
                  (cmark-options-smart? o)
                  (cmark-options-unsafe-html? o)))
 
+  ;; markdown->ast : string -> markdown-node
+  ;; markdown->ast : string cmark-options -> markdown-node
   (define markdown->ast
     (case-lambda
       ((markdown) (markdown->ast markdown (default-ast-options)))
       ((markdown o)
-       ;; Checked before anything native is acquired, so a bad argument leaves
-       ;; no resource to clean up -- the bug Stage 1 shipped for extension
-       ;; names and Stage 2 for width.
+       ;; Reject bad options before acquiring native resources.
        (unless (cmark-options? o)
          (raise (make-cmark-invalid-option #f 'invalid-value)))
        (call-with-native-document
