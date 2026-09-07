@@ -1,29 +1,68 @@
 name: CI
 
 # Linux is the gate for every memory claim (ADR-0003). LeakSanitizer does not
-# exist on macOS/ARM64, so a green macOS run is NOT evidence of no leaks --
-# only Valgrind on Linux can support that claim. macOS is still tested because
-# it is the primary development platform.
+# exist on macOS/ARM64, so a green macOS run was never evidence of no leaks --
+# only Valgrind on Linux can support that claim, and it now does so on `main`
+# and `v*` tags rather than on every commit (see RUN_MEMORY on the linux job,
+# which carries the trade and the per-branch escape hatch).
+#
+# THERE IS NO macos JOB, deliberately. GitHub bills macOS runners at 10x the
+# Linux rate, and macOS is the primary development platform -- the machine
+# every change is written on already runs `make test`, `make check-install`
+# and `make test-memory` (ASan) before it is pushed. Paying a 10x multiplier
+# to repeat, minutes later, what the author just ran is the least defensible
+# spend in this workflow, so it was removed.
+#
+# What that costs, stated plainly rather than left to be discovered: three
+# things now have NO automated gate, and a break in any of them will surface
+# on a developer's machine or not at all.
+#   1. src/cmark/gfm/private/discovery.sls's macOS branch -- a different
+#      candidate list (/opt/homebrew/lib, /usr/local/lib, /opt/local/lib) and
+#      a different filename shape (`libcmark-gfm.<version>.dylib`) than the
+#      Linux branch below. Neither branch can go red for the other.
+#   2. ASan over the suites on arm64.
+#   3. docs/installing.md's macOS/ARM64 row, whose Chez version was asserted
+#      against the runner. That row now records what the maintainer runs
+#      locally; docs/installing.md says so.
+# Run `make test check-install test-memory` on macOS before tagging a release.
+# Do not "restore coverage" by adding the job back on a schedule -- a nightly
+# macOS run costs the same 10x and reports it a day late.
 #
 # 2.0 has ONE acquisition path, not two: ADR-0001's pkg-config/vendored split
 # collapsed into "the system package" the moment the shim was deleted (design
 # spec 2026-08-21-shimless-ffi-design.md, 1.3). The jobs below now differ in
-# how cmark-gfm was obtained -- Homebrew, apt, or deliberately absent -- which
-# is what they actually vary in; HAVE_PKG and a "vendored path" job are gone.
+# how cmark-gfm was obtained -- apt, or deliberately absent -- which is what
+# they actually vary in; HAVE_PKG and a "vendored path" job are gone.
 #
 # `no-library` and `akku-install` exist for the reason the old vendored job
 # was kept as first-class rather than an afterthought: a path nothing ever
-# selects is a path whose defects survive to review undetected. The old
-# macOS job claimed to exercise the vendored build while Homebrew's own copy
-# silently satisfied discovery first -- green, but for the wrong reason,
-# which is worse than red. Each job below is written to actually fail if the
+# selects is a path whose defects survive to review undetected. The PRE-2.0
+# macOS job (a different thing from the one just deleted above) claimed to
+# exercise the vendored build while Homebrew's own copy silently satisfied
+# discovery first -- green, but for the wrong reason, which is worse than red. Each job below is written to actually fail if the
 # thing it claims to prove stops being true.
 
 on:
   push:
+    # tags is NEW and is not decoration. Valgrind runs on main and on release
+    # tags (see RUN_MEMORY below), and before this line a `v*` tag triggered
+    # NO ci.yml run at all -- only pages.yml, which deploys the docs site and
+    # runs no suite. "Also on tags" would have meant "never on tags", and the
+    # one ref where leak evidence matters most would have been the one ref
+    # that never gathered it.
     branches: [main]
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      # run_memory, NOT run-memory. A hyphen is not an identifier character in
+      # GitHub's expression language, so `inputs.run-memory` is ambiguous with
+      # a subtraction and is not a property access. Bracket notation would work
+      # too; an underscore needs no explaining at the point of use.
+      run_memory:
+        description: "Run the Valgrind step on this ref even though it is not main or a tag"
+        type: boolean
+        default: false
 
 # Cancel superseded runs on the same ref.
 concurrency:
@@ -32,8 +71,31 @@ concurrency:
 
 jobs:
   linux:
-    name: linux (apt + valgrind)
+    name: linux (apt + valgrind on main/tags)
     runs-on: ubuntu-latest
+    # ONE definition of "this run gathers leak evidence", read by the apt line
+    # and the Memory step below. Two copies of this condition would drift into
+    # the worst possible pair: valgrind installed and never run (waste), or the
+    # step enabled on a runner that has no valgrind (red for a reason it does
+    # not claim).
+    #
+    # Valgrind is 10-50x native and was running on every push and every PR
+    # commit. It now runs on main, on `v*` tags, and on a manual dispatch that
+    # asks for it. What that does NOT weaken: every correctness suite still
+    # runs on every PR under `make test` -- test-memory re-runs those same
+    # suites under instrumentation and adds no case of its own, so a PR loses
+    # the leak dimension only, not coverage. What it DOES mean: a leak can now
+    # reach main and be found by the post-merge run rather than blocked in
+    # review. That is the accepted trade; `gh workflow run ci.yml --ref
+    # <branch> -f run_memory=true` is the escape hatch for a PR that touches
+    # the FFI, and PRs on that path should use it.
+    #
+    # `inputs` is empty on a push event, so the third clause is guarded by
+    # event_name rather than relying on how a missing input coerces.
+    env:
+      RUN_MEMORY: ${{ github.ref == 'refs/heads/main'
+                      || startsWith(github.ref, 'refs/tags/v')
+                      || (github.event_name == 'workflow_dispatch' && inputs.run_memory) }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -46,10 +108,11 @@ jobs:
       # CONTRIBUTING.md and docs/building.md send readers to, and it rots the
       # moment a target arrives undocumented.
       #
-      # HERE and nowhere else, deliberately: this reads one file that does
-      # not vary by platform, so a second copy on the macos job would
-      # duplicate a result rather than test anything new. Contrast the
-      # installed-tree check below, which is per-platform for a real reason.
+      # HERE and nowhere else -- which is now trivially true, since this is
+      # the only job that could host it. It was already the rule when a macos
+      # job existed, for a reason that outlives it: this reads one file that
+      # does not vary by platform, so a second copy would duplicate a result
+      # rather than test anything new. Do not add one back to a future job.
       - name: Check every .PHONY target is documented in `make help`
         run: make check-help
 
@@ -78,9 +141,17 @@ jobs:
           # file's header rule exists to prevent. valgrind stays here because it
           # is needed only by this job's memory step below, not to build or use
           # the library.
-          echo "installing: valgrind $pkgs"
+          # valgrind only when this run will actually use it -- see RUN_MEMORY
+          # at the top of this job. Installing a 10x-unused tool on every PR is
+          # the same waste the memory step itself was trimmed for.
+          # A full if/else, not `[ ... ] && vg=valgrind`: that idiom escapes
+          # `set -e` only because it is not the last command in the script,
+          # which is a fact about where it sits, not about what it does. One
+          # reordering later it would abort the step on a PR.
+          if [ "${RUN_MEMORY:-false}" = "true" ]; then vg="valgrind"; else vg=""; fi
+          echo "installing: $vg $pkgs"
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends valgrind $pkgs
+          sudo apt-get install -y --no-install-recommends $vg $pkgs
 
       # Recorded rather than asserted: the project's documented Chez floor came
       # from one developer's machine, not from testing. Whatever this prints is
@@ -88,7 +159,13 @@ jobs:
       - name: Report versions
         run: |
           echo "chez:     $(chezscheme --version 2>&1 || scheme --version 2>&1)"
-          echo "valgrind: $(valgrind --version)"
+          # Not installed unless this run gathers leak evidence, so this
+          # reports its absence rather than failing the step on a PR.
+          if command -v valgrind >/dev/null; then
+            echo "valgrind: $(valgrind --version)"
+          else
+            echo "valgrind: not installed (RUN_MEMORY=${RUN_MEMORY:-unset}; main and v* tags only)"
+          fi
           echo "cmake:    $(cmake --version | head -1)"
           echo "cc:       $(cc --version | head -1)"
           echo "cmark-gfm CLI (apt): $(cmark-gfm --version | head -1)"
@@ -159,8 +236,70 @@ jobs:
       # else in CI would notice if that stopped working. cmake and
       # build-essential are installed for this, not for anything of ours --
       # 2.0 compiles no shim on any platform.
+      #
+      # Cached, with the key doing the work. Nothing about this build varies
+      # between two runs that agree on four things: the submodule commit the
+      # superproject pins, the Makefile recipe holding the cmake invocation,
+      # and the cmake and cc this runner image ships. All four are in the key,
+      # so anything that could change the result misses the cache and forces a
+      # real build -- the regression guard above can still go red for every
+      # reason it could before. A key naming only the path could not say that:
+      # a runner-image compiler bump would silently reuse objects built by a
+      # compiler no longer installed.
+      #
+      # Honest about the size of the win: this build is ~6s of cmake on a
+      # laptop, so the saving here is seconds, not minutes. It is worth having
+      # and it is NOT where this workflow's minutes go -- that is the apt
+      # install and the Valgrind step below. Do not read this cache as the
+      # reason the bill dropped; removing the 10x macOS job is.
+      - name: Vendored cmark-gfm cache key
+        id: vendor-cache-key
+        run: |
+          set -eu
+          # The GITLINK -- the commit this superproject pins -- not
+          # `git -C vendor/cmark-gfm rev-parse HEAD`, which reports whatever
+          # happens to be checked out and would key the cache on a value the
+          # repository does not control.
+          sha=$(git rev-parse "HEAD:vendor/cmark-gfm")
+          tools=$( { cmake --version | head -1; cc --version | head -1; } \
+                     | sha256sum | cut -c1-16)
+          mk=$(sha256sum Makefile | cut -c1-16)
+          echo "key=vendor-cmark-${{ runner.os }}-$sha-$tools-$mk" >> "$GITHUB_OUTPUT"
+
+      # restore/save split rather than actions/cache, so a FAILED build is
+      # never saved. actions/cache writes in a post step that runs after the
+      # job whatever happened, which would store a half-built tree; the next
+      # run would restore it, `cmake --build` would resume from those objects,
+      # and a build that genuinely fails from scratch could come out green.
+      - name: Restore the vendored cmark-gfm build
+        id: vendor-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: build/vendor
+          # No restore-keys, deliberately: a partial match is a build tree from
+          # a DIFFERENT submodule commit or compiler, which is worse than no
+          # cache -- cmake would reuse stale objects and this step would report
+          # on something nobody built.
+          key: ${{ steps.vendor-cache-key.outputs.key }}
+
+      # Still RUNS on a cache hit. Restoring the tree and skipping the step
+      # would turn the regression guard into a check that cannot fail
+      # (AGENTS.md); cmake reduces an up-to-date tree to a no-op on its own,
+      # which is where the saving comes from, and a restored tree that does not
+      # in fact rebuild fails here rather than being taken on trust.
       - name: Build vendored cmark-gfm (dev dependency -- corpus, header, CLI oracle)
         run: make vendor
+
+      # `if:` REPLACES the implicit success() in GitHub Actions rather than
+      # adding to it, so success() is spelled out -- without it this saves the
+      # tree left behind by a failed `make vendor` above, which is the exact
+      # thing the restore/save split exists to prevent.
+      - name: Save the vendored cmark-gfm build
+        if: success() && steps.vendor-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: build/vendor
+          key: ${{ steps.vendor-cache-key.outputs.key }}
 
       # This is now THE ONLY build/discovery path -- there is no second one
       # left to distinguish it from, and HAVE_PKG does not exist any more.
@@ -177,14 +316,18 @@ jobs:
       # contract -- the thing docs/installing.md tells every reader to run --
       # is the one path CI never exercises.
       #
-      # Runs on BOTH this job and macos, and not merely because a second run
-      # is cheap. src/cmark/gfm/private/discovery.sls hardcodes a different
-      # candidate list AND a different filename shape per platform: macOS
-      # searches /opt/homebrew/lib, /usr/local/lib, /opt/local/lib for
-      # `libcmark-gfm.<version>.dylib`, while Linux searches /usr/local/lib, a
-      # multiarch triple directory derived at runtime from `machine-type`,
-      # /usr/lib and /usr/lib64 for `libcmark-gfm.so.<version>`. Those are
-      # separate branches; a break in either is invisible to the other job.
+      # Covers the LINUX HALF ONLY, and that is a real gap rather than a
+      # tidied-up one. src/cmark/gfm/private/discovery.sls hardcodes a
+      # different candidate list AND a different filename shape per platform:
+      # this job reaches /usr/local/lib, a multiarch triple directory derived
+      # at runtime from `machine-type`, /usr/lib and /usr/lib64 for
+      # `libcmark-gfm.so.<version>`, while the macOS branch searches
+      # /opt/homebrew/lib, /usr/local/lib, /opt/local/lib for
+      # `libcmark-gfm.<version>.dylib`. Those are separate branches and this
+      # job cannot go red for a break in the other one. The macos job that
+      # used to run this same step was deleted for cost (file header); until
+      # it returns, `make check-install` on a Mac before a release tag is the
+      # only thing that exercises that branch.
       #
       # Placed after "Resolve the Chez binary": CHEZ arrives from the
       # environment that step wrote, which the Makefile's `CHEZ ?= chez`
@@ -204,11 +347,105 @@ jobs:
       - name: Test
         run: make test
 
-      # The reason this job exists. Valgrind needs no instrumentation of Chez or
-      # cmark and is the only tool in this project that can substantiate a leak
-      # claim. Failure here blocks merge.
-      - name: Memory (valgrind)
+      # MOVED HERE from the deleted macos job, which was the only place in CI
+      # that ran it. It is not a macOS check: it substantiates the release's
+      # headline "no compiler required" claim -- the akku-install job is the
+      # other half of that evidence -- and that claim is platform-independent.
+      # Deleting the job that happened to host it would have retired the claim's
+      # only automated check as a side effect of a billing decision.
+      #
+      # What is asserted: after this job's `make build`, `make deps` and `make
+      # test` above, no compiled object or shared library exists anywhere in the
+      # working tree that is ours.
+      #
+      # It REPLACED a `test ! -e build/lib` guard that could not fail. build/lib
+      # was the 1.0 shim's own output directory, and 2.0 deleted the Makefile
+      # rules that wrote it -- `build/lib` appears nowhere in the Makefile, so
+      # no target can create it and the step passed unconditionally.
+      #
+      # TWO prunes here where the macos copy had one, and the second is not a
+      # weakening -- it is the same exclusion for the same reason, applied to
+      # the path this job actually writes. vendor/ is the pinned cmark-gfm
+      # submodule; build/vendor is where `make vendor` cmake-builds it, a step
+      # the macos job never ran because it installed no cmake. Both hold
+      # upstream C, built on purpose as a DEVELOPMENT dependency (the
+      # differential suites' CLI oracle, the 744-example corpus, the header
+      # tests/test-option-bits.sps parses). Neither is ours. The check still
+      # fails on anything of ours that compiles: src/, build/lib, tests/ and
+      # everything else stays in the walk.
+      #
+      # Classified by CONTENT, not by filename: tests/test-library-loading.sps
+      # deliberately writes tests/tmp/libcmark-gfm.so and
+      # tests/tmp/libcmark-gfm-extensions.so as 20-byte TEXT decoys, to drive
+      # discovery's 'load-failed branch. A name-only check trips on those, and
+      # the obvious repair -- excluding tests/tmp as well -- would punch a hole
+      # in the one writable directory the suite already writes to. file(1)
+      # separates a real ELF/Mach-O artifact from a decoy with no second
+      # exclusion, and its absence is treated as a broken check rather than a
+      # passing one.
+      #
+      # Before "Memory (valgrind)", which writes no artifact either way, so the
+      # walk stays scoped to what this comment says it covers.
+      - name: assert no C artifact was produced
+        run: |
+          set -eu
+          command -v file >/dev/null \
+            || { echo "::error::file(1) is unavailable; this check cannot run."; exit 1; }
+          list="${RUNNER_TEMP:-/tmp}/c-artifact-candidates.txt"
+          find . -path ./vendor -prune -o -path ./build/vendor -prune \
+                 -o -path ./.git -prune -o -type f \
+            \( -name '*.o' -o -name '*.a' -o -name '*.so' -o -name '*.so.*' \
+               -o -name '*.dylib' -o -name '*.bundle' \) -print > "$list"
+          rc=0
+          # read -r, not `for f in $(...)`: a path containing a space must not
+          # split into two unexamined halves and pass.
+          while IFS= read -r f; do
+            desc=$(file -b "$f")
+            case "$desc" in
+              *Mach-O*|*ELF*|*'ar archive'*)
+                echo "::error::compiled artifact present: $f ($desc)"
+                rc=1 ;;
+              *) echo "  examined, not a binary: $f -- $desc" ;;
+            esac
+          done < "$list"
+          if [ "$rc" -ne 0 ]; then
+            echo "2.0 compiles nothing of its own. If something here now builds C, the"
+            echo "'no compiler required' claim -- docs/installing.md, and the"
+            echo "akku-install job's exit criterion -- is false, and this step is the only"
+            echo "place in CI that would notice."
+            exit 1
+          fi
+          echo "no compiled object or shared library outside vendor/ and build/vendor: nothing of ours compiled C"
+
+      # Valgrind needs no instrumentation of Chez or cmark and is the only tool
+      # in this project that can substantiate a leak claim. Failure here blocks
+      # the merge into main, or the tag.
+      #
+      # `if:`, deliberately, rather than an early `exit 0` inside the script.
+      # A step that returns success without running is a green tick nobody can
+      # tell from a real one, and a leak claim is exactly the thing that must
+      # never be green for the wrong reason (file header). Skipped renders grey
+      # and the step name says why.
+      - name: Memory (valgrind -- main and tags only)
+        if: env.RUN_MEMORY == 'true'
         run: make test-memory
+
+      # Says out loud, in the run summary, that this run holds no leak
+      # evidence. Without it the only trace is a grey step someone has to
+      # notice the absence of, and "the checks were green" would quietly come
+      # to mean something weaker on a PR than it does on main.
+      - name: Note that no leak evidence was gathered
+        if: env.RUN_MEMORY != 'true'
+        env:
+          # Through env, NOT interpolated into the script body. github.head_ref
+          # is a branch name an outside contributor chooses, so on a fork PR a
+          # branch called `$(...)` would otherwise be substituted into this
+          # script by the runner and executed before bash ever saw it. Reaching
+          # it as an environment variable, bash expands the value but does not
+          # re-evaluate it. actionlint flags the interpolated form.
+          HEAD_REF: ${{ github.head_ref || github.ref_name }}
+        run: |
+          echo "::notice title=No leak evidence::Valgrind did not run on this ref (main and v* tags only). Every correctness suite still ran under 'make test'; what is missing is the leak dimension. For a PR touching the FFI or discovery, re-run with: gh workflow run ci.yml --ref $HEAD_REF -f run_memory=true"
 
       # `make test` reporting success on a failing suite would silently void
       # every other check in this workflow, so verify the contract itself.
@@ -236,159 +473,6 @@ jobs:
           done
           rm -f tests/test-aaci-sabotage.sps
           echo "test target correctly failed, and no suite was masked"
-
-  macos:
-    name: macos (Homebrew only, no leak claim)
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      # cmake and pkg-config are dropped from this line, deliberately: 2.0
-      # compiles no shim, so there is nothing for cmake to build here and no
-      # pkg-config query in the discovery path (design spec 3). This job used
-      # to also run a "vendored path" leg with `make HAVE_PKG=no vendor`;
-      # that is gone too (see the assert-no-C-artifact step below), so
-      # chezscheme and cmark-gfm are the whole toolchain now.
-      - name: Install toolchain
-        run: brew install chezscheme cmark-gfm
-
-      - name: Report versions
-        run: |
-          echo "chez:  $(chez --version 2>&1)"
-          echo "cmark: $(cmark-gfm --version | head -1)"
-
-      # Equivalent to the linux job's check above (same rationale: the table
-      # tracks what "Report versions" printed, and is not a pinned version).
-      - name: Check the docs/installing.md matrix names the Chez this job ran
-        run: |
-          set -eu
-          actual=$(chez --version 2>&1 | tr -d '[:space:]')
-          if [ -z "$actual" ]; then
-            echo "::error::Could not read a Chez version from this runner (chez --version produced nothing usable). That is a broken check, not a passing one -- fix version detection instead of letting this step pass silently."
-            exit 1
-          fi
-          echo "this job ran Chez: $actual"
-          # Anchored on both ends: see the equivalent linux-job comment above.
-          prefix="| macOS/ARM64 (Homebrew)| $actual"
-          # grep, not rg: ripgrep is absent from GitHub-hosted runners. When this
-          # used rg, `if ! rg ...` could not tell a missing tool from a real
-          # mismatch, so it reported the table as wrong while naming the very
-          # version the table already contained -- a false diagnosis sending the
-          # reader to edit correct prose.
-          command -v grep >/dev/null || { echo "::error::grep is unavailable; this check cannot run."; exit 1; }
-          if ! grep -qF -e "$prefix " -e "$prefix|" docs/installing.md; then
-            echo "::error::docs/installing.md's Supported matrix does not name Chez $actual for the macOS row."
-            echo "This runner now ships a different Chez than the table documents."
-            echo "Fix: edit the 'Supported matrix' table in docs/installing.md to say $actual."
-            echo "Do not pin the toolchain and do not delete this check -- the table is"
-            echo "supposed to track whatever CI actually runs, not the other way around."
-            grep -n 'macOS/ARM64' docs/installing.md || true
-            exit 1
-          fi
-
-      # Still needed even with no cmake on this job: vendor/cmark-gfm is
-      # checked out here (not built) for the differential suites' 744-example
-      # corpus and the header tests/test-option-bits.sps parses -- the same
-      # dev-dependency role described in the linux job, minus the cmake build,
-      # since nothing on this job needs the compiled artifact.
-      - name: Scheme dependencies
-        run: make deps
-
-      - name: Build and test
-        run: |
-          make build
-          make test
-
-      # The point of this job: a Homebrew-only machine compiles nothing. That
-      # is half the evidence for the release's headline "no compiler required"
-      # claim; the akku-install job is the other half.
-      #
-      # REPLACES a `test ! -e build/lib` guard that could not fail. build/lib
-      # was the 1.0 shim's own output directory, and 2.0 deleted the Makefile
-      # rules that wrote it -- `build/lib` now appears nowhere in the Makefile,
-      # so no target this job runs (or any other) can create it. The step
-      # passed unconditionally and asserted nothing.
-      #
-      # What is asserted instead: after this job's own `make build && make
-      # test` above, no compiled object or shared library exists anywhere in
-      # the working tree.
-      #
-      # vendor/ is excluded DELIBERATELY, and the exclusion is the reason this
-      # is scoped to a tree walk rather than to one path. `make vendor`
-      # legitimately cmake-builds the pinned cmark-gfm submodule as a
-      # DEVELOPMENT dependency -- the differential suites' CLI oracle, the
-      # 744-example corpus, the header tests/test-option-bits.sps parses (see
-      # the linux job's "Build vendored cmark-gfm" step). That is upstream C,
-      # built on purpose, and it is not ours. This job never runs `make vendor`
-      # -- "Install toolchain" above installs no cmake -- so vendor/ should
-      # hold no artifact here either; excluding it is what keeps this exact
-      # command truthful for a developer running it locally after `make vendor`
-      # instead of tempting someone to weaken the pattern list.
-      #
-      # Classified by CONTENT, not by filename: tests/test-library-loading.sps
-      # deliberately writes tests/tmp/libcmark-gfm.so and
-      # tests/tmp/libcmark-gfm-extensions.so as 20-byte TEXT decoys, to drive
-      # discovery's 'load-failed branch. A name-only check trips on those, and
-      # the obvious repair -- excluding tests/tmp as well -- would punch a hole
-      # in the one writable directory the suite already writes to. file(1)
-      # separates a real Mach-O/ELF artifact from a decoy with no second
-      # exclusion, and its absence is treated as a broken check rather than a
-      # passing one.
-      - name: assert no C artifact was produced
-        run: |
-          set -eu
-          command -v file >/dev/null \
-            || { echo "::error::file(1) is unavailable; this check cannot run."; exit 1; }
-          list="${RUNNER_TEMP:-/tmp}/c-artifact-candidates.txt"
-          find . -path ./vendor -prune -o -path ./.git -prune -o -type f \
-            \( -name '*.o' -o -name '*.a' -o -name '*.so' -o -name '*.so.*' \
-               -o -name '*.dylib' -o -name '*.bundle' \) -print > "$list"
-          rc=0
-          # read -r, not `for f in $(...)`: a path containing a space must not
-          # split into two unexamined halves and pass.
-          while IFS= read -r f; do
-            desc=$(file -b "$f")
-            case "$desc" in
-              *Mach-O*|*ELF*|*'ar archive'*)
-                echo "::error::compiled artifact present: $f ($desc)"
-                rc=1 ;;
-              *) echo "  examined, not a binary: $f -- $desc" ;;
-            esac
-          done < "$list"
-          if [ "$rc" -ne 0 ]; then
-            echo "2.0 compiles nothing on this path. If something here now builds C, the"
-            echo "'no compiler required' claim -- docs/installing.md, and the"
-            echo "akku-install job's exit criterion -- is false, and this step is the only"
-            echo "place in CI that would notice."
-            exit 1
-          fi
-          echo "no compiled object or shared library outside vendor/: nothing compiled C"
-
-      # The Homebrew half of the installed-tree check; the linux job's copy
-      # carries the full rationale, including why two runs are not one run
-      # duplicated. What only this one reaches: the macOS candidate list
-      # (/opt/homebrew/lib first) and the `libcmark-gfm.<version>.dylib`
-      # filename shape. The linux job cannot go red for a break in either.
-      #
-      # No CHEZ override, matching this job's `make build`/`make test` above:
-      # Homebrew names the binary `chez`, which is already the Makefile's
-      # default.
-      #
-      # After "assert no C artifact", not before, so that step's claim stays
-      # scoped to what its comment says it walks -- what `make build && make
-      # test` left behind. This step installs into a `mktemp -d` outside the
-      # working tree and removes it on its own trap, so it neither feeds nor
-      # weakens that walk either way.
-      - name: Check an installed tree imports and renders (Homebrew libcmark-gfm)
-        run: make check-install
-
-      # ASan only. LeakSanitizer is unsupported on macOS/ARM64, so this catches
-      # use-after-free and overflows but CANNOT support a leak claim. Do not
-      # read a green result here as "no leaks" -- that is the Linux job's job.
-      - name: Memory (ASan, no leak detection)
-        run: make test-memory
 
   clean-install:
     name: clean machine (documented steps only)
@@ -423,7 +507,8 @@ jobs:
       # the reader; splitting them mechanically would mean this job and the
       # linux job reading different files, which is the drift the header rule
       # forbids. The "no compiler required" claim is proved by the
-      # akku-install job and by macos's assert-no-C-artifact step, not here.
+      # akku-install job and by the linux job's assert-no-C-artifact step
+      # (which is where that step lives now that macos is gone), not here.
       - name: Install the documented prerequisites
         run: |
           set -eu

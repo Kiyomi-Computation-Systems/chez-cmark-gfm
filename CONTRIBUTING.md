@@ -40,13 +40,31 @@ A PR must keep these green — they are what CI runs:
 - `make check-install` — an installed tree still imports and renders.
 - `make examples` — every `examples/*.sps` still produces its expected
   output.
-- `make test-memory` runs in CI; only the Linux Valgrind leg can support a
-  leak claim (ADR-0003).
+- `make test-memory` — **not on your PR.** Valgrind is 10–50x native, so it
+  runs on `main` and on `v*` tags only, and only the Linux Valgrind leg can
+  support a leak claim (ADR-0003). Your PR still runs every correctness
+  suite under `make test`; what it does not run is the instrumentation. If
+  you touch the FFI, `discovery.sls`, or anything that allocates native
+  cmark objects, ask for it explicitly rather than finding out post-merge:
+
+  ```bash
+  gh workflow run ci.yml --ref your-branch -f run_memory=true
+  ```
 - **Tests accompany code changes.** A behaviour change without a test that
   fails against the old behaviour will be asked for one.
 - Every new suite ends with its own `(exit …)` — SRFI-64 does not set a
   process exit status, and a suite missing that line reports success
   forever.
+
+**CI runs on Linux only.** There is no macOS job — GitHub bills those
+runners at ten times the Linux rate, and the job repeated what the author
+had just run locally. If your change touches
+`src/cmark/gfm/private/discovery.sls`, note that its macOS and Linux
+branches search different directories for differently named files, and CI
+can only go red for the Linux one. Run the gates above on a Mac yourself
+before asking for a review of anything on that path;
+`.github/workflows/ci.yml`'s header lists what is no longer checked
+automatically.
 
 ## Conventions
 
