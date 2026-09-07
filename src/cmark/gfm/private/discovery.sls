@@ -1,15 +1,9 @@
 #!r6rs
 ;;; Runtime resolution of the cmark shared objects.
 ;;;
-;;; PURE. Imports nothing that can reach a shared object, and takes its
-;;; filesystem access as arguments, so every branch below is unit-testable
-;;; against synthetic listings with no files on disk. That is the same reason
-;;; select-cmark-libraries and parse-library-override are exported procedures
-;;; rather than expressions folded into native.sls's resolve-cmark-libraries.
-;;;
-;;; Only VERSIONED filenames are candidates, and core and extensions must pair
-;;; at the SAME version in the SAME directory. Three separate hazards depend on
-;;; that rule; see the design spec 3.1 before relaxing any part of it.
+;;; Keep this module pure by passing filesystem operations as arguments.
+;;; Automatic discovery accepts only versioned core/extension pairs with the
+;;; same version in the same directory.
 (library (cmark gfm private discovery)
   (export encode-version version->string parse-version-string
           library-file-version core-library-name extensions-library-name
@@ -18,10 +12,13 @@
   (import (rnrs)
           (only (chezscheme) machine-type))
 
-  ;; cmark's own encoding: cmark_version() returns exactly this.
+  ;; cmark_version() uses this encoding.
+  ;; encode-version : exact-integer exact-integer exact-integer exact-integer
+  ;;                  -> exact-integer
   (define (encode-version major minor patch gfm)
     (+ (* major #x1000000) (* minor #x10000) (* patch #x100) gfm))
 
+  ;; version->string : exact-integer -> string
   (define (version->string v)
     (string-append
      (number->string (div v #x1000000)) "."
@@ -37,8 +34,7 @@
          (loop (+ i 1) (+ i 1) (cons (substring s start i) acc)))
         (else (loop (+ i 1) start acc)))))
 
-  ;; #f rather than an error for any non-numeric input: callers are filtering
-  ;; directory listings, where a non-match is ordinary, not exceptional.
+  ;; Return #f for non-numeric input because callers filter directory listings.
   (define (numeric-string->integer s)
     (and (> (string-length s) 0)
          (let loop ((i 0) (acc 0))
@@ -49,6 +45,7 @@
                                              (char->integer #\0)))))
              (else #f)))))
 
+  ;; parse-version-string : string -> (or exact-integer #f)
   (define (parse-version-string s)
     (let ((parts (string-split s #\.)))
       (and (= 5 (length parts))
@@ -73,8 +70,7 @@
   (define (base-name kind)
     (if (eq? kind 'core) "libcmark-gfm" "libcmark-gfm-extensions"))
 
-  ;; The separator is what keeps the core shape from matching the extensions
-  ;; file: "libcmark-gfm." does not prefix "libcmark-gfm-extensions...".
+  ;; The separator prevents the core prefix from matching extension files.
   (define (name-prefix kind platform)
     (string-append (base-name kind) (if (eq? platform 'linux) ".so." ".")))
 
@@ -89,7 +85,7 @@
     (string-append (name-prefix 'extensions platform) (version->string v)
                    (name-suffix platform)))
 
-  ;; -> encoded version, or #f when `name` is not a versioned library of `kind`
+  ;; library-file-version : string symbol symbol -> (or exact-integer #f)
   (define (library-file-version name kind platform)
     (let ((p (name-prefix kind platform))
           (q (name-suffix platform)))
@@ -112,9 +108,8 @@
                 (linux-triple-directories machine list-dir dir?)
                 '("/usr/lib" "/usr/lib64"))))
 
-  ;; One derived triple rather than every triple present: on a multiarch box,
-  ;; scanning all of them would eventually attempt a wrong-architecture load,
-  ;; and there is deliberately no fall-through on load failure.
+  ;; Scan one machine-derived triple; trying every multiarch directory risks
+  ;; loading the wrong architecture.
   (define (linux-triple-directories stem list-dir dir?)
     (cond
       ((known-triple stem) => (lambda (t) (list (string-append "/usr/lib/" t))))
@@ -128,8 +123,7 @@
                                    (list-dir "/usr/lib"))))
            '()))))
 
-  ;; machine-type is like ta6le / tarm64le; the leading `t` marks a threaded
-  ;; build and is not part of the architecture.
+  ;; machine-type's leading `t` marks a threaded build, not the architecture.
   (define (known-triple stem)
     (let ((arch (if (string-prefix? "t" stem)
                     (substring stem 1 (string-length stem))
@@ -154,18 +148,15 @@
 
   (define (intersect a b) (filter (lambda (x) (memv x b)) a))
 
-  ;; Numeric, not lexical. "libcmark-gfm.so.0.29.0.gfm.9" sorts ABOVE
-  ;; "...gfm.13" as a string, which would select the older library.
+  ;; Compare numerically: lexical order puts gfm.9 above gfm.13.
   (define (maximum lst)
     (fold-left (lambda (a b) (if (> b a) b a)) (car lst) (cdr lst)))
 
   (define (path-join dir name) (string-append dir "/" name))
 
-  ;; -> (values 'found (core . ext)) | (values 'not-found #f)
-  ;;  | (values 'out-of-range encoded-version)
-  ;;
-  ;; Two values rather than one overloaded return: a success pair and an
-  ;; out-of-range pair would otherwise be told apart only by the car's type.
+  ;; select-cmark-libraries : procedure procedure list pair symbol
+  ;;                          -> (values symbol object)
+  ;; Status is 'found, 'not-found, or 'out-of-range.
   (define (select-cmark-libraries list-dir dir? candidates range platform)
     (let ((lo (car range)) (hi (cdr range)))
       (let loop ((dirs candidates) (seen '()))
@@ -200,13 +191,8 @@
           ((string=? needle (substring hay i (+ i n))) #t)
           (else (loop (+ i 1)))))))
 
-  ;; Classify by BASENAME, not the whole path. A core library sitting in a
-  ;; directory whose name happens to contain "cmark-gfm-extensions" would
-  ;; otherwise be classified as the extensions library and silently swapped
-  ;; with its partner -- both files exist and both are absolute, so nothing
-  ;; downstream would notice. Demonstrated: whole-path matching accepts
-  ;; "/home/u/cmark-gfm-extensions-cache/renamed-core.so:/home/u/other/renamed-ext.so"
-  ;; as valid with the pair reversed.
+  ;; Classify by basename; directory names may also contain
+  ;; "cmark-gfm-extensions" and would swap the pair.
   (define (basename p)
     (let loop ((i (- (string-length p) 1)))
       (cond
@@ -217,14 +203,9 @@
   (define (extensions-path? p)
     (substring-search "cmark-gfm-extensions" (basename p)))
 
-  ;; -> (values 'ok (core . ext)) | (values 'invalid #f)
-  ;;
-  ;; No version parsing: an explicit override may legitimately name the
-  ;; unversioned symlinks from a -dev package. Selection is the user's;
-  ;; verification is still ours, via cmark_version() after the load.
-  ;;
-  ;; Order in the variable does not matter -- each entry is classified by
-  ;; basename -- so a swapped value is not a silent misload.
+  ;; parse-library-override : (or string #f) procedure -> (values symbol object)
+  ;; Overrides may use unversioned symlinks; runtime version checking follows
+  ;; the load. Entry order is irrelevant because basenames identify each role.
   (define (parse-library-override str regular-file?)
     (if (or (not str) (string=? str ""))
         (values 'invalid #f)
