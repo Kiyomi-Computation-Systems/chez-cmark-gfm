@@ -28,6 +28,10 @@ dependency of `(cmark gfm)` itself. `make help` lists every target;
 `cmark-gfm` prerequisite for every platform, including the RHEL/Fedora/
 Alpine source build.
 
+On x86_64 Linux with Guix, `scripts/guix-env` gives you a pinned container
+with every prerequisite, and `make test` works in it as written. See
+[docs/building.md](docs/building.md#guix-development-environment).
+
 ## The gates
 
 A PR must keep these green — they are what CI runs:

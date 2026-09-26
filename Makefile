@@ -78,7 +78,7 @@ MEMORY_TESTS := $(filter-out tests/test-differential.sps,$(TESTS))
 # continuation handling -- a backslash-wrapped .PHONY hides every
 # continuation-line target from that check and adds a bogus `\`
 # pseudo-target. Found and fixed once already, in commit 3f5552c.
-.PHONY: all build deps check-pins check-purity check-help check-install check-reference check-site examples site dev help install uninstall test test-memory vendor clean deps-info
+.PHONY: all build deps check-pins check-purity check-help check-install check-reference check-site examples site dev help install uninstall test test-memory vendor clean deps-info check-guix
 
 help: ## Show this help message
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_.-]+:.*?## / \
@@ -393,6 +393,13 @@ check-reference: ## Verify API reference modules and bindings match source expor
 check-site: check-reference build ## Build the site in memory and assert links, anchors, nav, and no <pre> reflow
 	@CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) SITE_REF="$${SITE_REF:-main}" \
 	  $(CHEZ) --program tests/site-check.sps
+
+# Local only: no CI job runs this (ADR-0018). The launcher's own tests run
+# on the host first, needing no Guix; everything after runs inside the
+# pinned container, which scripts/guix-env refuses to nest.
+check-guix: ## Test scripts/guix-env, then run the suites inside the pinned Guix container
+	@sh tests/guix-env-launcher.sh
+	@scripts/guix-env sh scripts/check-guix-env
 
 # CHEZ_CMARK_GFM_LIBS is UNSET here, not set empty. `(getenv "X")` returns
 # "" for an empty-but-set variable, and "" is truthy in Scheme, so

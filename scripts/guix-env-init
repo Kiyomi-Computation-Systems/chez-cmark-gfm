@@ -1,0 +1,14 @@
+#!/bin/sh
+# First thing scripts/guix-env runs inside the container, before the
+# command it was given. Guix creates the container's HOME and every
+# mount-point directory under the host umask, so they come out 1777 or 0775;
+# ssh refuses a config under a group-writable ~/.ssh (or HOME), and gpg
+# refuses a group-writable socket directory and then misses the host agent.
+# `make check-guix` asserts the modes this leaves (credential-dir-modes).
+set -eu
+for d in "$HOME" "$HOME/.ssh" "$HOME/.gnupg" "/run/user/$(id -u)/gnupg"; do
+  if [ -d "$d" ]; then
+    chmod 700 "$d"
+  fi
+done
+exec "$@"
