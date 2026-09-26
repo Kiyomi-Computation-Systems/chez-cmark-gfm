@@ -266,3 +266,31 @@ is why the Valgrind assertion is the one that matters.
   `ssh -T git@github.com`: `Hi DarrenN! You've successfully authenticated`.
   `git fetch --dry-run`: exit 0. `gh auth status`:
   `Logged in to github.com account DarrenN (GH_TOKEN)`.
+
+## Claude smoke check
+
+2026-09-26, Claude Code `2.1.283` (the exposed `~/.local/share/claude/versions/2.1.283`),
+launched with `scripts/guix-env claude`, following the checklist in
+`docs/building.md`.
+
+1. **Starts logged in:** passed.
+2. **Tools and variables:** passed. `$CHEZ` and `$CHEZ_CMARK_GFM_LIBS`
+   named `/gnu/store/…-profile` paths. `command -v scheme cmark-gfm` gave
+   `/bin/scheme` and `/bin/cmark-gfm`, because Claude Code's Bash tool
+   puts `/bin:/usr/bin:/sbin:/usr/sbin` ahead of the profile, unlike the
+   `bash -lc`/`-lic` of `check-guix` assertion 2. Under
+   `--emulate-fhs` those are the profile's own files, and both resolve to
+   the same store items (`…-chez-scheme-10.4.0`, `prn4x0x…-cmark-gfm-0.29.0.gfm.13`).
+   The container has no host `/bin`, so the order is harmless. It does mean
+   assertion 2 does not model Claude's shell; see the final-review fixes.
+3. **Signed commit:** passed. Commit `11f709f` on a scratch branch, made
+   inside the session: `Good signature from "Kiyomi Computation Systems
+   LLC …"`, EDDSA key `CC2923E5…`, verified on the host. There was no
+   pinentry prompt, because the host agent had the passphrase cached.
+4. **Push and gh:** passed, run through `scripts/guix-env` in command mode
+   (the same shares; step 2 shows Claude's shell inherits the container
+   environment). `git push --dry-run` authenticated through the SSH agent,
+   exit 0, nothing pushed. `gh auth status`:
+   `Logged in to github.com account DarrenN (GH_TOKEN)`.
+5. **Relaunch keeps login and settings:** passed, with no `.claude.json`
+   or `EBUSY` error. Risk R1 did not materialise, so no fallback applied.
