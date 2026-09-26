@@ -147,7 +147,7 @@ verify it by eye if either file changes.
 | [[file:docs/sxml.md][SXML]]               | The adapter, the full mapping, and choosing a serializer            |
 | [[file:docs/errors.md][Errors]]           | The condition family, and what raises what                          |
 | [[file:docs/memory.md][Memory ownership]] | The contract a caller depends on                                    |
-| [[file:docs/building.md][Building]]       | Targets, test suites, and the memory checks                         |
+| [[file:docs/building.md][Building]]       | Targets, test suites, memory checks, and the Guix environment       |
 | [[file:CHANGELOG.md][CHANGELOG]]          | Per-release history                                                 |
 | [[file:.plans/][Design specs & ADRs]]     | Why it is built this way, with the evidence                         |
 
@@ -156,8 +156,12 @@ verify it by eye if either file changes.
 Issues and pull requests are welcome — see [[file:CONTRIBUTING.md][CONTRIBUTING.md]] for the full guide.
 ~make help~ lists every target and [[file:docs/building.md][docs/building.md]] says what each one checks; a
 pull request is expected to keep ~make test~, ~make examples~, and the
-~check-*~ targets green. A change in behaviour needs a test that fails
-against the old behaviour.
+~check-*~ targets green (~check-guix~ only if you use the Guix environment).
+A change in behaviour needs a test that fails against the old behaviour.
+
+On x86_64 Linux with Guix, ~scripts/guix-env~ opens a pinned container with
+every prerequisite, and ~make test~ works in it as written; see "Guix
+development environment" in [[file:docs/building.md][docs/building.md]].
 
 Please report suspected vulnerabilities privately rather than in a public
 issue — see [[file:SECURITY.md][SECURITY.md]].
