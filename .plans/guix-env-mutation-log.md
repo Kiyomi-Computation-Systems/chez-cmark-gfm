@@ -294,3 +294,80 @@ launched with `scripts/guix-env claude`, following the checklist in
    `Logged in to github.com account DarrenN (GH_TOKEN)`.
 5. **Relaunch keeps login and settings:** passed, with no `.claude.json`
    or `EBUSY` error. Risk R1 did not materialise, so no fallback applied.
+
+## Final-review fixes
+
+A fresh reviewer read the whole branch. Each fix below was reproduced
+failing first, then fixed; the mutations were applied to scratch copies.
+The launcher suite is `65 passed, 0 failed` after the pass, and
+`make check-guix` is `ALL CHECKS PASSED`.
+
+### A private ssh signing key was mountable (Critical)
+
+git allows `user.signingkey` to name the private key for `gpg.format=ssh`,
+and the launcher mounted whatever file it named. **Red:** T17, with a
+fixture whose `id_test` begins `-----BEGIN OPENSSH PRIVATE KEY-----`, failed
+three checks. **Fix:** mount the file only if its first line is a public key
+(`ssh-`, `ecdsa-`, `sk-`), else its `.pub`, else nothing.
+**L17** (`is_public_key "$key"` back to `[ -f "$key" ]`): `FAIL T17 private
+signing key not exposed`, `FAIL T17 its .pub exposed instead`,
+`FAIL T17 no .pub: nothing of the key mounted`.
+
+### The repo's own config could choose what was mounted (Important)
+
+`git config --list` prints multi-line values raw. A value in `.git/config`,
+which is writable from inside, could forge a `file:<path>\t` line and mount
+any host file on the next launch. Git also quotes non-ASCII paths there, so
+a HOME like `fake hôme` silently lost its config. **Red:** T18 (a throwaway
+repo whose local config forges a line, includes a host file and names a
+signing key) and T8 under the non-ASCII fake HOME failed 7 checks.
+**Fix:** `host_config` reads `git config -z --list --show-origin
+--show-scope`, which is NUL-framed and unquoted, and keeps only the
+`global` and `system` scopes, for origins and signing values alike.
+- **L18** (scope filter removed): `FAIL T18 local include not exposed`,
+  `FAIL T18 local signing key not exposed`,
+  `FAIL T18 global signing format still decides`.
+- **L19** (`-z` framing removed): the T8, T10, T17 and T18 checks fail
+  (7 failed).
+- **L21** (the exact pre-fix parser restored):
+  `FAIL T18 forged origin line not exposed`, plus the non-ASCII T8 checks
+  and `FAIL T8 relative .git/config not exposed`.
+
+The forged-line check fails under neither L18 nor L19 alone, because either
+defense stops it. L21 is what shows it can fail. The old `/*)` guard behind
+L7 is gone: `host_config` prints only `file:/…` origins, and relative ones
+are local scope anyway.
+
+### `~/.config/gh` was shared read-write (Important, with the wording below)
+
+**L20** (`--expose` back to `--share`): `FAIL T13 gh config exposed
+read-only`, `FAIL T13 gh config not shared read-write`. Inside, with the
+config read-only, `gh auth status` reported `Logged in … (GH_TOKEN)`, and
+`gh repo view` returned `Kiyomi-Computation-Systems/chez-cmark-gfm`. The ADR
+and docs now say plainly that the container isolates the toolchain and is
+not a sandbox: git hooks, the Makefile and Claude hooks written inside can
+run on the host later.
+
+### A non-exec wrapper passed the Valgrind assertion (Important)
+
+**Red, M6b:** `CHEZ` pointing at a profile `bin/chez` script that runs Chez
+*without* `exec`: `check-guix: ALL CHECKS PASSED`. Valgrind reported on
+the surviving shell. **Fix:** assertion `chez-is-elf` (the first four bytes
+of `$CHEZ` are `7f454c46`). **M6b rerun:** `ok chez-variable`,
+`ok valgrind-instruments-chez`, then
+`FAILED chez-is-elf: /gnu/store/…-profile/bin/chez starts with '23212f67', not an ELF header`.
+
+### Assertion 2 did not model Claude's shell (from the smoke check)
+
+**Red:** a third mode, `fhs-first` (`PATH=/bin:/usr/bin:/sbin:/usr/sbin:$PATH`,
+the order Claude Code's Bash tool used), under the old prefix check:
+`FAILED login-shell-path[fhs-first]` for `scheme`, `make`, `git` and
+`cmark-gfm`, e.g. `resolves to '/bin/scheme'`. These are false failures:
+those are the profile's own files. **Fix:** compare `readlink -f` of the
+resolved tool with `readlink -f "$GUIX_ENVIRONMENT/bin/$tool"`. The
+assertion is renamed `tool-path[mode]`. Clean: 12 × `ok tool-path`.
+**M4 rerun** (no container, run directly): `FAILED tool-path[fhs-first]:
+make resolves to '/usr/bin/make'` and the same for `git`, plus
+`FAILED make-targets`. Under `-lc`/`-lic`, the maintainer's guix-home
+`scheme` and `git` are the same store items as the pin, since both come
+from one Guix commit, so the resolved comparison rightly accepts them.
