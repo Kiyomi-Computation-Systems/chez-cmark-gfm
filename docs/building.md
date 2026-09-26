@@ -47,8 +47,10 @@ pin the oracle to the exact commit the corpus itself comes from.
 
 ## Guix development environment
 
-On x86_64 Linux with [Guix](https://guix.gnu.org) installed, one command
-gives you every tool this page needs, at versions pinned by the repository:
+On x86_64 Linux with [Guix](https://guix.gnu.org) installed, this repository
+brings its own toolchain, pinned and kept off your host. Nothing is added to
+your `PATH` or any profile. The packages live in `/gnu/store` like all Guix
+packages, and `guix gc` reclaims them once you stop using them.
 
 ```sh
 scripts/guix-env              # an interactive shell in the container
@@ -60,51 +62,51 @@ environment sets `CHEZ` to Guix's Chez binary (named `scheme`: there is no
 `chez` command inside) and `CHEZ_CMARK_GFM_LIBS` to the pinned cmark-gfm,
 so `make build` reports libraries under `/gnu/store`.
 
+**Edit, commit and push on the host; build and test through
+`scripts/guix-env`.** The container holds the toolchain and nothing of
+yours: no git config, no SSH or gpg agent, no GitHub token. Its only view of
+your files is the repository itself, shared read-write at its usual path,
+so your edits are visible inside immediately and build output lands back in
+the repository.
+
 What to expect:
 
 - **The first run is slow.** `guix time-machine` builds the Guix revision
-  pinned in `channels.scm`, then the profile. Later runs reuse both.
-- **It is a container.** You see the repository (at its usual path),
-  `/gnu/store`, and none of your home directory except the pieces shared in
-  below. `HOME` is empty, so your aliases and prompt are absent. That is
-  deliberate: your shell's startup files could otherwise put your own tools
-  ahead of the pinned ones.
-- **There is no editor inside.** Edit on the host. The repository is the
-  same directory inside and out, so use the container shell to run things.
-- **Shared in, when they exist on your machine:**
-  - your global git config, including `include` and `includeIf` files.
-    The repository's own `.git/config` never decides what is mounted, since
-    anything inside can write to it;
-  - your gpg-agent socket and public keyring, for signed commits;
-  - your SSH agent and `known_hosts`;
-  - `~/.config/gh` (read-only), plus a `GH_TOKEN` taken from `gh auth
-    token` on the host.
-
-  Private key files are never shared: signing and authentication go through
-  your host agents, and pinentry appears on your desktop as usual. If your
-  ssh `user.signingkey` names a private key, only its `.pub` goes in.
-  `~/.ssh/config` is not shared either, because personal configs name
-  host-only keys and agents, and ssh inside authenticates through the shared
-  agent instead. Host aliases from it therefore don't work inside. Anything
-  you don't have is skipped; you just can't push from inside.
+  pinned in `channels.scm`, then the profile. Later runs reuse both, but
+  every call still takes a few seconds to start (about 4 s here), so batch
+  commands: `scripts/guix-env sh -c 'make build && make test'`.
+- **`HOME` inside is empty.** Your aliases, prompt and dotfiles are absent.
+  That is deliberate: your shell's startup files could otherwise put your
+  own tools ahead of the pinned ones.
+- **There is no editor inside.** Edit on the host.
 - **`scripts/guix-env` refuses to nest.** Once you're inside, run commands
   directly.
-- **It isolates the toolchain; it is not a sandbox.** Whatever runs inside
-  can use your GitHub access, and because the repository and Claude's
-  state are shared read-write, it can leave git hooks, Makefile changes or
-  Claude hooks that run later on the host. Review what an agent changed
-  before running host-side commands on its work.
+- **It emulates a conventional filesystem layout** (`--emulate-fhs`), so the
+  pinned libraries also sit at `/usr/lib`. That is what lets `make
+  check-install` prove an installed tree finds cmark-gfm with nothing set,
+  as it would on any distribution.
+
+### With a coding agent
+
+An agent such as Claude Code runs on the host like any other editor. It
+edits the source and commits with your normal tools, and sends every build
+or test through the launcher. `AGENTS.md` tells agents to do this, because
+a bare `make test` on a Guix host fails: there is no `chez` outside the
+container. Run the launcher with a command, never bare from an agent: with
+no terminal, the interactive shell just exits.
+
+### Checking the environment
 
 `make check-guix` (run it on the host, not inside) tests the launcher, then
-proves four things inside the container:
+proves inside the container:
 
 1. The library came from the store.
-2. `scheme`, `make`, `git` and `cmark-gfm` are the pinned binaries, both
-   for a login shell and with `/bin` first on `PATH` (as Claude Code's Bash
-   tool orders it).
-3. `$CHEZ` is the real Chez binary, not a wrapper, and Valgrind
-   instruments it.
-4. The credential directories are private enough for ssh and gpg.
+2. Nothing of your home directory is visible, except the path down to the
+   repository.
+3. `scheme`, `make`, `git` and `cmark-gfm` are the pinned binaries, from a
+   login shell in either form.
+4. `$CHEZ` is the real Chez binary, not a wrapper, and Valgrind instruments
+   it.
 
 It then runs `build`, `check-pins`, `test`, `check-purity`, `check-install`,
 `examples` and `check-site`. No CI job runs it (ADR-0018), so run it after
@@ -116,29 +118,6 @@ cmark-gfm outside the supported range, `make build` says so.
 
 Plain `guix shell` in this directory also loads `manifest.scm`, but against
 whatever Guix you last pulled. That environment is unpinned.
-
-### Running Claude Code in the environment
-
-```sh
-scripts/guix-env claude
-```
-
-runs your installed Claude Code inside the same container, with
-`~/.claude` and `~/.claude.json` shared so your login, settings and project
-memory carry over. The auto-updater is disabled inside because the binary
-is mounted read-only; update from a normal shell. Only this mode mounts
-Claude's files.
-
-The first time, or after changing `scripts/guix-env` or `manifest.scm`,
-check the session by hand:
-
-1. It starts logged in.
-2. Ask it to run `command -v scheme cmark-gfm` and
-   `echo "$CHEZ $CHEZ_CMARK_GFM_LIBS"`. Every path is under `/gnu/store`.
-3. Ask it to make a commit. It is signed:
-   `git log --show-signature -1` reports a good signature.
-4. `git push --dry-run` and `gh auth status` both succeed.
-5. Quit, relaunch, and it is still logged in with your settings.
 
 ## The targets
 

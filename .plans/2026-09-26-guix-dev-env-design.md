@@ -1,6 +1,7 @@
 # Guix development environment: a pinned container that can host Claude Code
 
-Status: implemented, with changes. ADR-0018 records what was built, and
+Status: implemented, with changes, then narrowed by ADR-0019 (agents run on
+the host; the container holds the toolchain and no credentials). ADR-0018 records what was built, and
 `.plans/guix-env-mutation-log.md` the evidence. Where this spec differs, it
 is superseded: `chez` is not a wrapper (it hid Chez from Valgrind; `CHEZ` is
 a search path now); `scripts/guix-env-init` fixes mount-point modes;

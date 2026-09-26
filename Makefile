@@ -399,7 +399,7 @@ check-site: check-reference build ## Build the site in memory and assert links, 
 # pinned container, which scripts/guix-env refuses to nest.
 check-guix: ## Test scripts/guix-env, then run the suites inside the pinned Guix container
 	@sh tests/guix-env-launcher.sh
-	@scripts/guix-env sh scripts/check-guix-env
+	@scripts/guix-env sh scripts/guix-env-selftest
 
 # CHEZ_CMARK_GFM_LIBS is UNSET here, not set empty. `(getenv "X")` returns
 # "" for an empty-but-set variable, and "" is truthy in Scheme, so

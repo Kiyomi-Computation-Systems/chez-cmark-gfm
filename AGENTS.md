@@ -44,6 +44,13 @@
 * Project should be portable across macos (darwin), linux, and windows
 * Project should be portable across amd64 and arm64
 * Plans live in `/.plans`, decision records in `/.plans/decisions`
+* **On a Guix host, run every build and test command through
+  `scripts/guix-env`**, e.g. `scripts/guix-env make test`, or batch them with
+  `scripts/guix-env sh -c 'make build && make test'`, since each call takes
+  a few seconds to start. Edit, commit and push on the host as usual: the
+  container has no git identity, agents or tokens (ADR-0019). A bare `make`
+  here fails for want of `chez`, and a bare `scripts/guix-env`, with no
+  terminal, opens a shell that exits at once.
 * Add entries to `CHANGELOG.md` for each release
 * **Closing Ritual:** squash merge PR, catch local `main` up, clean up
   branches, reflect on the session. Run all four parts without asking which.
@@ -198,17 +205,20 @@ None is obvious from reading the code.
   (`bash -l`) re-sources `~/.bash_profile` and `~/.profile`. On the maintainer's machine those put
   `~/.guix-home/profile/bin` ahead of the environment, so `scheme` and `git`
   resolved to the host's copies while everything still passed.
-  `scripts/guix-env` uses `--container`, whose `HOME` is empty. `make
-  check-guix` asserts that a login shell, and a `PATH` with `/bin` first,
-  both run the pinned binaries, comparing resolved paths. Do not assume you
-  know how a tool builds its shell: Claude Code's Bash tool turned out to
-  put `/bin:/usr/bin` ahead of the profile, which a `bash -l` check never
-  showed. `guix shell --check` diagnoses clobbering for a `--pure` shell.
+  `scripts/guix-env` uses `--container`, whose `HOME` is empty; `make
+  check-guix` asserts both that (`isolated-home`) and that a login shell
+  runs the pinned binaries, comparing resolved paths. Do not assume you
+  know how a tool builds its shell: when Claude Code ran inside the
+  container (ADR-0018, since withdrawn), its Bash tool put `/bin:/usr/bin`
+  ahead of the profile, which a `bash -l` check never showed. `guix shell
+  --check` diagnoses clobbering for a `--pure` shell.
 * **Guix creates a container's mount points under the host umask.** `HOME`
   comes out `1777`, and every directory created to hold a shared file comes
   out `0775`: `~/.ssh`, `~/.gnupg`, `/run/user/<uid>/gnupg`. ssh then
   refuses to read anything under them (`bad ownership or modes for
   directory`). gpg quietly rejects the socket directory, falls back to one
   where no agent listens, and lists no secret keys, without an error that
-  names the cause. `scripts/guix-env-init` sets them to `0700` before every
-  command, and `make check-guix` asserts the modes.
+  names the cause. ADR-0018's `scripts/guix-env-init` set them to `0700`;
+  ADR-0019 then stopped sharing credentials at all, so the lesson has no
+  live site here. It is kept for whoever next shares a socket or key into a
+  Guix container.

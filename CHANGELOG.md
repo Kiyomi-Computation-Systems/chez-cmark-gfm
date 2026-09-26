@@ -7,17 +7,17 @@ All notable changes to this project are documented here. This project follows
 
 ### Added
 
-- A pinned Guix development environment for x86_64 Linux.
-  `scripts/guix-env` opens a container shell, runs a command, or starts
-  Claude Code in it, with the toolchain pinned by `channels.scm` and
-  `manifest.scm`. `make check-guix` (local, not CI) asserts four things:
-  the library loads from `/gnu/store`; `scheme`, `make`, `git` and
-  `cmark-gfm` resolve to the pinned binaries; `$CHEZ` is the real Chez
-  binary and Valgrind instruments it; and the directories ssh and gpg
-  check are private. No private key file, and nothing the repository's own
-  git config names, is ever mounted into the container.
-  See [docs/building.md](docs/building.md#guix-development-environment) and
-  ADR-0018.
+- A pinned Guix development environment for x86_64 Linux, which keeps the
+  build and test toolchain off the host. `scripts/guix-env` opens a
+  container shell or runs one command (`scripts/guix-env make test`) with
+  the toolchain pinned by `channels.scm` and `manifest.scm`. The container
+  holds no credentials: edit, commit and push on the host, agents included
+  (ADR-0019). `make check-guix` (local, not CI) asserts that the library
+  loads from `/gnu/store`, that nothing of `HOME` is visible inside, that
+  `scheme`, `make`, `git` and `cmark-gfm` resolve to the pinned binaries,
+  and that `$CHEZ` is the real Chez binary Valgrind instruments. See
+  [docs/building.md](docs/building.md#guix-development-environment),
+  ADR-0018 and ADR-0019.
 - A source-checked [API reference](docs/reference.md) for all six public
   modules and 85 exported bindings. `make check-reference` compares its module
   and binding coverage against the R6RS export declarations, and

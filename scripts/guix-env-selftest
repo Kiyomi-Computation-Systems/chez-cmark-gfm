@@ -1,0 +1,105 @@
+#!/bin/sh
+# Runs INSIDE the pinned container. Not a launcher: `make check-guix` is
+#   sh tests/guix-env-launcher.sh && scripts/guix-env sh scripts/guix-env-selftest
+# Asserts what the environment exists for (ADR-0018, ADR-0019), then runs
+# the targets. Each failure names its assertion.
+set -u
+
+if [ -z "${GUIX_ENVIRONMENT:-}" ]; then
+  echo "check-guix: FAILED not-in-environment: this is the self-test, not the launcher; use scripts/guix-env, or make check-guix" >&2
+  exit 2
+fi
+
+fail=0
+out=$(mktemp)
+
+if ! make build >"$out" 2>&1; then
+  cat "$out"
+  echo "check-guix: FAILED make-build" >&2
+  exit 1
+fi
+cat "$out"
+
+# Assertion 1: the library came from the store. A missing line yields an
+# empty path, which fails the same way.
+for role in core ext; do
+  p=$(sed -n "s/^  $role: *//p" "$out")
+  case "$p" in
+    /gnu/store/*) echo "check-guix: ok store-library ($role: $p)" ;;
+    *) echo "check-guix: FAILED store-library: $role is '$p', expected a /gnu/store/ path" >&2
+       fail=1 ;;
+  esac
+done
+
+# Assertion 2: nothing of the host's HOME is visible. The container's HOME
+# holds at most the directories leading down to the repository, which it
+# shares; anything else (a dotfile, a key, a host tool's config) means the
+# isolation this environment exists for is gone.
+home_ok=1
+for e in "$HOME"/* "$HOME"/.[!.]* "$HOME"/..?*; do
+  [ -e "$e" ] || continue
+  case "$PWD/" in
+    "$e"/*) ;;
+    *) echo "check-guix: FAILED isolated-home: $e is visible inside the container" >&2
+       home_ok=0; fail=1 ;;
+  esac
+done
+if [ "$home_ok" -eq 1 ]; then
+  echo "check-guix: ok isolated-home ($HOME holds only the path to $PWD)"
+fi
+
+# Assertion 3: however a login shell finds a tool, it runs the pinned
+# binary. Both forms, since rc files branch on $-. Compared by resolved
+# path: a host or guix-home copy that is a different store item is not the
+# pinned one.
+for mode in -lc -lic; do
+  for tool in scheme make git cmark-gfm; do
+    p=$(bash "$mode" "command -v $tool" 2>/dev/null | tail -n 1)
+    want=$(readlink -f "$GUIX_ENVIRONMENT/bin/$tool")
+    got=
+    if [ -n "$p" ]; then
+      got=$(readlink -f "$p")
+    fi
+    if [ -n "$got" ] && [ "$got" = "$want" ]; then
+      echo "check-guix: ok tool-path[$mode] ($tool: $p)"
+    else
+      echo "check-guix: FAILED tool-path[$mode]: $tool resolves to '${got:-nothing}' (via '${p:-nothing}'), expected $want" >&2
+      fail=1
+    fi
+  done
+done
+
+# Assertion 4: the Makefile's $(CHEZ) is the pinned Chez binary itself. A
+# wrapper script satisfies `make test` while hiding Chez from Valgrind:
+# with one that exec's Chez, `make test-memory` passed 21 suites with no
+# ERROR SUMMARY at all; with one that does not, Valgrind prints the shell's
+# summary instead. So: inside the environment, an ELF, and instrumentable.
+case "${CHEZ:-}" in
+  "$GUIX_ENVIRONMENT"/*) echo "check-guix: ok chez-variable ($CHEZ)" ;;
+  *) echo "check-guix: FAILED chez-variable: CHEZ is '${CHEZ:-unset}', expected under $GUIX_ENVIRONMENT" >&2
+     fail=1 ;;
+esac
+if valgrind "${CHEZ:-chez}" --version 2>&1 | grep -q 'ERROR SUMMARY'; then
+  echo "check-guix: ok valgrind-instruments-chez"
+else
+  echo "check-guix: FAILED valgrind-instruments-chez: valgrind ${CHEZ:-chez} --version printed no ERROR SUMMARY" >&2
+  fail=1
+fi
+magic=$(head -c 4 "${CHEZ:-chez}" 2>/dev/null | od -An -tx1 | tr -d ' \n')
+if [ "$magic" = 7f454c46 ]; then
+  echo "check-guix: ok chez-is-elf"
+else
+  echo "check-guix: FAILED chez-is-elf: ${CHEZ:-chez} starts with '${magic:-nothing}', not an ELF header" >&2
+  fail=1
+fi
+
+if ! make check-pins test check-purity check-install examples check-site; then
+  echo "check-guix: FAILED make-targets" >&2
+  fail=1
+fi
+
+rm -f "$out"
+if [ "$fail" -eq 0 ]; then
+  echo "check-guix: ALL CHECKS PASSED"
+fi
+exit "$fail"
