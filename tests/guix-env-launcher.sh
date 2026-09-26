@@ -30,6 +30,10 @@ mkdir -p "$versions" "$home/.local/bin" "$home/.claude" "$home/.config/gh" \
 printf '#!/bin/sh\n' >"$versions/9.9.9"
 chmod +x "$versions/9.9.9"
 ln -s "$versions/9.9.9" "$home/.local/bin/claude"
+# A fake gh whose `auth token` succeeds; T16 swaps in one that fails.
+gh_ok() { printf '#!/bin/sh\n[ "$1 $2" = "auth token" ] && echo fake-token-5f3a\n' >"$home/.local/bin/gh"; chmod +x "$home/.local/bin/gh"; }
+gh_fails() { printf '#!/bin/sh\nexit 1\n' >"$home/.local/bin/gh"; chmod +x "$home/.local/bin/gh"; }
+gh_ok
 for f in .claude.json .ssh/config .ssh/known_hosts .ssh/signing.pub \
          .gnupg/pubring.kbx .gnupg/trustdb.gpg gpg-agent.sock ssh-agent.sock; do
   : >"$home/$f"
@@ -81,12 +85,12 @@ check "T1 no-args uses manifest.scm" [ "$(lines 9p)" = "manifest.scm|" ]
 check "T1 container flags" has --container
 check "T1 network flag" has --network
 check "T1 fhs flag" has --emulate-fhs
-check "T1 no-args ends in -- bash" [ "$(tail_lines 2)" = "--|bash|" ]
+check "T1 no-args ends in -- bash" [ "$(tail_lines 4)" = "--|sh|scripts/guix-env-init|bash|" ]
 
 # T2: arguments pass through verbatim, spaces and dollars included.
 run "$launcher" make "a b" '$HOME'
 check "T2 args pass through verbatim" \
-  [ "$(tail_lines 4)" = '--|make|a b|$HOME|' ]
+  [ "$(tail_lines 6)" = '--|sh|scripts/guix-env-init|make|a b|$HOME|' ]
 
 # T3: command mode carries no Claude share. T4 is its partner: the same
 # fixture in claude mode must produce them, so T3 cannot pass vacuously.
@@ -110,11 +114,32 @@ check "T9 openpgp: no ssh signing key" lacks "--expose=$home/.ssh/signing.pub"
 # T11: SSH agent and client config.
 check "T11 ssh agent shared" has "--share=$home/ssh-agent.sock"
 check "T11 SSH_AUTH_SOCK preserved" has '--preserve=^SSH_AUTH_SOCK$'
-check "T11 ssh config exposed" has "--expose=$home/.ssh/config"
+# ~/.ssh/config is deliberately NOT exposed: personal configs name host-only
+# things (IdentityFile private keys, which never enter; other agents'
+# sockets), and with them ssh inside never offers the shared agent's key.
+check "T11 ssh config not exposed" lacks "--expose=$home/.ssh/config"
 check "T11 known_hosts exposed" has "--expose=$home/.ssh/known_hosts"
 
 # T13a: gh config shared when present.
 check "T13 gh config shared" has "--share=$home/.config/gh"
+
+# T15: every command enters through guix-env-init, which fixes the modes of
+# the mount points guix creates (ssh and gpg reject group-writable dirs).
+check "T15 command enters via guix-env-init" \
+  [ "$(grep -n -Fx -- '--' "$tmp/out" | tail -n 1 | cut -d: -f1)" -eq \
+    "$(( $(grep -n -Fx 'scripts/guix-env-init' "$tmp/out" | cut -d: -f1) - 2 ))" ]
+
+# T16a: a working `gh auth token` is passed as GH_TOKEN by name only: the
+# token itself must never appear on the printed (or real) command line.
+check "T16 GH_TOKEN preserved" has '--preserve=^GH_TOKEN$'
+check "T16 token not on the command line" lacks "fake-token-5f3a"
+
+# T16b: gh present but not logged in: nothing to pass.
+gh_fails
+run "$launcher" make test
+check "T16 gh fails: exits 0" [ "$status" -eq 0 ]
+check "T16 gh fails: no GH_TOKEN" lacks "GH_TOKEN"
+gh_ok
 
 # T4: claude mode resolves the symlink and adds Claude's shares.
 run "$launcher" claude --resume
@@ -124,7 +149,7 @@ check "T4 ~/.claude.json shared" has "--share=$home/.claude.json"
 check "T4 binary directory exposed" has "--expose=$versions"
 check "T4 DISABLE_AUTOUPDATER preserved" has '--preserve=^DISABLE_AUTOUPDATER$'
 check "T4 runs the resolved binary with its args" \
-  [ "$(tail_lines 3)" = "--|$versions/9.9.9|--resume|" ]
+  [ "$(tail_lines 5)" = "--|sh|scripts/guix-env-init|$versions/9.9.9|--resume|" ]
 
 # T5: a fresh Claude install has no ~/.claude.json. Skip it, do not fail.
 mv "$home/.claude.json" "$tmp/claude.json.aside"

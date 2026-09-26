@@ -35,7 +35,7 @@ done
 # one, sees the environment's tools. Both the non-interactive and the
 # interactive form, since rc files branch on $-.
 for mode in -lc -lic; do
-  for tool in chez scheme make git cmark-gfm; do
+  for tool in scheme make git cmark-gfm; do
     p=$(bash "$mode" "command -v $tool" 2>/dev/null | tail -n 1)
     case "$p" in
       "$GUIX_ENVIRONMENT"/*)
@@ -45,6 +45,39 @@ for mode in -lc -lic; do
         fail=1 ;;
     esac
   done
+done
+
+# Assertion 3: the Makefile's $(CHEZ) is the pinned Chez binary itself. A
+# wrapper script would satisfy `make test` while hiding Chez from Valgrind:
+# valgrind traces the shell, the shell execs Chez, and `make test-memory`
+# passes having instrumented nothing (found exactly so, with a `chez`
+# wrapper: 21 suites, no ERROR SUMMARY). An instrumented run always prints
+# one.
+case "${CHEZ:-}" in
+  "$GUIX_ENVIRONMENT"/*) echo "check-guix: ok chez-variable ($CHEZ)" ;;
+  *) echo "check-guix: FAILED chez-variable: CHEZ is '${CHEZ:-unset}', expected under $GUIX_ENVIRONMENT" >&2
+     fail=1 ;;
+esac
+if valgrind "${CHEZ:-chez}" --version 2>&1 | grep -q 'ERROR SUMMARY'; then
+  echo "check-guix: ok valgrind-instruments-chez"
+else
+  echo "check-guix: FAILED valgrind-instruments-chez: valgrind ${CHEZ:-chez} --version printed no ERROR SUMMARY" >&2
+  fail=1
+fi
+
+# Assertion 4: ssh and gpg can use the shared credentials. Both refuse a
+# group- or world-writable directory, and guix creates these as 1777/0775
+# (scripts/guix-env-init fixes them).
+for d in "$HOME" "$HOME/.ssh" "$HOME/.gnupg" "/run/user/$(id -u)/gnupg"; do
+  if [ -d "$d" ]; then
+    m=$(stat -c %a "$d")
+    if [ "$m" = 700 ]; then
+      echo "check-guix: ok credential-dir-modes ($d: $m)"
+    else
+      echo "check-guix: FAILED credential-dir-modes: $d is $m, expected 700" >&2
+      fail=1
+    fi
+  fi
 done
 
 if ! make check-pins test check-purity check-install examples check-site; then

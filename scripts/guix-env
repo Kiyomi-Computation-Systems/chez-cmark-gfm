@@ -6,6 +6,8 @@
 #   scripts/guix-env CMD [ARG...]     run CMD, e.g. `make test`
 #   scripts/guix-env claude [ARG...]  Claude Code, with its login shared in
 #
+# Inside, every command starts through scripts/guix-env-init.
+#
 # GUIX_ENV_DRY_RUN=1 prints `cd <dir>` and the guix command, one argument
 # per line, instead of running it: tests/guix-env-launcher.sh asserts on
 # that. GUIX_ENV_GPG_AGENT_SOCKET overrides the gpgconf socket lookup.
@@ -109,17 +111,27 @@ esac
 if [ -n "${SSH_AUTH_SOCK:-}" ] && [ -e "$SSH_AUTH_SOCK" ]; then
   set -- "$@" "--share=$SSH_AUTH_SOCK" '--preserve=^SSH_AUTH_SOCK$'
 fi
-for f in "$HOME/.ssh/config" "$HOME/.ssh/known_hosts"; do
-  if [ -f "$f" ]; then
-    set -- "$@" "--expose=$f"
-  fi
-done
+# known_hosts only. ~/.ssh/config stays out: personal configs name host-only
+# things (IdentityFile private keys, which never enter; other agents'
+# sockets), and with them ssh inside offers no key from the shared agent.
+if [ -f "$HOME/.ssh/known_hosts" ]; then
+  set -- "$@" "--expose=$HOME/.ssh/known_hosts"
+fi
 
 if [ -d "$HOME/.config/gh" ]; then
   set -- "$@" "--share=$HOME/.config/gh"
 fi
+# gh keeps its token in the desktop keyring, which the container cannot
+# reach over D-Bus. Pass it through the environment by name, so it never
+# appears on a command line.
+if gh_token=$(gh auth token 2>/dev/null) && [ -n "$gh_token" ]; then
+  GH_TOKEN=$gh_token
+  export GH_TOKEN
+  set -- "$@" '--preserve=^GH_TOKEN$'
+fi
 
-set -- "$@" --
+# guix-env-init runs first inside, then execs the command.
+set -- "$@" -- sh scripts/guix-env-init
 i=0
 while [ "$i" -lt "$nuser" ]; do
   set -- "$@" "$1"

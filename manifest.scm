@@ -6,60 +6,56 @@
 
 (use-modules (guix packages)
              (guix profiles)
+             (guix search-paths)
              (guix gexp)
              (guix build-system trivial)
-             ((guix licenses) #:prefix license:)
-             (guix search-paths)
-             (gnu packages bash)
-             (gnu packages chez)
-             (gnu packages markup))
+             ((guix licenses) #:prefix license:))
 
-;; A script, not a symlink: Chez derives its boot-file name from the name
-;; it was invoked by, so a `chez` symlink looks for chez.boot and aborts.
-(define chez-command
+;; Installs nothing. Its search paths set two variables from the profile, so
+;; every make target works with no argument:
+;;
+;; CHEZ -- the Makefile's `CHEZ ?= chez` honours it. Guix names the binary
+;; `scheme`, and the alias has to be the binary itself: a `chez` wrapper
+;; script satisfies `make test` but hides Chez from Valgrind, which traces
+;; the shell and lets the exec'd Chez run uninstrumented. (A `chez` symlink
+;; is no better: Chez derives its boot-file name from the invoked name and
+;; aborts looking for chez.boot.)
+;;
+;; CHEZ_CMARK_GFM_LIBS -- discovery never searches a Guix profile
+;; (ADR-0016). Under --emulate-fhs it does find the pair through /usr/lib,
+;; but only this override names the store path, and without FHS emulation
+;; (plain `guix shell`) nothing else finds it at all. The pattern matches
+;; only the versioned files: the unversioned symlinks would make four
+;; entries, which parse-library-override rejects as invalid-override.
+(define chez-cmark-gfm-dev-env
   (package
-    (name "chez-command")
-    (version (package-version chez-scheme))
+    (name "chez-cmark-gfm-dev-env")
+    (version "0")
     (source #f)
     (build-system trivial-build-system)
-    (arguments
-     (list
-      #:builder
-      #~(let ((bin (string-append #$output "/bin")))
-          (mkdir #$output)
-          (mkdir bin)
-          (call-with-output-file (string-append bin "/chez")
-            (lambda (port)
-              (format port "#!~a~%exec ~a \"$@\"~%"
-                      #$(file-append bash-minimal "/bin/sh")
-                      #$(file-append chez-scheme "/bin/scheme"))))
-          (chmod (string-append bin "/chez") #o555))))
-    (home-page "https://github.com/Kiyomi-Computation-Systems/chez-cmark-gfm")
-    (synopsis "@command{chez} for the Makefile's default @code{CHEZ}")
-    (description "Runs Guix's @command{scheme} under the name the
-chez-cmark-gfm Makefile expects.")
-    (license license:bsd-3)))
-
-;; Discovery never searches a Guix profile (ADR-0016), so the environment
-;; names the pair through the documented override. The pattern matches only
-;; the versioned files: the unversioned symlinks would make four entries,
-;; which parse-library-override rejects as invalid-override. Adding a search
-;; path leaves cmark-gfm's store item unchanged, so substitutes still apply.
-(define cmark-gfm/chez-search-path
-  (package
-    (inherit cmark-gfm)
+    (arguments (list #:builder #~(mkdir #$output)))
     (native-search-paths
      (list (search-path-specification
+            (variable "CHEZ")
+            (files '("bin/scheme"))
+            (file-type 'regular)
+            (separator #f))
+           (search-path-specification
             (variable "CHEZ_CMARK_GFM_LIBS")
             (files '("lib"))
             (file-type 'regular)
-            (file-pattern "^libcmark-gfm(-extensions)?\\.so\\.[0-9]"))))))
+            (file-pattern "^libcmark-gfm(-extensions)?\\.so\\.[0-9]"))))
+    (home-page "https://github.com/Kiyomi-Computation-Systems/chez-cmark-gfm")
+    (synopsis "Environment variables for developing chez-cmark-gfm")
+    (description "Sets @env{CHEZ} and @env{CHEZ_CMARK_GFM_LIBS} from the
+profile it is installed in.")
+    (license license:bsd-3)))
 
 (concatenate-manifests
  (list
-  (packages->manifest (list chez-command cmark-gfm/chez-search-path))
+  (packages->manifest (list chez-cmark-gfm-dev-env))
   (specifications->manifest
-   '("chez-scheme"
+   '("chez-scheme" "cmark-gfm"
      ;; What the Makefile shells out to. The container has nothing else.
      "bash" "coreutils" "make" "git" "grep" "sed" "gawk" "findutils"
      "diffutils" "nss-certs"
