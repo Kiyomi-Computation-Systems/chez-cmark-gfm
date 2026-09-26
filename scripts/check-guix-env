@@ -1,0 +1,59 @@
+#!/bin/sh
+# Runs INSIDE the pinned container: `make check-guix` is
+#   sh tests/guix-env-launcher.sh && scripts/guix-env sh scripts/check-guix-env
+# Asserts the two properties the environment exists for (spec §4), then
+# runs the targets. Each failure names its assertion.
+set -u
+
+if [ -z "${GUIX_ENVIRONMENT:-}" ]; then
+  echo "check-guix: FAILED not-in-environment: run this through make check-guix" >&2
+  exit 2
+fi
+
+fail=0
+out=$(mktemp)
+
+if ! make build >"$out" 2>&1; then
+  cat "$out"
+  echo "check-guix: FAILED make-build" >&2
+  exit 1
+fi
+cat "$out"
+
+# Assertion 1: the library came from the store. A missing line yields an
+# empty path, which fails the same way.
+for role in core ext; do
+  p=$(sed -n "s/^  $role: *//p" "$out")
+  case "$p" in
+    /gnu/store/*) echo "check-guix: ok store-library ($role: $p)" ;;
+    *) echo "check-guix: FAILED store-library: $role is '$p', expected a /gnu/store/ path" >&2
+       fail=1 ;;
+  esac
+done
+
+# Assertion 2: a login shell, started the way Claude Code's Bash tool starts
+# one, sees the environment's tools. Both the non-interactive and the
+# interactive form, since rc files branch on $-.
+for mode in -lc -lic; do
+  for tool in chez scheme make git cmark-gfm; do
+    p=$(bash "$mode" "command -v $tool" 2>/dev/null | tail -n 1)
+    case "$p" in
+      "$GUIX_ENVIRONMENT"/*)
+        echo "check-guix: ok login-shell-path[$mode] ($tool: $p)" ;;
+      *)
+        echo "check-guix: FAILED login-shell-path[$mode]: $tool resolves to '${p:-nothing}', expected under $GUIX_ENVIRONMENT" >&2
+        fail=1 ;;
+    esac
+  done
+done
+
+if ! make check-pins test check-purity check-install examples check-site; then
+  echo "check-guix: FAILED make-targets" >&2
+  fail=1
+fi
+
+rm -f "$out"
+if [ "$fail" -eq 0 ]; then
+  echo "check-guix: ALL CHECKS PASSED"
+fi
+exit "$fail"
