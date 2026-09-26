@@ -1,6 +1,12 @@
 # Guix development environment: a pinned container that can host Claude Code
 
-Status: proposed
+Status: implemented, with changes. ADR-0018 records what was built, and
+`.plans/guix-env-mutation-log.md` the evidence. Where this spec differs, it
+is superseded: `chez` is not a wrapper (it hid Chez from Valgrind; `CHEZ` is
+a search path now); `scripts/guix-env-init` fixes mount-point modes;
+`~/.ssh/config` is not exposed; `gh` gets `GH_TOKEN`; and under
+`--emulate-fhs` discovery finds the pair at `/usr/lib`, so §1's "fails
+`not-found`" holds only without FHS emulation.
 Date: 2026-09-26
 Scope: development tooling only. No library behaviour changes, no export
 changes, no change to discovery (ADR-0016), and no CI job.

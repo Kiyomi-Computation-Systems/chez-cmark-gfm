@@ -183,3 +183,30 @@ None is obvious from reading the code.
   three fields were unpinned that way. Assert the whole rendering rather than a
   substring, give the fixture a neighbour that cannot produce the same bytes by
   another route, and build the base out of non-default values.
+* **An alias for the Chez binary must be neither a symlink nor a wrapper
+  script.** A `chez` symlink to Guix's `scheme` aborts with `cannot find
+  compatible chez.boot in search path "%x:%x/../lib/csv%v/%m:…"`: Chez
+  derives its boot-file name from the invoked name. A wrapper script that
+  `exec`s `scheme` fixes that and passes `make test`, but hides Chez from
+  Valgrind: Valgrind traces the shell, the shell execs Chez uninstrumented,
+  and `make test-memory` reported success over 21 suites without printing a
+  single `ERROR SUMMARY`. Point `CHEZ` at the real binary, which is what
+  `manifest.scm`'s search path does. `make check-guix` asserts that
+  `valgrind $CHEZ` prints an `ERROR SUMMARY`.
+* **`guix shell --pure` does not stop a login shell from rebuilding `PATH`.**
+  `--pure` clears the environment once, at entry. A later `bash -l`, which
+  is how Claude Code's Bash tool starts its shells, re-sources
+  `~/.bash_profile` and `~/.profile`. On the maintainer's machine those put
+  `~/.guix-home/profile/bin` ahead of the environment, so `scheme` and `git`
+  resolved to the host's copies while everything still passed.
+  `scripts/guix-env` uses `--container`, whose `HOME` is empty, and `make
+  check-guix` asserts the resolution from a login shell. `guix shell
+  --check` diagnoses the same thing for a `--pure` shell.
+* **Guix creates a container's mount points under the host umask.** `HOME`
+  comes out `1777`, and every directory created to hold a shared file comes
+  out `0775`: `~/.ssh`, `~/.gnupg`, `/run/user/<uid>/gnupg`. ssh then
+  refuses to read anything under them (`bad ownership or modes for
+  directory`). gpg quietly rejects the socket directory, falls back to one
+  where no agent listens, and lists no secret keys, without an error that
+  names the cause. `scripts/guix-env-init` sets them to `0700` before every
+  command, and `make check-guix` asserts the modes.

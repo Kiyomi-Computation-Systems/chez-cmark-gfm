@@ -7,6 +7,14 @@ All notable changes to this project are documented here. This project follows
 
 ### Added
 
+- A pinned Guix development environment for x86_64 Linux.
+  `scripts/guix-env` opens a container shell, runs a command, or starts
+  Claude Code in it, with the toolchain pinned by `channels.scm` and
+  `manifest.scm`. `make check-guix` (local, not CI) proves four things: the
+  library loads from `/gnu/store`, a login shell sees only the pinned tools,
+  Valgrind instruments `$CHEZ`, and ssh and gpg can use the shared agents.
+  See [docs/building.md](docs/building.md#guix-development-environment) and
+  ADR-0018.
 - A source-checked [API reference](docs/reference.md) for all six public
   modules and 85 exported bindings. `make check-reference` compares its module
   and binding coverage against the R6RS export declarations, and
