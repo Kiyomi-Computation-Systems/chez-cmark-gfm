@@ -1,6 +1,7 @@
 # ADR-0018: A pinned Guix container as the development environment
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [ADR-0019](0019-toolchain-only-guix-container.md),
+  which withdraws `claude` mode, the credential shares and `scripts/guix-env-init`
 - **Date:** 2026-09-26
 - **Scope:** development tooling. No library change
 - **Related:** [design spec](../2026-09-26-guix-dev-env-design.md) ·

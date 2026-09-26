@@ -371,3 +371,81 @@ make resolves to '/usr/bin/make'` and the same for `git`, plus
 `FAILED make-targets`. Under `-lc`/`-lic`, the maintainer's guix-home
 `scheme` and `git` are the same store items as the pin, since both come
 from one Guix commit, so the resolved comparison rightly accepts them.
+
+## Toolchain-only container (ADR-0019)
+
+Everything above about `claude` mode, credential shares, `guix-env-init`,
+`host_config` and `fhs-first` describes code that ADR-0019 removed. It is
+kept as the record of why that code existed and what it caught. This
+section covers the launcher and self-test that replaced it.
+
+**Launcher, red first.** The rewritten `tests/guix-env-launcher.sh` gives
+the launcher a fake HOME holding every kind of credential: git config,
+ssh keys and config, a gpg keyring, agent sockets, `gh` with a token,
+`~/.claude`. T20 asserts that none of it is mounted, in command, `claude`
+and no-argument modes. Against the ADR-0018 launcher: `12 passed,
+19 failed`, all 15 T20 checks among the failures. Against the new launcher:
+`31 passed, 0 failed`.
+
+**`--emulate-fhs` stays.** The design removed it, and the first run said
+why it can't go: `make check-install` failed with
+`&cmark-library-unavailable … reason: not-found`, because its probe runs
+with `CHEZ_CMARK_GFM_LIBS` unset and only FHS emulation's `/usr/lib` makes
+the pinned pair discoverable. T1 now requires the flag (red:
+`FAIL T1 fhs flag`, then green).
+
+**Launcher mutations.** Each was applied to a scratch copy. Clean rerun
+after each: `31 passed, 0 failed`.
+
+- **N1:** `--expose=$HOME/.gitconfig` added among guix's flags. Fails
+  `T20 [make test|claude|no-args] no --expose` and
+  `… nothing from HOME` (6 failed).
+- **N1b:** `--share=$SSH_AUTH_SOCK --preserve=^SSH_AUTH_SOCK$` added. Fails
+  `T20 […] no --share`, `… nothing from HOME` and `… no agent socket` in
+  all three modes (9 failed).
+- **N1c:** `--preserve=^GH_TOKEN$` added. Fails `T20 […] no GH_TOKEN` in
+  all three modes (3 failed).
+- **N2:** `--emulate-fhs` dropped. Fails `T1 fhs flag`.
+- **N3:** the nesting refusal deleted. Fails `T7 nested: exit 2`,
+  `… names GUIX_ENVIRONMENT` and `… prints no command`.
+- **N4:** `cd "$root"` deleted. Fails `T14 subdirectory: runs from the
+  repo root`.
+- **N5:** `-- "$@"` unquoted. Fails `T2 args pass through verbatim`.
+- **N6:** the default changed from `bash` to `sh`. Fails `T1 no-args ends
+  in -- bash`.
+- **N7:** `claude` resolved to its absolute path, a special mode creeping
+  back. Fails `T3 claude: passed through unresolved` and
+  `T20 [claude] nothing from HOME`.
+
+N1–N1c were first applied by prepending to the user's arguments. That put
+the flag after `--`, so T1–T3 failed too, for a reason other than the one
+under test. They were narrowed to insert among guix's own options, and the
+results above are from the narrowed run.
+
+**Self-test mutations** (`scripts/guix-env-selftest`, a fresh repository
+copy each):
+
+- **M1** (no `CHEZ_CMARK_GFM_LIBS` search path): exit 2,
+  `FAILED store-library: core is '/usr/lib/libcmark-gfm.so.0.29.0.gfm.13'`
+  and the same for `ext`.
+- **M3** (no `CHEZ` search path): exit 2,
+  `…/bin/sh: line 1: chez: command not found`, `FAILED make-build`.
+- **M4** (`--container` and `--emulate-fhs` dropped, self-test run
+  directly): exit 1. There were 47 × `FAILED isolated-home: /home/kishu/<entry>
+  is visible inside the container`, one per entry of the real home
+  directory (for example `Desktop`, `Documents`), plus `FAILED make-targets`.
+  `tool-path` passed: the maintainer's guix-home binaries are the same
+  store items as the pin. Unlike ADR-0018's PATH-based detection, this does
+  not depend on the host's rc files.
+- **M5** (a valid pair copied to `/tmp`): exit 2,
+  `FAILED store-library: core is '/tmp/tmp.…/libcmark-gfm.so.0.29.0.gfm.13'`
+  and the same for `ext`.
+- **M6b** (`CHEZ` is a non-exec wrapper): exit 1, only
+  `FAILED chez-is-elf: /gnu/store/…-profile/bin/chez starts with '23212f67', not an ELF header`.
+
+**Clean:** `make check-guix` → `31 passed, 0 failed`, `ok isolated-home`,
+2 × `ok store-library`, 8 × `ok tool-path`, `ok chez-variable`,
+`ok valgrind-instruments-chez`, `ok chez-is-elf`, then `ALL SUITES PASSED`,
+`check-install: an installed tree imports and renders`,
+`ALL EXAMPLES PASSED`, `check-site … all green`, and
+`check-guix: ALL CHECKS PASSED`.
