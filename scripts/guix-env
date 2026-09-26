@@ -65,26 +65,49 @@ if [ -n "$claude_mode" ]; then
   export DISABLE_AUTOUPDATER
 fi
 
-# Every git config file outside the repo, includes too: an includeIf keyed
+# host_config origins | host_config KEY
+# Reads git config from the global and system scopes only. The repo's own
+# config is writable from inside the container, so nothing in it may choose
+# what the next launch mounts. -z output is NUL-framed and unquoted,
+# `scope NUL origin NUL key LF value NUL`, so a multi-line value cannot forge
+# an origin, and non-ASCII paths arrive as they are.
+host_config() {
+  git config -z --list --show-origin --show-scope 2>/dev/null \
+    | tr '\n\000' '\001\n' \
+    | awk -v want="$1" '
+        NR % 3 == 1 { scope = $0 }
+        NR % 3 == 2 { origin = $0 }
+        NR % 3 == 0 && (scope == "global" || scope == "system") {
+          if (want == "origins") {
+            if (origin ~ /^file:\//) print substr(origin, 6)
+          } else {
+            i = index($0, "\001")
+            if (i && substr($0, 1, i - 1) == want) value = substr($0, i + 1)
+          }
+        }
+        END { if (want != "origins" && value != "") print value }' \
+    | sort -u
+}
+
+# Every global or system git config file, includes too: an includeIf keyed
 # on this repo's path still matches, because the repo keeps its path inside.
-tab=$(printf '\t')
-origins=$(git config --list --show-origin 2>/dev/null \
-  | sed -n "s/^file:\([^$tab]*\)$tab.*/\1/p" | sort -u)
+origins=$(host_config origins)
 while IFS= read -r f; do
-  case "$f" in
-    /*)
-      if [ -e "$f" ]; then
-        set -- "$@" "--expose=$f"
-      fi
-      ;;
-  esac
+  if [ -n "$f" ] && [ -e "$f" ]; then
+    set -- "$@" "--expose=$f"
+  fi
 done <<EOF
 $origins
 EOF
 
+# is_public_key FILE: its first line is an OpenSSH public key.
+is_public_key() {
+  head -n 1 "$1" 2>/dev/null | grep -Eq '^(ssh-|ecdsa-|sk-)'
+}
+
 # Signing. Private keys stay with the host agent; only public material and
 # the agent socket enter.
-format=$(git config --get gpg.format || true)
+format=$(host_config gpg.format)
 case "${format:-openpgp}" in
   openpgp)
     sock=${GUIX_ENV_GPG_AGENT_SOCKET:-$(gpgconf --list-dirs agent-socket 2>/dev/null || true)}
@@ -98,12 +121,16 @@ case "${format:-openpgp}" in
     done
     ;;
   ssh)
-    key=$(git config --get user.signingkey || true)
+    # git allows user.signingkey to name the private key itself: mount a
+    # file only if it is a public key, else its .pub, else nothing.
+    key=$(host_config user.signingkey)
     case "$key" in
       "~/"*) key="$HOME/${key#"~/"}" ;;
     esac
-    if [ -n "$key" ] && [ -f "$key" ]; then
+    if [ -n "$key" ] && is_public_key "$key"; then
       set -- "$@" "--expose=$key"
+    elif [ -n "$key" ] && is_public_key "$key.pub"; then
+      set -- "$@" "--expose=$key.pub"
     fi
     ;;
 esac
@@ -118,8 +145,10 @@ if [ -f "$HOME/.ssh/known_hosts" ]; then
   set -- "$@" "--expose=$HOME/.ssh/known_hosts"
 fi
 
+# Read-only: GH_TOKEN (below) carries the credential, and a writable config
+# would let the container plant gh aliases that the host then runs.
 if [ -d "$HOME/.config/gh" ]; then
-  set -- "$@" "--share=$HOME/.config/gh"
+  set -- "$@" "--expose=$HOME/.config/gh"
 fi
 # gh keeps its token in the desktop keyring, which the container cannot
 # reach over D-Bus. Pass it through the environment by name, so it never

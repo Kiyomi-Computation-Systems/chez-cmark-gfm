@@ -21,9 +21,10 @@ lacks() { ! grep -Fq -- "$1" "$tmp/out"; }
 lines() { sed -n "$1" "$tmp/out" | tr '\n' '|'; }
 tail_lines() { tail -n "$1" "$tmp/out" | tr '\n' '|'; }
 
-# The fake HOME has a space in it, so every path the launcher builds must
-# survive quoting (Review Focus 1).
-home="$tmp/fake home"
+# The fake HOME has a space and a non-ASCII letter in it: every path the
+# launcher builds must survive quoting (Review Focus 1), and git quotes
+# non-ASCII paths in its plain --show-origin output.
+home="$tmp/fake hôme"
 versions="$home/.local/share/claude/versions"
 mkdir -p "$versions" "$home/.local/bin" "$home/.claude" "$home/.config/gh" \
          "$home/.ssh" "$home/.gnupg"
@@ -34,10 +35,17 @@ ln -s "$versions/9.9.9" "$home/.local/bin/claude"
 gh_ok() { printf '#!/bin/sh\n[ "$1 $2" = "auth token" ] && echo fake-token-5f3a\n' >"$home/.local/bin/gh"; chmod +x "$home/.local/bin/gh"; }
 gh_fails() { printf '#!/bin/sh\nexit 1\n' >"$home/.local/bin/gh"; chmod +x "$home/.local/bin/gh"; }
 gh_ok
-for f in .claude.json .ssh/config .ssh/known_hosts .ssh/signing.pub \
+for f in .claude.json .ssh/config .ssh/known_hosts \
          .gnupg/pubring.kbx .gnupg/trustdb.gpg gpg-agent.sock ssh-agent.sock; do
   : >"$home/$f"
 done
+# Key files carry real-looking first lines: the launcher decides what to
+# mount by content, and must never mount a private key.
+pubkey='ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeFakeFakeFakeFakeFakeFakeFakeFake test'
+printf '%s\n' "$pubkey" >"$home/.ssh/signing.pub"
+printf '%s\n' '-----BEGIN OPENSSH PRIVATE KEY-----' 'b3BlbnNzaC1rZXktdjEAAAAA' \
+  '-----END OPENSSH PRIVATE KEY-----' >"$home/.ssh/id_test"
+printf '%s\n' "$pubkey" >"$home/.ssh/id_test.pub"
 cat >"$home/.gitconfig" <<EOF
 [user]
 	name = Test
@@ -121,7 +129,10 @@ check "T11 ssh config not exposed" lacks "--expose=$home/.ssh/config"
 check "T11 known_hosts exposed" has "--expose=$home/.ssh/known_hosts"
 
 # T13a: gh config shared when present.
-check "T13 gh config shared" has "--share=$home/.config/gh"
+# Read-only: GH_TOKEN carries the credential, and a writable config would
+# let the container plant gh aliases the host then runs.
+check "T13 gh config exposed read-only" has "--expose=$home/.config/gh"
+check "T13 gh config not shared read-write" lacks "--share=$home/.config/gh"
 
 # T15: every command enters through guix-env-init, which fixes the modes of
 # the mount points guix creates (ssh and gpg reject group-writable dirs).
@@ -180,6 +191,44 @@ check "T10 ssh format: no gpg socket" lacks "--share=$home/gpg-agent.sock"
 check "T10 ssh format: no pubring" lacks "--expose=$home/.gnupg/pubring.kbx"
 signing openpgp "~/.ssh/signing.pub"
 
+# T17: git allows user.signingkey to name the PRIVATE key for ssh format.
+# It must never be mounted; its .pub is, and without one, nothing is.
+signing ssh "~/.ssh/id_test"
+run "$launcher" make test
+check "T17 private signing key not exposed" [ "$(grep -cFx -- "--expose=$home/.ssh/id_test" "$tmp/out")" -eq 0 ]
+check "T17 its .pub exposed instead" has "--expose=$home/.ssh/id_test.pub"
+mv "$home/.ssh/id_test.pub" "$tmp/id_test.pub.aside"
+run "$launcher" make test
+check "T17 no .pub: exits 0" [ "$status" -eq 0 ]
+check "T17 no .pub: nothing of the key mounted" lacks "id_test"
+mv "$tmp/id_test.pub.aside" "$home/.ssh/id_test.pub"
+signing openpgp "~/.ssh/signing.pub"
+
+# T18: the repo's own config is writable from inside the container, so
+# nothing in it may choose what the next launch mounts. A launcher copy in a
+# throwaway repo whose local config forges an origin line inside a
+# multi-line value, includes a host file, and names a signing key.
+secret="$tmp/host-secret"; printf 'x\n' >"$secret"
+inc="$tmp/host-included.gitconfig"; printf '[x]\n\ty = 1\n' >"$inc"
+lkey="$tmp/local-signing.pub"; printf '%s\n' "$pubkey" >"$lkey"
+repo="$tmp/repo"
+mkdir -p "$repo/scripts"
+cp "$launcher" "$repo/scripts/guix-env"
+git init -q "$repo"
+git -C "$repo" config forged.value "$(printf 'x\nfile:%s\tz' "$secret")"
+git -C "$repo" config include.path "$inc"
+git -C "$repo" config gpg.format ssh
+git -C "$repo" config user.signingkey "$lkey"
+cwd=$repo
+run "$repo/scripts/guix-env" make test
+cwd=$root
+check "T18 local config: exits 0" [ "$status" -eq 0 ]
+check "T18 forged origin line not exposed" lacks "$secret"
+check "T18 local include not exposed" lacks "$inc"
+check "T18 local signing key not exposed" lacks "$lkey"
+check "T18 global config still exposed" has "--expose=$home/.gitconfig"
+check "T18 global signing format still decides" has "--share=$home/gpg-agent.sock"
+
 # T12: a stale SSH_AUTH_SOCK is skipped, not an error (Review Focus 3).
 run SSH_AUTH_SOCK="$home/no-such.sock" "$launcher" make test
 check "T12 stale agent: exits 0" [ "$status" -eq 0 ]
@@ -190,7 +239,7 @@ check "T12 stale agent: not preserved" lacks '--preserve=^SSH_AUTH_SOCK$'
 rmdir "$home/.config/gh"
 run "$launcher" make test
 check "T13 no gh config: exits 0" [ "$status" -eq 0 ]
-check "T13 no gh config: not shared" lacks "--share=$home/.config/gh"
+check "T13 no gh config: not mounted" lacks "$home/.config/gh"
 mkdir -p "$home/.config/gh"
 
 # T14: launched by relative path from a subdirectory, the container still
