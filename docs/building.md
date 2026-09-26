@@ -72,27 +72,38 @@ What to expect:
 - **There is no editor inside.** Edit on the host. The repository is the
   same directory inside and out, so use the container shell to run things.
 - **Shared in, when they exist on your machine:**
-  - your git config, including `include` and `includeIf` files;
+  - your global git config, including `include` and `includeIf` files.
+    The repository's own `.git/config` never decides what is mounted, since
+    anything inside can write to it;
   - your gpg-agent socket and public keyring, for signed commits;
   - your SSH agent and `known_hosts`;
-  - `~/.config/gh`, plus a `GH_TOKEN` taken from `gh auth token` on the host.
+  - `~/.config/gh` (read-only), plus a `GH_TOKEN` taken from `gh auth
+    token` on the host.
 
   Private key files are never shared: signing and authentication go through
-  your host agents, and pinentry appears on your desktop as usual.
+  your host agents, and pinentry appears on your desktop as usual. If your
+  ssh `user.signingkey` names a private key, only its `.pub` goes in.
   `~/.ssh/config` is not shared either, because personal configs name
   host-only keys and agents, and ssh inside authenticates through the shared
   agent instead. Host aliases from it therefore don't work inside. Anything
   you don't have is skipped; you just can't push from inside.
 - **`scripts/guix-env` refuses to nest.** Once you're inside, run commands
   directly.
+- **It isolates the toolchain; it is not a sandbox.** Whatever runs inside
+  can use your GitHub access, and because the repository and Claude's
+  state are shared read-write, it can leave git hooks, Makefile changes or
+  Claude hooks that run later on the host. Review what an agent changed
+  before running host-side commands on its work.
 
 `make check-guix` (run it on the host, not inside) tests the launcher, then
 proves four things inside the container:
 
 1. The library came from the store.
-2. A login shell resolves `scheme`, `make`, `git` and `cmark-gfm` from the
-   environment.
-3. Valgrind actually instruments `$CHEZ`.
+2. `scheme`, `make`, `git` and `cmark-gfm` are the pinned binaries, both
+   for a login shell and with `/bin` first on `PATH` (as Claude Code's Bash
+   tool orders it).
+3. `$CHEZ` is the real Chez binary, not a wrapper, and Valgrind
+   instruments it.
 4. The credential directories are private enough for ssh and gpg.
 
 It then runs `build`, `check-pins`, `test`, `check-purity`, `check-install`,

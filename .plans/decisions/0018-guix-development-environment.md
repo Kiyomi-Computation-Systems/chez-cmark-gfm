@@ -58,20 +58,32 @@ two were known going in; the other three were found building it.
   verified is what is run. Every command inside starts through
   `scripts/guix-env-init`, which sets those directories to `0700`.
 - **Credentials are shared deliberately, and listed:**
-  - git config files, including `include`/`includeIf` targets;
+  - git config files from the global and system scopes, including their
+    `include`/`includeIf` targets. The repository's own `.git/config` is
+    writable from inside, so it never decides what is mounted, and the
+    listing is read NUL-framed so no value can forge a path;
   - the gpg-agent socket and the public keyring;
   - the SSH agent socket and `known_hosts`;
-  - `~/.config/gh`, plus `GH_TOKEN` taken from `gh auth token` on the host.
+  - `~/.config/gh`, read-only, plus `GH_TOKEN` taken from `gh auth token`
+    on the host.
     The token is passed by environment name, never on a command line. This
     was the maintainer's choice over sharing the D-Bus session or dropping
     `gh`.
   - In `claude` mode only: `~/.claude` and `~/.claude.json`.
 
-  Private key files and `~/.ssh/config` are never exposed.
+  Private key files and `~/.ssh/config` are never exposed. For ssh
+  signing, the file `user.signingkey` names is mounted only if it is a
+  public key, else its `.pub`, else nothing: git allows it to name the
+  private key.
 - **Verification is local.** `make check-guix` asserts four things:
   1. The library came from `/gnu/store`.
-  2. A login shell resolves the environment's tools.
-  3. `$CHEZ` is inside the environment and instrumentable by Valgrind.
+  2. However a shell finds `scheme`, `make`, `git` and `cmark-gfm`
+     (`bash -lc`, `bash -lic`, and `/bin` first, the PATH order Claude
+     Code's Bash tool was seen to use), it runs the pinned binary. The
+     comparison is by resolved path, because under FHS emulation
+     `/bin/scheme` *is* the pinned `scheme`.
+  3. `$CHEZ` is inside the environment, is an ELF binary rather than a
+     wrapper, and Valgrind instruments it.
   4. The credential directories are `0700`.
 
   No CI job runs it.
@@ -94,15 +106,28 @@ Rejected:
 - **Nothing automated notices rot.** A broken pin or manifest surfaces the
   next time someone runs `make check-guix`. This was accepted to keep CI
   spend where #18 left it.
-- **The container confines the filesystem, not GitHub.** Anything running
-  inside holds the maintainer's GitHub access, through the agents and
-  `GH_TOKEN`, and can read `GH_TOKEN` from its environment.
+- **The container isolates the toolchain. It is not a sandbox against
+  what runs inside it.** Anything inside holds the maintainer's GitHub
+  access, through the agents and `GH_TOKEN`, which it can read from its
+  environment. It can also get code run on the host later, because the
+  repository and Claude's state are shared read-write:
+  - `.git/hooks` and `core.fsmonitor` run on the host's next `git` command;
+  - the `Makefile` and `tests/guix-env-launcher.sh` run on the host under
+    `make check-guix`;
+  - hooks in `~/.claude/settings.json` (shared in `claude` mode) run in the
+    host's next Claude session.
+
+  What the design does guarantee is narrower: no private key file, and
+  nothing the repository's own config names, is ever mounted.
 - **`~/.ssh/config` settings do not apply inside.** Host aliases and custom
   ports are unavailable. GitHub over SSH works through the agent.
 - **There is no `chez` command inside.** Type `scheme`. `make` uses `$CHEZ`.
-- **The `--container` half of the PATH assertion is host-dependent.** On a
-  host whose rc files do not prepend `PATH`, dropping `--container` is
-  caught only by the launcher's own flag checks (mutation M4).
+- **The `--container` half of the PATH assertion depends on the host.**
+  Dropping `--container` is caught by the launcher's own flag checks, and
+  inside by `tool-path[fhs-first]` on any host whose `/usr/bin` holds
+  different copies of `make` or `git` (mutation M4). On a host where every
+  such tool is the same store item as the pin, there is nothing wrong to
+  detect.
 - **A pin bump can bring a `cmark-gfm` outside the supported range.** The
   existing post-load version check in `native.sls` fails `make build`, which
   fails `check-guix`.

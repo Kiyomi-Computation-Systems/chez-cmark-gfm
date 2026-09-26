@@ -10,9 +10,12 @@ All notable changes to this project are documented here. This project follows
 - A pinned Guix development environment for x86_64 Linux.
   `scripts/guix-env` opens a container shell, runs a command, or starts
   Claude Code in it, with the toolchain pinned by `channels.scm` and
-  `manifest.scm`. `make check-guix` (local, not CI) proves four things: the
-  library loads from `/gnu/store`, a login shell sees only the pinned tools,
-  Valgrind instruments `$CHEZ`, and ssh and gpg can use the shared agents.
+  `manifest.scm`. `make check-guix` (local, not CI) asserts four things:
+  the library loads from `/gnu/store`; `scheme`, `make`, `git` and
+  `cmark-gfm` resolve to the pinned binaries; `$CHEZ` is the real Chez
+  binary and Valgrind instruments it; and the directories ssh and gpg
+  check are private. No private key file, and nothing the repository's own
+  git config names, is ever mounted into the container.
   See [docs/building.md](docs/building.md#guix-development-environment) and
   ADR-0018.
 - A source-checked [API reference](docs/reference.md) for all six public

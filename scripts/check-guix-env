@@ -31,19 +31,31 @@ for role in core ext; do
   esac
 done
 
-# Assertion 2: a login shell, started the way Claude Code's Bash tool starts
-# one, sees the environment's tools. Both the non-interactive and the
-# interactive form, since rc files branch on $-.
-for mode in -lc -lic; do
+# Assertion 2: however a shell here finds a tool, it runs the pinned
+# binary. -lc and -lic are login shells, both forms since rc files branch
+# on $-. fhs-first is the PATH order Claude Code's Bash tool was seen to use
+# (/bin:/usr/bin ahead of the profile). Under --emulate-fhs those are the
+# profile's own files, so the comparison is by resolved binary, not by
+# prefix: /bin/scheme is the pinned scheme, and a host or guix-home copy
+# that is a different store item is not.
+for mode in -lc -lic fhs-first; do
   for tool in scheme make git cmark-gfm; do
-    p=$(bash "$mode" "command -v $tool" 2>/dev/null | tail -n 1)
-    case "$p" in
-      "$GUIX_ENVIRONMENT"/*)
-        echo "check-guix: ok login-shell-path[$mode] ($tool: $p)" ;;
-      *)
-        echo "check-guix: FAILED login-shell-path[$mode]: $tool resolves to '${p:-nothing}', expected under $GUIX_ENVIRONMENT" >&2
-        fail=1 ;;
-    esac
+    if [ "$mode" = fhs-first ]; then
+      p=$(PATH="/bin:/usr/bin:/sbin:/usr/sbin:$PATH" bash -c "command -v $tool" 2>/dev/null | tail -n 1)
+    else
+      p=$(bash "$mode" "command -v $tool" 2>/dev/null | tail -n 1)
+    fi
+    want=$(readlink -f "$GUIX_ENVIRONMENT/bin/$tool")
+    got=
+    if [ -n "$p" ]; then
+      got=$(readlink -f "$p")
+    fi
+    if [ -n "$got" ] && [ "$got" = "$want" ]; then
+      echo "check-guix: ok tool-path[$mode] ($tool: $p)"
+    else
+      echo "check-guix: FAILED tool-path[$mode]: $tool resolves to '${got:-nothing}' (via '${p:-nothing}'), expected $want" >&2
+      fail=1
+    fi
   done
 done
 
@@ -62,6 +74,16 @@ if valgrind "${CHEZ:-chez}" --version 2>&1 | grep -q 'ERROR SUMMARY'; then
   echo "check-guix: ok valgrind-instruments-chez"
 else
   echo "check-guix: FAILED valgrind-instruments-chez: valgrind ${CHEZ:-chez} --version printed no ERROR SUMMARY" >&2
+  fail=1
+fi
+# ...and a summary alone is not enough: a wrapper that runs Chez WITHOUT
+# exec keeps the shell under Valgrind, which then prints the shell's
+# summary while Chez runs uninstrumented. $(CHEZ) must be the ELF itself.
+magic=$(head -c 4 "${CHEZ:-chez}" 2>/dev/null | od -An -tx1 | tr -d ' \n')
+if [ "$magic" = 7f454c46 ]; then
+  echo "check-guix: ok chez-is-elf"
+else
+  echo "check-guix: FAILED chez-is-elf: ${CHEZ:-chez} starts with '${magic:-nothing}', not an ELF header" >&2
   fail=1
 fi
 

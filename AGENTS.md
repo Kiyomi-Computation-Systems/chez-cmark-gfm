@@ -194,14 +194,16 @@ None is obvious from reading the code.
   `manifest.scm`'s search path does. `make check-guix` asserts that
   `valgrind $CHEZ` prints an `ERROR SUMMARY`.
 * **`guix shell --pure` does not stop a login shell from rebuilding `PATH`.**
-  `--pure` clears the environment once, at entry. A later `bash -l`, which
-  is how Claude Code's Bash tool starts its shells, re-sources
-  `~/.bash_profile` and `~/.profile`. On the maintainer's machine those put
+  `--pure` clears the environment once, at entry. A later login shell
+  (`bash -l`) re-sources `~/.bash_profile` and `~/.profile`. On the maintainer's machine those put
   `~/.guix-home/profile/bin` ahead of the environment, so `scheme` and `git`
   resolved to the host's copies while everything still passed.
-  `scripts/guix-env` uses `--container`, whose `HOME` is empty, and `make
-  check-guix` asserts the resolution from a login shell. `guix shell
-  --check` diagnoses the same thing for a `--pure` shell.
+  `scripts/guix-env` uses `--container`, whose `HOME` is empty. `make
+  check-guix` asserts that a login shell, and a `PATH` with `/bin` first,
+  both run the pinned binaries, comparing resolved paths. Do not assume you
+  know how a tool builds its shell: Claude Code's Bash tool turned out to
+  put `/bin:/usr/bin` ahead of the profile, which a `bash -l` check never
+  showed. `guix shell --check` diagnoses clobbering for a `--pure` shell.
 * **Guix creates a container's mount points under the host umask.** `HOME`
   comes out `1777`, and every directory created to hold a shared file comes
   out `0775`: `~/.ssh`, `~/.gnupg`, `/run/user/<uid>/gnupg`. ssh then
