@@ -11,11 +11,16 @@ Define a reproducible, pinned Guix environment for developing this
 repository. Its primary user is a Claude Code session: the maintainer
 launches `claude` inside the environment and works there, including
 committing, pushing, opening and merging PRs, and running the closing ritual.
+It must equally serve any contributor who does not use Claude at all: the
+same environment, entered as an ordinary interactive shell.
 
 Success means:
 
-1. One command, `scripts/guix-env claude`, starts a Claude session inside a
-   Guix container whose toolchain comes entirely from a pinned Guix revision.
+1. `scripts/guix-env` with no arguments opens an interactive shell inside a
+   Guix container whose toolchain comes entirely from a pinned Guix revision,
+   for anyone with Guix on x86_64-linux, and with or without Claude, `gh`,
+   or a signing key.
+   `scripts/guix-env claude` starts a Claude session in that same container.
 2. Inside that container every Linux make target works (`build`, `test`,
    `check-*`, `examples`, `site`, `vendor`, `test-memory`) with no argument
    such as `CHEZ=` and no manually set variable.
@@ -151,9 +156,17 @@ added when the §5.3 smoke check shows them missing, not guessed.
 
 ## 3. `scripts/guix-env [cmd…]`
 
-The single entry point. `scripts/guix-env claude` starts a session,
-`scripts/guix-env make test` runs a target, and `make check-guix` calls it,
-so the environment that is verified is the environment Claude runs in.
+The single entry point, with three uses:
+
+| Invocation | Runs | Claude shares |
+|---|---|---|
+| `scripts/guix-env` | An interactive `bash` from the manifest | No |
+| `scripts/guix-env <cmd…>` | That command, e.g. `make test` | No |
+| `scripts/guix-env claude [args…]` | The host's Claude binary, by absolute path | Yes |
+
+`make check-guix` uses the second form. So the environment it verifies is
+the one a shell user gets, and the one Claude gets minus the Claude rows of
+the table below.
 
 It runs:
 
@@ -171,8 +184,8 @@ Shares:
 
 | Need | Flags | Notes |
 |---|---|---|
-| Claude login and state | `--share=$HOME/.claude`, `--share=$HOME/.claude.json` | Read-write. See risk R1 |
-| Claude binary | `--expose` the directory of `readlink -f ~/.local/bin/claude`. Exec by absolute path with `DISABLE_AUTOUPDATER=1` | The binary is read-only inside, so the updater is disabled rather than left to fail |
+| Claude login and state (`claude` only) | `--share=$HOME/.claude`, `--share=$HOME/.claude.json` | Read-write. See risk R1 |
+| Claude binary (`claude` only) | `--expose` the directory of `readlink -f ~/.local/bin/claude`. Exec by absolute path with `DISABLE_AUTOUPDATER=1` | The binary is read-only inside, so the updater is disabled rather than left to fail |
 | git config | `--expose` every file `git config --list --show-origin` reports for this repo (global, XDG, and `include`/`includeIf` targets such as `~/.config/git/.gitconfig-kiyomi`) | The repo is at the same path inside, so `includeIf gitdir:` still matches. `~/.gitconfig` is a symlink into `/gnu/store`, which the container sees |
 | Signing, `openpgp` (the default `gpg.format`) | `--share` the socket `gpgconf --list-dirs agent-socket` names. `--expose` `~/.gnupg/pubring.kbx` and `trustdb.gpg` | Private keys stay with the host agent, and pinentry appears on the host desktop. See R3 |
 | Signing, `ssh` | `--expose` the `.pub` file `user.signingkey` names | The agent (next row) signs |
@@ -185,9 +198,20 @@ Behaviour:
 - **Refuses to nest.** If `$GUIX_ENVIRONMENT` is already set it exits
   non-zero naming the variable. Guix is not in the manifest, so nesting
   would fail obscurely otherwise.
-- **An optional share whose source does not exist is skipped, not an error.**
-  A contributor without `gh` or a signing key can still run tests. A missing
-  `claude` binary is an error only when the command is `claude`.
+- **Claude's rows apply only when the command is `claude`.** A shell or a
+  `make` run never mounts the user's Claude login. That keeps the shell mode
+  from depending on, or exposing, anything Claude-specific.
+- **Every other share is optional: skipped when its source does not exist,
+  never an error.** A contributor without `gh`, a signing key or an SSH
+  agent still gets a working shell and a working `make test`; they cannot
+  push from inside, and the docs say so. A missing `claude` binary is an
+  error only in `claude` mode, naming the path it looked for.
+- **No arguments means `bash`.** `HOME` is empty, so the user's aliases and
+  prompt are absent, and the container holds no editor: files are edited on
+  the host (the repo is the same directory inside and out) and the shell is
+  for running things. Both are documented rather than worked around, because
+  importing the user's rc files is exactly what the container exists to
+  prevent.
 - **Arguments pass through verbatim** after `--`.
 - POSIX `sh`, so it runs from the host before any environment exists.
 
@@ -295,9 +319,12 @@ rerun.
 
 ## 7. Documentation
 
-- **`docs/building.md`**: a "Guix" section covering entering the
-  environment, running Claude in it, `make check-guix`, bumping the pin, the
-  §5.3 checklist, and the x86_64-only limit. It notes that bare `guix shell`
+- **`docs/building.md`**: a "Guix" section, written for a contributor who
+  has never heard of Claude. It covers entering the shell
+  (`scripts/guix-env`), what is and is not visible inside, `make
+  check-guix`, bumping the pin and the x86_64-only limit, then a
+  "Running Claude Code in the environment" subsection with the §5.3
+  checklist. It notes that bare `guix shell`
   (which auto-loads `manifest.scm`) bypasses `channels.scm` and is the
   unpinned path.
 - **`CONTRIBUTING.md`**: one line pointing Guix users at that section.
