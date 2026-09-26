@@ -22,11 +22,11 @@
 ;; aborts looking for chez.boot.)
 ;;
 ;; CHEZ_CMARK_GFM_LIBS -- discovery never searches a Guix profile
-;; (ADR-0016). Under --emulate-fhs it does find the pair through /usr/lib,
-;; but only this override names the store path, and without FHS emulation
-;; (plain `guix shell`) nothing else finds it at all. The pattern matches
-;; only the versioned files: the unversioned symlinks would make four
-;; entries, which parse-library-override rejects as invalid-override.
+;; (ADR-0016). Under scripts/guix-env's --emulate-fhs it finds the pair at
+;; /usr/lib, but only this names the store path, and plain `guix shell` has
+;; no /usr/lib at all. The pattern matches only the versioned files: the
+;; unversioned symlinks would make four entries, which
+;; parse-library-override rejects as invalid-override.
 (define chez-cmark-gfm-dev-env
   (package
     (name "chez-cmark-gfm-dev-env")
@@ -60,5 +60,4 @@ profile it is installed in.")
      "bash" "coreutils" "make" "git" "grep" "sed" "gawk" "findutils"
      "diffutils" "nss-certs"
      "cmake" "gcc-toolchain"            ; make vendor
-     "valgrind"                         ; make test-memory
-     "openssh" "github-cli" "gnupg"))))  ; push, PRs, commit signing
+     "valgrind"))))                     ; make test-memory

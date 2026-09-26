@@ -1,20 +1,17 @@
 #!/bin/sh
-# The pinned Guix development container (ADR-0018; docs/building.md,
-# "Guix development environment").
+# The pinned Guix development container (ADR-0018, ADR-0019;
+# docs/building.md, "Guix development environment").
 #
-#   scripts/guix-env                  an interactive bash
-#   scripts/guix-env CMD [ARG...]     run CMD, e.g. `make test`
-#   scripts/guix-env claude [ARG...]  Claude Code, with its login shared in
+#   scripts/guix-env                an interactive bash
+#   scripts/guix-env CMD [ARG...]   run CMD, e.g. `make test`
 #
-# Inside, every command starts through scripts/guix-env-init.
+# The container holds the toolchain and nothing of yours: no git config,
+# no agents, no tokens. Edit, commit and push on the host (an agent
+# included); send builds and tests through here.
 #
 # GUIX_ENV_DRY_RUN=1 prints `cd <dir>` and the guix command, one argument
 # per line, instead of running it: tests/guix-env-launcher.sh asserts on
-# that. GUIX_ENV_GPG_AGENT_SOCKET overrides the gpgconf socket lookup.
-#
-# Every share except the container's own is optional and skipped when its
-# source is missing: guix shell refuses a --share whose source does not
-# exist, and a contributor without gh or a signing key still needs a shell.
+# that.
 set -eu
 
 die() { printf 'guix-env: %s\n' "$*" >&2; exit 2; }
@@ -30,145 +27,13 @@ if [ $# -eq 0 ]; then
   set -- bash
 fi
 
-claude_mode=
-if [ "$1" = claude ]; then
-  claude_mode=1
-  claude_link=$(command -v claude || true)
-  if [ -z "$claude_link" ]; then
-    die "claude: no Claude Code binary on PATH"
-  fi
-  claude_bin=$(readlink -f -- "$claude_link")
-  if [ ! -x "$claude_bin" ]; then
-    die "claude: $claude_link does not resolve to an executable"
-  fi
-  shift
-  set -- "$claude_bin" "$@"
-fi
-
-# POSIX sh has no arrays: flags are appended after the user's command and
-# rotated in front of it at the end.
-nuser=$#
-
-set -- "$@" --container --network --emulate-fhs \
-  '--preserve=^(TERM|COLORTERM|LANG)$'
-
-if [ -n "$claude_mode" ]; then
-  mkdir -p "$HOME/.claude"
-  set -- "$@" "--share=$HOME/.claude" \
-    "--expose=$(dirname -- "$claude_bin")" \
-    '--preserve=^DISABLE_AUTOUPDATER$'
-  if [ -f "$HOME/.claude.json" ]; then
-    set -- "$@" "--share=$HOME/.claude.json"
-  fi
-  # The binary is read-only inside; stop the updater rather than let it fail.
-  DISABLE_AUTOUPDATER=1
-  export DISABLE_AUTOUPDATER
-fi
-
-# host_config origins | host_config KEY
-# Reads git config from the global and system scopes only. The repo's own
-# config is writable from inside the container, so nothing in it may choose
-# what the next launch mounts. -z output is NUL-framed and unquoted,
-# `scope NUL origin NUL key LF value NUL`, so a multi-line value cannot forge
-# an origin, and non-ASCII paths arrive as they are.
-host_config() {
-  git config -z --list --show-origin --show-scope 2>/dev/null \
-    | tr '\n\000' '\001\n' \
-    | awk -v want="$1" '
-        NR % 3 == 1 { scope = $0 }
-        NR % 3 == 2 { origin = $0 }
-        NR % 3 == 0 && (scope == "global" || scope == "system") {
-          if (want == "origins") {
-            if (origin ~ /^file:\//) print substr(origin, 6)
-          } else {
-            i = index($0, "\001")
-            if (i && substr($0, 1, i - 1) == want) value = substr($0, i + 1)
-          }
-        }
-        END { if (want != "origins" && value != "") print value }' \
-    | sort -u
-}
-
-# Every global or system git config file, includes too: an includeIf keyed
-# on this repo's path still matches, because the repo keeps its path inside.
-origins=$(host_config origins)
-while IFS= read -r f; do
-  if [ -n "$f" ] && [ -e "$f" ]; then
-    set -- "$@" "--expose=$f"
-  fi
-done <<EOF
-$origins
-EOF
-
-# is_public_key FILE: its first line is an OpenSSH public key.
-is_public_key() {
-  head -n 1 "$1" 2>/dev/null | grep -Eq '^(ssh-|ecdsa-|sk-)'
-}
-
-# Signing. Private keys stay with the host agent; only public material and
-# the agent socket enter.
-format=$(host_config gpg.format)
-case "${format:-openpgp}" in
-  openpgp)
-    sock=${GUIX_ENV_GPG_AGENT_SOCKET:-$(gpgconf --list-dirs agent-socket 2>/dev/null || true)}
-    if [ -n "$sock" ] && [ -e "$sock" ]; then
-      set -- "$@" "--share=$sock"
-    fi
-    for f in "$HOME/.gnupg/pubring.kbx" "$HOME/.gnupg/trustdb.gpg"; do
-      if [ -f "$f" ]; then
-        set -- "$@" "--expose=$f"
-      fi
-    done
-    ;;
-  ssh)
-    # git allows user.signingkey to name the private key itself: mount a
-    # file only if it is a public key, else its .pub, else nothing.
-    key=$(host_config user.signingkey)
-    case "$key" in
-      "~/"*) key="$HOME/${key#"~/"}" ;;
-    esac
-    if [ -n "$key" ] && is_public_key "$key"; then
-      set -- "$@" "--expose=$key"
-    elif [ -n "$key" ] && is_public_key "$key.pub"; then
-      set -- "$@" "--expose=$key.pub"
-    fi
-    ;;
-esac
-
-if [ -n "${SSH_AUTH_SOCK:-}" ] && [ -e "$SSH_AUTH_SOCK" ]; then
-  set -- "$@" "--share=$SSH_AUTH_SOCK" '--preserve=^SSH_AUTH_SOCK$'
-fi
-# known_hosts only. ~/.ssh/config stays out: personal configs name host-only
-# things (IdentityFile private keys, which never enter; other agents'
-# sockets), and with them ssh inside offers no key from the shared agent.
-if [ -f "$HOME/.ssh/known_hosts" ]; then
-  set -- "$@" "--expose=$HOME/.ssh/known_hosts"
-fi
-
-# Read-only: GH_TOKEN (below) carries the credential, and a writable config
-# would let the container plant gh aliases that the host then runs.
-if [ -d "$HOME/.config/gh" ]; then
-  set -- "$@" "--expose=$HOME/.config/gh"
-fi
-# gh keeps its token in the desktop keyring, which the container cannot
-# reach over D-Bus. Pass it through the environment by name, so it never
-# appears on a command line.
-if gh_token=$(gh auth token 2>/dev/null) && [ -n "$gh_token" ]; then
-  GH_TOKEN=$gh_token
-  export GH_TOKEN
-  set -- "$@" '--preserve=^GH_TOKEN$'
-fi
-
-# guix-env-init runs first inside, then execs the command.
-set -- "$@" -- sh scripts/guix-env-init
-i=0
-while [ "$i" -lt "$nuser" ]; do
-  set -- "$@" "$1"
-  shift
-  i=$((i + 1))
-done
-
-set -- time-machine -C channels.scm -- shell -m manifest.scm "$@"
+# --network: `make deps` fetches the vendor/ submodules.
+# --emulate-fhs: puts the pinned libraries at /usr/lib, the only place
+# discovery (ADR-0016) finds them when CHEZ_CMARK_GFM_LIBS is unset, which
+# is how `make check-install` probes the install contract.
+set -- time-machine -C channels.scm -- shell -m manifest.scm \
+  --container --network --emulate-fhs '--preserve=^(TERM|COLORTERM|LANG)$' \
+  -- "$@"
 
 if [ -n "${GUIX_ENV_DRY_RUN:-}" ]; then
   printf 'cd %s\n' "$PWD"
