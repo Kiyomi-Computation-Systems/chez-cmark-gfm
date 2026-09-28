@@ -169,6 +169,15 @@ assertion the corrected prediction actually implies.
 
 ### Mutation C — free the buffer before copying (NOT covered by a named test)
 
+> **Correction, 2026-09-28.** The Nano-allocator explanation below is wrong.
+> `make test-memory` ran its suites under `sh -c`, and SIP stripped
+> `DYLD_INSERT_LIBRARIES` from `/bin/sh`, so ASan was never loaded in the
+> `make test-memory` run below. Its bare `Trace/BPT trap` was the plain
+> allocator. The "additional diagnostic" launched `chez` directly, which is
+> what loaded ASan; `MallocNanoZone=0` made no difference. Re-measured, with
+> Mutation C re-applied to the current tree, in
+> `memory-gate-mutation-log.md`.
+
 Run fresh today. Backed up `src/cmark/gfm/private/scope.sls`. In
 `call-with-render-buffer`, the copy-thunk changed from:
 
@@ -718,6 +727,12 @@ Closing this would mean either adding `MallocNanoZone=0` to the `test-memory`
 recipe on Darwin so ASan's own interposed `free()` wins the race and reports
 cleanly, or accepting that on this platform, this class of defect is only ever
 caught by exit code, never by name.
+
+> **Correction, 2026-09-28.** There was no race: ASan never loaded through
+> `make test-memory` (see the correction under Mutation C above). With the
+> preload fixed, this mutation fails `make test-memory` with ASan's
+> `attempting double-free` report, with or without `MallocNanoZone=0`, which
+> has since been removed.
 
 ## Final clean-tree confirmation
 

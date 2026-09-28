@@ -24,7 +24,9 @@ name: CI
 #   3. docs/installing.md's macOS/ARM64 row, whose Chez version was asserted
 #      against the runner. That row now records what the maintainer runs
 #      locally; docs/installing.md says so.
-# Run `make test check-install test-memory` on macOS before tagging a release.
+# Run `make test check-install check-memory-gate test-memory` on macOS before
+# tagging a release. check-memory-gate is what shows that ASan run is live:
+# until 2026-09-28 it never was (ADR-0003's amendment of that date).
 # Do not "restore coverage" by adding the job back on a schedule -- a nightly
 # macOS run costs the same 10x and reports it a day late.
 #
@@ -416,6 +418,19 @@ jobs:
             exit 1
           fi
           echo "no compiled object or shared library outside vendor/ and build/vendor: nothing of ours compiled C"
+
+      # The Memory step below proves nothing unless it can fail. This plants a
+      # one-byte heap overrun (by a Scheme store, then by libc's memset) and a
+      # definite leak, runs the real test-memory recipe on each, and requires
+      # it to FAIL with Valgrind's own report of that defect. It also plants a
+      # possibly-lost block and requires the gate not to fail without printing
+      # it. It runs first because it is the precondition for reading the next
+      # step's green as evidence. The macOS arm's ASan preload was vacuous for
+      # every release up to 2.0.0, and green throughout (ADR-0003, amended
+      # 2026-09-28).
+      - name: Verify the memory gate fails on planted defects (main and tags only)
+        if: env.RUN_MEMORY == 'true'
+        run: make check-memory-gate
 
       # Valgrind needs no instrumentation of Chez or cmark and is the only tool
       # in this project that can substantiate a leak claim. Failure here blocks
