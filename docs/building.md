@@ -169,19 +169,28 @@ here instruments and so add no coverage — under whichever instrumentation
 the platform supports:
 
 - **Linux**: Valgrind, `--leak-check=full --show-leak-kinds=definite
-  --error-exitcode=9`. A leak is a hard failure. In CI this runs on `main`
-  and on `v*` tags, not on every pull request — it is 10–50x native, and
-  the suites it re-runs have already run uninstrumented under `make test`.
-  Locally it is unconditional; run it before pushing anything that touches
-  native allocation.
-- **macOS**: an AddressSanitizer preload, with leak detection explicitly
-  off (`ASAN_OPTIONS=detect_leaks=0`). LeakSanitizer does not exist on
-  macOS/ARM64, so this run catches corruption and use-after-free but
-  **supports no leak claim** — that has to come from the Linux row (ADR-0003).
-  The target refuses to run uninstrumented rather than skip quietly: if it
-  can't find `libclang_rt.asan_osx_dynamic.dylib` under Xcode's clang
-  toolchain, it exits with an error naming exactly that instead of reporting
-  a false pass.
+  --errors-for-leak-kinds=definite --error-exitcode=9`, run on `$(CHEZ)`
+  directly. Any error Valgrind reports, such as an invalid read or write,
+  is a hard failure, and so is a definite leak. A "possibly lost" block
+  shows in the leak summary but does not fail the run: the gate fails only
+  on the leak kinds it prints. In CI this runs on `main` and on `v*` tags,
+  not on every pull request — it is 10–50x native, and the suites it
+  re-runs have already run uninstrumented under `make test`. Locally it is
+  unconditional; run it before pushing anything that touches native
+  allocation.
+- **macOS**: an AddressSanitizer preload, set on each `chez` command itself,
+  with leak detection explicitly off (`ASAN_OPTIONS=detect_leaks=0`). ASan
+  sees only what passes through libc or the allocator: overruns inside
+  `memset` or `memcpy`, and double frees. Chez's generated code is not
+  instrumented, so a `foreign-set!` past a block or a `foreign-ref` of freed
+  memory goes unseen here; Valgrind catches both. LeakSanitizer does not
+  exist on macOS/ARM64, so this run **supports no leak claim** — that has
+  to come from the Linux row (ADR-0003). The target refuses to run
+  uninstrumented rather than skip quietly: if it can't find
+  `libclang_rt.asan_osx_dynamic.dylib` under Xcode's clang toolchain, it
+  exits with an error naming exactly that instead of reporting a false
+  pass. Until 2026-09-28 the preload never reached Chez at all: the loop
+  ran under `sh -c`, and macOS strips `DYLD_*` variables from `/bin/sh`.
 
 `tests/test-ast-differential.sps` and `tests/test-sxml-differential.sps`
 stay **in**, unlike `test-differential.sps`, even though both also spawn
@@ -191,6 +200,25 @@ allocates and frees native cmark objects inside the very Chez process the
 instrumentation is watching. That in-process work is what would be lost by
 excluding them, and for `test-sxml-differential.sps` in particular it is
 the single largest block of instrumented coverage the memory target gets.
+
+## make check-memory-gate
+
+`make test-memory` is evidence only if it can fail. This target plants
+defects the platform's tool must catch (`tests/memory-gate-sabotage.sps`,
+one per run) and runs the real `test-memory` recipe on each. Per defect it
+requires three things: the planted program runs clean with no tool, the
+gate exits non-zero, and the log carries the tool's own report of that
+defect. A failure for another reason — no Valgrind, no ASan runtime, a
+build error — does not count.
+
+| Platform | Planted |
+|---|---|
+| Linux | a one-byte heap overrun by a Scheme store, the same by libc's `memset`, and a 777-byte definite leak. Also a possibly-lost block, on which the gate may pass but must not fail without printing it. |
+| macOS | the `memset` overrun only: ASan cannot see Scheme stores, and this arm makes no leak claim. |
+
+CI runs it before `test-memory`, on the same refs. Nothing runs it on
+macOS but you: run it after touching either `test-memory` recipe, and
+before a release tag.
 
 ## make check-purity
 

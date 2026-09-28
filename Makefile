@@ -78,7 +78,7 @@ MEMORY_TESTS := $(filter-out tests/test-differential.sps,$(TESTS))
 # continuation handling -- a backslash-wrapped .PHONY hides every
 # continuation-line target from that check and adds a bogus `\`
 # pseudo-target. Found and fixed once already, in commit 3f5552c.
-.PHONY: all build deps check-pins check-purity check-help check-install check-reference check-site examples site dev help install uninstall test test-memory vendor clean deps-info check-guix
+.PHONY: all build deps check-pins check-purity check-help check-install check-memory-gate check-reference check-site examples site dev help install uninstall test test-memory vendor clean deps-info check-guix
 
 help: ## Show this help message
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_.-]+:.*?## / \
@@ -303,33 +303,130 @@ test: build deps check-pins ## Run every tests/test-*.sps suite
 
 test-memory: build deps check-pins ## Run the suites under Valgrind (Linux) or ASan (macOS)
 ifeq ($(UNAME_S),Linux)
+# Valgrind checks the command it is handed and does not follow an exec, so
+# nothing may sit between `valgrind` and $(CHEZ): a wrapper would be checked
+# instead of Chez. --errors-for-leak-kinds must name no kind that
+# --show-leak-kinds hides: its default adds "possible", which fails the run
+# with no loss record in the log. `make check-memory-gate` holds both.
 	@for t in $(MEMORY_TESTS); do \
 	  CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) CMARK_CLI=$(CMARK_CLI) \
 	    CMARK_STRESS_ITERATIONS=2 valgrind --error-exitcode=9 \
 	    --leak-check=full --show-leak-kinds=definite \
+	    --errors-for-leak-kinds=definite \
 	    $(CHEZ) --program $$t || exit 1; \
 	done
 else
 	@echo "macOS: ASan preload only; LeakSanitizer is unsupported on arm64."
 	@echo "Leak claims must come from Linux CI (ADR-0003)."
-# MallocNanoZone=0: macOS's Nano allocator validates a freed block's own
-# metadata and can SIGTRAP on a double-free before ASan's interposed free()
-# gets a chance to run its check -- an unattributed crash (bare "Trace/BPT
-# trap") instead of the diagnostic this target exists to provide. Observed
-# on this exact recipe; see stage-2-mutation-log.md, Mutation C.
-	asan_lib="$$(command ls $$(dirname $$(xcrun --find clang))/../lib/clang/*/lib/darwin/libclang_rt.asan_osx_dynamic.dylib 2>/dev/null | head -1)"; \
+# DYLD_INSERT_LIBRARIES goes on the Chez command ITSELF, with nothing in
+# between. Two mechanisms each drop it silently (measured 2026-09-28):
+#   - macOS purges every DYLD_* variable when it launches a SIP-protected
+#     binary. /bin/sh is one, and until 2026-09-28 this arm ran its loop
+#     under `sh -c`, so no suite ever loaded ASan.
+#   - ASan's Darwin runtime removes itself from DYLD_INSERT_LIBRARIES in
+#     whatever process it loads into (its strip_env default), so a wrapper
+#     such as timeout(1) gets ASan and the Chez it starts does not.
+# `make check-memory-gate` plants a memset overrun and requires this arm to
+# fail on it.
+	@asan_lib="$$(command ls $$(dirname $$(xcrun --find clang))/../lib/clang/*/lib/darwin/libclang_rt.asan_osx_dynamic.dylib 2>/dev/null | head -1)"; \
 	  if [ -z "$$asan_lib" ]; then \
 	    echo "error: no libclang_rt.asan_osx_dynamic.dylib found under $$(dirname $$(xcrun --find clang))/../lib/clang/*/lib/darwin -- refusing to run test-memory uninstrumented" >&2; \
 	    exit 1; \
 	  fi; \
-	  CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) \
-	  CMARK_CLI=$(CMARK_CLI) \
-	  CMARK_STRESS_ITERATIONS=2 \
-	  DYLD_INSERT_LIBRARIES="$$asan_lib" \
-	  ASAN_OPTIONS=detect_leaks=0 \
-	  MallocNanoZone=0 \
-	  sh -c 'for t in $(MEMORY_TESTS); do $(CHEZ) --program $$t || exit 1; done'
+	  echo "test-memory: ASan runtime $$asan_lib"; \
+	  for t in $(MEMORY_TESTS); do \
+	    CHEZSCHEMELIBDIRS=$(CHEZ_LIBDIRS) \
+	    CMARK_CLI=$(CMARK_CLI) \
+	    CMARK_STRESS_ITERATIONS=2 \
+	    DYLD_INSERT_LIBRARIES="$$asan_lib" \
+	    ASAN_OPTIONS=detect_leaks=0 \
+	      $(CHEZ) --program $$t || exit 1; \
+	  done
 endif
+
+# A memory gate nobody has watched fail is a comment. Until 2026-09-28 the
+# macOS arm above never loaded ASan into a single suite, and every run was
+# green (ADR-0003's 2026-09-28 amendment). This target plants each defect the
+# platform's tool must catch (tests/memory-gate-sabotage.sps says which, and
+# why) and runs the REAL test-memory recipe on it through make, so it judges
+# the recipe CI runs, not a copy of its command line. The design is
+# chez-libuv's (its commit 4f63d56), where both arms had gone vacuous.
+#
+# For each defect, three things must hold:
+#   1. the planted program exits 0 and prints its "planted" line with NO
+#      memory tool, or a red gate would prove nothing about the tool;
+#   2. `make test-memory` on it exits non-zero;
+#   3. its log carries the tool's own report of THAT defect (the markers
+#      below, measured). A gate that fails for another reason -- no valgrind,
+#      no ASan runtime, a build error -- is not evidence the tool is looking.
+#
+# possible-leak is the exception: not a defect the gate must catch, but a
+# block Valgrind counts as "possibly lost". Valgrind fails the run on the
+# kinds --errors-for-leak-kinds names and prints records only for those
+# --show-leak-kinds names. When the two differ, this block fails the gate
+# with nothing in the log but a summary total. The gate may pass on it, or
+# fail and show its loss record; it must not fail without one.
+MEMORY_SABOTAGE := tests/memory-gate-sabotage.sps
+ifeq ($(UNAME_S),Linux)
+  MEMORY_SABOTAGE_MODES := store-overrun libc-overrun leak possible-leak
+else
+  MEMORY_SABOTAGE_MODES := libc-overrun
+endif
+
+check-memory-gate: ## Verify test-memory FAILS on planted memory defects, and only with the tool's report
+	@mkdir -p $(BUILD_DIR); fail=0; ran=0; \
+	for m in $(MEMORY_SABOTAGE_MODES); do \
+	  ran=$$((ran + 1)); \
+	  case "$(UNAME_S):$$m" in \
+	    Linux:store-overrun) marker="0 bytes after a block of size 23 alloc'd" ;; \
+	    Linux:libc-overrun)  marker="0 bytes after a block of size 29 alloc'd" ;; \
+	    Linux:leak)          marker="777 bytes in 1 blocks are definitely lost" ;; \
+	    Linux:possible-leak) marker="possibly lost: 555 bytes in 1 blocks" ;; \
+	    *:libc-overrun)      marker="0 bytes after 29-byte region" ;; \
+	    *) echo "check-memory-gate: no expected report for $$m on $(UNAME_S)" >&2; exit 1 ;; \
+	  esac; \
+	  log=$(BUILD_DIR)/check-memory-gate-$$m.log; \
+	  echo "=== check-memory-gate: $$m ==="; \
+	  plain=$$(CHEZ_CMARK_GFM_SABOTAGE=$$m $(CHEZ) --program $(MEMORY_SABOTAGE) 2>&1); rc=$$?; \
+	  if [ $$rc -ne 0 ] || ! printf '%s\n' "$$plain" | grep -qx "memory-gate-sabotage: planted $$m"; then \
+	    echo "SABOTAGE NOT CLEAN: the $$m program exited $$rc with no memory tool, or never" >&2; \
+	    echo "printed its planted line, so a red gate would prove nothing. Its output:" >&2; \
+	    printf '%s\n' "$$plain" >&2; fail=1; continue; \
+	  fi; \
+	  CHEZ_CMARK_GFM_SABOTAGE=$$m $(MAKE) --no-print-directory test-memory \
+	    MEMORY_TESTS=$(MEMORY_SABOTAGE) > $$log 2>&1; rc=$$?; \
+	  if [ $$m = possible-leak ]; then \
+	    if ! grep -qF "$$marker" $$log; then \
+	      echo "check-memory-gate: Valgrind never counted the planted block as possibly lost" >&2; \
+	      echo "(no \"$$marker\" in $$log), so this mode proves nothing. Tail:" >&2; \
+	      tail -n 30 $$log >&2; fail=1; \
+	    elif [ $$rc -ne 0 ] && ! grep -qF "555 bytes in 1 blocks are possibly lost" $$log; then \
+	      echo "GATE RED WITHOUT A REPORT: make test-memory failed on a possibly-lost block" >&2; \
+	      echo "and printed no loss record for it: --errors-for-leak-kinds names a kind" >&2; \
+	      echo "that --show-leak-kinds hides. Tail of $$log:" >&2; \
+	      tail -n 30 $$log >&2; fail=1; \
+	    else \
+	      echo "gate consistent on $$m: exit $$rc, $$marker"; \
+	    fi; \
+	  elif [ $$rc -eq 0 ]; then \
+	    echo "MEMORY GATE VACUOUS: make test-memory exited 0 with the $$m defect planted;" >&2; \
+	    echo "the memory tool is not checking the Chez process. Tail of $$log:" >&2; \
+	    tail -n 30 $$log >&2; fail=1; \
+	  elif ! grep -qF "$$marker" $$log; then \
+	    echo "check-memory-gate: make test-memory failed, but not on the planted $$m" >&2; \
+	    echo "defect: no \"$$marker\" in $$log. Tail:" >&2; \
+	    tail -n 30 $$log >&2; fail=1; \
+	  else \
+	    echo "gate caught $$m: $$marker"; \
+	  fi; \
+	done; \
+	if [ $$ran -eq 0 ]; then \
+	  echo "check-memory-gate: MEMORY_SABOTAGE_MODES is empty; nothing was planted." >&2; \
+	  fail=1; \
+	fi; \
+	if [ $$fail -eq 0 ]; then echo "MEMORY GATE CAN FAIL"; \
+	else echo "MEMORY GATE CHECK FAILED"; fi; \
+	exit $$fail
 
 clean: ## Remove build/ and tests/tmp
 	rm -rf $(BUILD_DIR) tests/tmp

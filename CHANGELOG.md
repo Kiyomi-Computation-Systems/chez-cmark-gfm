@@ -29,6 +29,32 @@ All notable changes to this project are documented here. This project follows
   `make check-site` asserts nav completeness, anchor resolution, no `.md`
   leak, and no `<pre>` reflow. `.github/workflows/pages.yml` deploys on a
   `v*` tag.
+- `make check-memory-gate`, which proves `make test-memory` can fail. It
+  plants memory defects (`tests/memory-gate-sabotage.sps`) and requires the
+  real recipe to fail on each, with the tool's own report of that defect in
+  the log. Linux plants a one-byte overrun by a Scheme store, the same by
+  libc's `memset`, and a definite leak; macOS plants the `memset` overrun.
+  CI runs it before the Valgrind step. See
+  [docs/building.md](docs/building.md#make-check-memory-gate).
+
+### Fixed
+
+- **`make test-memory` on macOS never loaded AddressSanitizer.** It set
+  `DYLD_INSERT_LIBRARIES` on `sh -c '…'`, and macOS drops `DYLD_*`
+  variables when it launches a SIP-protected binary such as `/bin/sh`. So
+  every suite ran without ASan, in every release up to 2.0.0, and the run
+  was green. 1.0.0's "Verification status" says ASan ran clean on
+  macOS/ARM64; it had not run. The preload is now set on each `chez`
+  command, and all 21 memory suites pass with ASan live. The Linux arm ran
+  Valgrind on Chez directly at every tag, so Linux leak evidence is
+  unaffected. The recipe's
+  `MallocNanoZone=0` is removed: the reason recorded for it was a misreading
+  of this same defect. See ADR-0003's 2026-09-28 amendment.
+- **Valgrind could fail `make test-memory` without saying why.** The Linux
+  arm failed on "possibly lost" blocks but printed only "definitely lost"
+  ones, so such a block would have turned the run red with only a summary
+  total in the log. It now fails only on definite leaks, the kind it prints.
+  No suite produced a possibly-lost block, so no result changes.
 
 ## [2.0.0] — 2026-08-22
 

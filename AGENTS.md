@@ -98,6 +98,13 @@ area.
   passing CI job shows a check *ran*, not that it works.
 * Point `CHEZ` at the real binary: a symlink breaks boot-file lookup, and a
   wrapper script hides Chez from Valgrind. `make check-guix` guards this.
+* A memory tool checks only the process it is handed. macOS drops
+  `DYLD_INSERT_LIBRARIES` at any SIP-protected binary (`/bin/sh`,
+  `/usr/bin/env`), and ASan deletes it from the environment of whatever
+  process it loads into, so a wrapper's child never gets it. The ASan arm's
+  `sh -c` never loaded ASan from v0.1.0 to v2.0.0. Set the preload on the
+  `chez` command itself, and keep wrappers outside Valgrind. Run
+  `make check-memory-gate` whenever you touch `test-memory`.
 * `guix shell --pure` does not stop a login shell from rebuilding `PATH`;
   `scripts/guix-env` uses `--container`, guarded by `make check-guix`. Do not
   assume you know how a tool builds its shell.

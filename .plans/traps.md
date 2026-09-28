@@ -152,6 +152,28 @@ it should not be a comment.
   single `ERROR SUMMARY`. Point `CHEZ` at the real binary, which is what
   `manifest.scm`'s search path does. `make check-guix` asserts that
   `valgrind $CHEZ` prints an `ERROR SUMMARY`.
+* **The macOS memory gate never loaded ASan, and nobody had watched it
+  fail.** From its first commit the ASan arm of `make test-memory` set
+  `DYLD_INSERT_LIBRARIES` on `sh -c 'for t in …; do chez …; done'`. `/bin/sh`
+  is SIP-protected, and macOS purges every `DYLD_*` variable when it launches
+  a protected binary, so no suite ever ran under ASan, from v0.1.0 to v2.0.0.
+  A planted `memset` overrun exited 0 through the recipe. The spike had
+  checked that `chez` was not SIP-restricted and ran it directly, which was
+  live; the recipe then put `/bin/sh` in between. Stage 2's Mutation C then
+  misread the symptom. A double free crashed `make test-memory` with a bare
+  `Trace/BPT trap`, a manual run that launched `chez` directly *and* set
+  `MallocNanoZone=0` produced ASan's report, and the report was credited to
+  the variable. The trap was the plain allocator, and the variable changed
+  nothing. ASan has a second way to lose the preload: its `strip_env`
+  default removes it from whatever process it loads into, so under a
+  wrapper such as `timeout(1)` it is the wrapper that gets ASan. The same
+  trap caught a probe while this was being fixed: a nested `/usr/bin/env`
+  is SIP-protected too. Found through the identical defect in chez-libuv.
+  `make check-memory-gate` now plants defects and requires the real recipe
+  to fail on each, with the tool's own report in the log (ADR-0003's
+  2026-09-28 amendment, `.plans/memory-gate-mutation-log.md`). The
+  witness for a live ASan run is its `verbosity=1` banner. Speed is no
+  witness: a live run takes about as long as `make test`.
 * **`guix shell --pure` does not stop a login shell from rebuilding `PATH`.**
   `--pure` clears the environment once, at entry. A later login shell
   (`bash -l`) re-sources `~/.bash_profile` and `~/.profile`. On the maintainer's machine those put
