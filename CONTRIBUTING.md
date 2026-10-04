@@ -54,6 +54,11 @@ A PR must keep these green — they are what CI runs:
   ```bash
   gh workflow run ci.yml --ref your-branch -f run_memory=true
   ```
+- `make check-memory-gate` — `make test-memory` still fails on planted
+  memory defects, with the tool's own report. CI runs it before
+  `test-memory`, on the same refs. Run it yourself, on macOS too, after
+  touching either `test-memory` recipe: until 2026-09-28 the macOS one never
+  loaded ASan, and stayed green.
 - **Tests accompany code changes.** A behaviour change without a test that
   fails against the old behaviour will be asked for one.
 - Every new suite ends with its own `(exit …)` — SRFI-64 does not set a

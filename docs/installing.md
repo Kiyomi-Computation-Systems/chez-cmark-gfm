@@ -80,10 +80,13 @@ rather than letting the claim go stale. There is no such step for the macOS
 row any more: GitHub bills macOS runners at ten times the Linux rate, and
 that job re-ran, minutes later, what the maintainer had just run on the
 machine the change was written on. The macOS row now records `make test`,
-`make check-install` and `make test-memory` run by hand before a release
-tag, and its Chez version is maintained by hand with them — treat it as a
-report, not as a gate. `.github/workflows/ci.yml`'s header names exactly
-what stopped being checked.
+`make check-install`, `make check-memory-gate` and `make test-memory` run by
+hand before a release tag, and its Chez version is maintained by hand with
+them — treat it as a report, not as a gate. Its ASan half was empty for
+every release up to 2.0.0: the preload never reached Chez (ADR-0003,
+amended 2026-09-28). `make check-memory-gate` is what shows a run is
+live. `.github/workflows/ci.yml`'s header names exactly what stopped being
+checked.
 
 ## With Akku
 
