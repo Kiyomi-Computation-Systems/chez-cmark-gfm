@@ -96,25 +96,34 @@ CI installs it from Akku's own release tarball rather than a system
 package (the `install akku` step in
 [ci.yml](../.github/workflows/ci.yml)).
 
-`Akku.manifest` declares the package's name, version, license, homepage, and
-its development-only dependencies; `Akku.lock` is committed. It names no
-libraries — Akku infers those from the file tree — and carries no `scripts`
-clause, because there is nothing to build (ADR-0017).
-
-Run from a clone: `akku install` reads `Akku.manifest` out of the current
-directory rather than resolving a package name. This package is not
-published to Akku's own index, so that clone-and-install form is the only
-installation path anything here verifies.
+chez-cmark-gfm is on [Akku's index](https://akkuscm.org/packages/chez-cmark-gfm/).
+From your own project's directory:
 
 ```sh
-akku install
+akku update
+akku install chez-cmark-gfm
 . .akku/bin/activate
 ```
 
-puts `src/cmark/**.sls` under `.akku/lib/` and sets `CHEZSCHEMELIBDIRS`;
-`(cmark gfm)` then finds the system libcmark-gfm on its own, with nothing
-else set and no compiler involved. That is the release's exit criterion,
-and CI's `akku-install` job is what proves it.
+`akku install chez-cmark-gfm` adds `("chez-cmark-gfm" "^2.0.0")` to your
+`Akku.manifest`'s `depends`, locks it, and puts the twelve `(cmark gfm …)`
+libraries under `.akku/lib/`. Nothing else of this package lands there: Akku
+skips its test libraries, and `.akkuignore` keeps out `site/`, the docs
+generator. `. .akku/bin/activate` sets `CHEZSCHEMELIBDIRS`, and `(cmark gfm)`
+then finds the system libcmark-gfm on its own, with nothing else set and no
+compiler involved. The package has no runtime dependencies and no `scripts`
+clause, because there is nothing to build (ADR-0017).
+
+`make check-akku` installs the working tree this way, as a dependency of a
+throwaway project, and fails unless exactly `src/`'s libraries land.
+
+### Developing this package
+
+`akku install` run in a clone reads this package's own `Akku.manifest` and
+installs it as the project being developed, not as a dependency: `.akku/lib/`
+then also holds the test suite's helper libraries and the `depends/dev`
+packages (chez-srfi, wak-sxml-tools, and what they need). CI's `akku-install` job does this, and
+calls into `(cmark gfm)` with nothing set in the environment.
 
 ## From a clone
 
