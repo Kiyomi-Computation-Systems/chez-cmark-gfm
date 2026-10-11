@@ -39,6 +39,17 @@ All notable changes to this project are documented here. This project follows
 
 ### Fixed
 
+- **The next release would have installed the docs-site generator into
+  every Akku consumer.** Installed as a dependency, the package put the nine
+  `(site …)` libraries under `site/` into the consumer's `.akku/lib` beside
+  `(cmark gfm)`. No release did: `site/` arrived after 2.0.0. A root
+  `.akkuignore` now leaves `site/` out. `make check-akku` installs the
+  package as an Akku dependency of a throwaway project and fails unless
+  exactly `src/`'s libraries land. CI's `akku-install` job runs it.
+- **The install docs said the package was not on Akku's index.** It is, at
+  2.0.0. [docs/installing.md](docs/installing.md#with-akku) and the README
+  now lead with `akku install chez-cmark-gfm` in your own project, and keep
+  the clone install as the way to develop this package.
 - **`make test-memory` on macOS never loaded AddressSanitizer.** It set
   `DYLD_INSERT_LIBRARIES` on `sh -c '…'`, and macOS drops `DYLD_*`
   variables when it launches a SIP-protected binary such as `/bin/sh`. So

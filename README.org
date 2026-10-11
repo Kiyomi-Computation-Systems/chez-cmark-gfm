@@ -50,17 +50,17 @@ the library is looked for in are all in [[file:docs/installing.md][docs/installi
 ** With Akku
 
 Needs the [[https://gitlab.com/akkuscm/akku][akku]] command itself, which this repo does not install for you.
-Run from a clone — ~akku install~ reads ~Akku.manifest~ from the current
-directory; this package is not on Akku's own index, so that's the only
-installation path proven here.
+chez-cmark-gfm is on [[https://akkuscm.org/packages/chez-cmark-gfm/][Akku's index]]; from your own project's directory:
 
 #+begin_src sh
-akku install
+akku update
+akku install chez-cmark-gfm
 . .akku/bin/activate
 #+end_src
 
-~(cmark gfm)~ then finds the system libcmark-gfm on its own, with nothing else
-set and no compiler involved.
+That adds the dependency to your ~Akku.manifest~ and puts the ~(cmark gfm …)~
+libraries under ~.akku/lib/~. ~(cmark gfm)~ then finds the system
+libcmark-gfm on its own, with nothing else set and no compiler involved.
 
 ** From a clone
 

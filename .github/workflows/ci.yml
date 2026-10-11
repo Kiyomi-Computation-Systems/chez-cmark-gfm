@@ -679,6 +679,14 @@ jobs:
           cd /tmp/akku-1.1.0.amd64-linux && ./install.sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
+      # `akku install` below installs this checkout as the ROOT project,
+      # which takes every library, tests and site/ included. A consumer gets
+      # it as a dependency, filtered by .akkuignore; check-akku installs it
+      # that way and requires exactly src/'s libraries. Runs first, while the
+      # checkout has no .akku/.
+      - name: a consumer installs exactly src/'s libraries
+        run: make CHEZ=chezscheme check-akku
+
       # The exit criterion itself: install from the manifest, then import
       # with NOTHING set -- no CHEZSCHEMELIBDIRS, no CHEZ_CMARK_GFM_LIBS.
       # `.akku/bin/activate` is what supplies CHEZSCHEMELIBDIRS (pointing at
