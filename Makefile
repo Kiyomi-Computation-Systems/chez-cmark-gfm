@@ -1,6 +1,7 @@
 # chez-cmark-gfm
 
 CHEZ        ?= chez
+AKKU        ?= akku
 UNAME_S     := $(shell uname -s)
 
 BUILD_DIR   := build
@@ -78,7 +79,7 @@ MEMORY_TESTS := $(filter-out tests/test-differential.sps,$(TESTS))
 # continuation handling -- a backslash-wrapped .PHONY hides every
 # continuation-line target from that check and adds a bogus `\`
 # pseudo-target. Found and fixed once already, in commit 3f5552c.
-.PHONY: all build deps check-pins check-purity check-help check-install check-memory-gate check-reference check-site examples site dev help install uninstall test test-memory vendor clean deps-info check-guix
+.PHONY: all build deps check-pins check-purity check-help check-akku check-install check-memory-gate check-reference check-site examples site dev help install uninstall test test-memory vendor clean deps-info check-guix
 
 help: ## Show this help message
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_.-]+:.*?## / \
@@ -579,6 +580,13 @@ check-install: ## Install to a temp prefix, prove install's own printed export l
 	  exit 1; \
 	fi; \
 	echo "check-install: uninstall removed its own tree and left the prefix intact"
+
+# What Akku installs into a consumer's .akku/lib: install this package as a
+# dependency of a throwaway project and require exactly src/'s libraries.
+# .akkuignore keeps site/ (the docs generator) out. Needs akku; CI's
+# akku-install job runs it.
+check-akku: ## Install as an Akku dependency and check exactly src/'s libraries land
+	@AKKU="$(AKKU)" CHEZ="$(CHEZ)" scripts/check-akku
 
 # Copies .sls files and nothing else. 2.0 compiles nothing (ADR-0015), and
 # the install path must not quietly acquire a build step.
