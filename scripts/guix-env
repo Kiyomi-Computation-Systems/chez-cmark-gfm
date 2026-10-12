@@ -27,13 +27,58 @@ if [ $# -eq 0 ]; then
   set -- bash
 fi
 
+# A linked worktree's .git is a file naming its git directory, which lies
+# inside the main repository's .git: the common directory, named by that
+# directory's `commondir` file. The container shares only $root, so git
+# there would find no repository, and `make deps` and `make check-pins`
+# would fail. Share the common directory too, read-write, since `git
+# submodule update` writes there. Read without git: the host may not have
+# it. Either path may be relative (worktree.useRelativePaths): a gitdir
+# from $root, which is the working directory by now, and a commondir from
+# the gitdir.
+share=
+if [ -f .git ]; then
+  gitdir=$(sed -n 's/^gitdir: //p' .git)
+  [ -n "$gitdir" ] || die "$root/.git is a file with no gitdir line"
+  common=$gitdir
+  if [ -f "$gitdir/commondir" ]; then
+    c=$(cat "$gitdir/commondir")
+    case "$c" in /*) common=$c ;; *) common=$gitdir/$c ;; esac
+  fi
+  named=$common
+  common=$(CDPATH='' cd -- "$named" 2>/dev/null && pwd) \
+    || die "$root/.git names $gitdir, whose common directory $named does not exist"
+  # Share only a git directory, and nothing that holds the checkout or
+  # HOME: a hand-edited .git file (gitdir: .., gitdir: /) must not hand the
+  # container a parent of the repository. ${common%/} so that / holds
+  # everything. guix splits --share at its first `=`, so a path holding one
+  # would share some other directory.
+  case "$root/" in
+    "${common%/}"/*) die "refusing to share $common, named by $root/.git: it holds $root" ;;
+  esac
+  case "$HOME/" in
+    "${common%/}"/*) die "refusing to share $common, named by $root/.git: it holds $HOME" ;;
+  esac
+  case "$common" in
+    *=*) die "refusing to share $common, named by $root/.git: guix would split it at the =" ;;
+  esac
+  [ -f "$common/HEAD" ] \
+    || die "$root/.git names $gitdir, whose common directory $common is not a git directory"
+  case "$common/" in
+    "$root"/*) ;;
+    *) share=--share=$common ;;
+  esac
+fi
+
 # --network: `make deps` fetches the vendor/ submodules.
 # --emulate-fhs: puts the pinned libraries at /usr/lib, the only place
 # discovery (ADR-0016) finds them when CHEZ_CMARK_GFM_LIBS is unset, which
 # is how `make check-install` probes the install contract.
+set -- -- "$@"
+[ -z "$share" ] || set -- "$share" "$@"
 set -- time-machine -C channels.scm -- shell -m manifest.scm \
   --container --network --emulate-fhs '--preserve=^(TERM|COLORTERM|LANG)$' \
-  -- "$@"
+  "$@"
 
 if [ -n "${GUIX_ENV_DRY_RUN:-}" ]; then
   printf 'cd %s\n' "$PWD"

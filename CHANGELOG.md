@@ -60,6 +60,16 @@ All notable changes to this project are documented here. This project follows
   Each call is now inside a `try`, so the toggle works for the page's life
   and is not remembered. `tests/test-site.sps` holds every access to a
   `try` block.
+- **`scripts/guix-env` did not work from a linked worktree.** A worktree's
+  `.git` is a file naming a directory inside the main repository's `.git`,
+  which the container did not share, so git inside found no repository and
+  `make deps`, `make check-pins` and `make check-guix` failed. The launcher
+  now shares that directory too, and refuses a `.git` file that names
+  something other than a git directory or a directory holding the checkout
+  or `HOME`. `tests/guix-env-launcher.sh` runs copies of the launcher in
+  fake trees, so its result no longer depends on whether the checkout is a
+  worktree, and covers each case. `make check-guix` also checks that git
+  reads the repository.
 - **The install docs said the package was not on Akku's index.** It is, at
   2.0.0. [docs/installing.md](docs/installing.md#with-akku) and the README
   now lead with `akku install chez-cmark-gfm` in your own project, and keep
