@@ -46,6 +46,20 @@ All notable changes to this project are documented here. This project follows
   `.akkuignore` now leaves `site/` out. `make check-akku` installs the
   package as an Akku dependency of a throwaway project and fails unless
   exactly `src/`'s libraries land. CI's `akku-install` job runs it.
+- **`make check-akku` failed a correct package on Linux, and could pass a
+  broken one.** Its tar named `--no-recursion` after `-T`, where GNU tar
+  ignores it, so with the submodules checked out it copied their 1,153
+  libraries into the package it checked. Its copy was also a pipe, so tar's
+  own failures counted for nothing: with a tracked file missing from the
+  working tree, it passed. CI checks out no submodules, so it saw neither.
+  The option now comes first, and each step's failure stops the check by
+  name.
+- **The docs site's light/dark toggle did nothing where the browser refuses
+  the page storage** (site data blocked, some private modes). The page's
+  script threw at its first `localStorage` call, before it wired the toggle.
+  Each call is now inside a `try`, so the toggle works for the page's life
+  and is not remembered. `tests/test-site.sps` holds every access to a
+  `try` block.
 - **The install docs said the package was not on Akku's index.** It is, at
   2.0.0. [docs/installing.md](docs/installing.md#with-akku) and the README
   now lead with `akku install chez-cmark-gfm` in your own project, and keep
