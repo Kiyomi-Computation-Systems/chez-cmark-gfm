@@ -67,7 +67,11 @@ so `make build` reports libraries under `/gnu/store`.
 yours: no git config, no SSH or gpg agent, no GitHub token. Its only view of
 your files is the repository itself, shared read-write at its usual path,
 so your edits are visible inside immediately and build output lands back in
-the repository.
+the repository. In a linked worktree (`git worktree add`) it also shares the
+main repository's `.git`, which git in the worktree reads and `make deps`
+writes. `scripts/guix-env` refuses a `.git` file that names something
+other than a git directory, or a directory that holds the checkout or your
+home directory.
 
 What to expect:
 
@@ -102,11 +106,12 @@ proves inside the container:
 
 1. The library came from the store.
 2. Nothing of your home directory is visible, except the path down to the
-   repository.
+   repository and, in a linked worktree, to the main repository's `.git`.
 3. `scheme`, `make`, `git` and `cmark-gfm` are the pinned binaries, from a
    login shell in either form.
 4. `$CHEZ` is the real Chez binary, not a wrapper, and Valgrind instruments
    it.
+5. git reads the repository, from a linked worktree too.
 
 It then runs `build`, `check-pins`, `test`, `check-purity`, `check-install`,
 `examples` and `check-site`. No CI job runs it (ADR-0018), so run it after

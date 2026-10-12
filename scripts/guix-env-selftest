@@ -13,6 +13,13 @@ fi
 fail=0
 out=$(mktemp)
 
+# The git common directory, when this is a linked worktree: the launcher
+# shares it, so the path to it may show in HOME as the path to $PWD does.
+common=
+if [ -f .git ]; then
+  common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+fi
+
 if ! make build >"$out" 2>&1; then
   cat "$out"
   echo "check-guix: FAILED make-build" >&2
@@ -32,20 +39,22 @@ for role in core ext; do
 done
 
 # Assertion 2: nothing of the host's HOME is visible. The container's HOME
-# holds at most the directories leading down to the repository, which it
-# shares; anything else (a dotfile, a key, a host tool's config) means the
-# isolation this environment exists for is gone.
+# holds at most the directories leading down to the repository and, in a
+# worktree, to the main repository's .git, which it shares; anything else
+# (a dotfile, a key, a host tool's config) means the isolation this
+# environment exists for is gone.
 home_ok=1
 for e in "$HOME"/* "$HOME"/.[!.]* "$HOME"/..?*; do
   [ -e "$e" ] || continue
-  case "$PWD/" in
-    "$e"/*) ;;
-    *) echo "check-guix: FAILED isolated-home: $e is visible inside the container" >&2
-       home_ok=0; fail=1 ;;
-  esac
+  case "$PWD/" in "$e"/*) continue ;; esac
+  if [ -n "$common" ]; then
+    case "$common/" in "$e"/*) continue ;; esac
+  fi
+  echo "check-guix: FAILED isolated-home: $e is visible inside the container" >&2
+  home_ok=0; fail=1
 done
 if [ "$home_ok" -eq 1 ]; then
-  echo "check-guix: ok isolated-home ($HOME holds only the path to $PWD)"
+  echo "check-guix: ok isolated-home ($HOME holds only the path to $PWD${common:+ and $common})"
 fi
 
 # Assertion 3: however a login shell finds a tool, it runs the pinned
@@ -90,6 +99,17 @@ if [ "$magic" = 7f454c46 ]; then
   echo "check-guix: ok chez-is-elf"
 else
   echo "check-guix: FAILED chez-is-elf: ${CHEZ:-chez} starts with '${magic:-nothing}', not an ELF header" >&2
+  fail=1
+fi
+
+# Assertion 5: git reads this repository, in a linked worktree too: `make
+# deps` and `make check-pins` need it.
+top=$(git rev-parse --show-toplevel 2>&1)
+pin=$(git ls-files -s vendor/chez-srfi 2>&1 | awk '{print $1}')
+if [ "$top" = "$PWD" ] && [ "$pin" = 160000 ]; then
+  echo "check-guix: ok git-reads-repo ($top${common:+, common $common})"
+else
+  echo "check-guix: FAILED git-reads-repo: toplevel '$top' (expected $PWD), vendor/chez-srfi entry '${pin:-none}'" >&2
   fail=1
 fi
 
