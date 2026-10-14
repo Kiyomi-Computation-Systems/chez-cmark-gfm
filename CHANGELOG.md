@@ -54,6 +54,18 @@ All notable changes to this project are documented here. This project follows
   working tree, it passed. CI checks out no submodules, so it saw neither.
   The option now comes first, and each step's failure stops the check by
   name.
+- **The Akku package carried the design records to every consumer.**
+  `akku install` unpacks the whole package into the consumer's
+  `.akku/src/chez-cmark-gfm/`, and 2.0.0's, built from a tree with no
+  `.gitattributes`, held `.plans/` (design specs, ADRs, mutation logs),
+  `AGENTS.md` and `spike/`. 2.0.0 cannot be changed. A `.gitattributes` now
+  marks the three `export-ignore`, which the Akku archive honours as `git
+  archive` does; they stay in the repository, and links to them from
+  `docs/` resolve there, not in the unpacked package. `make check-archive`
+  builds the package as the archive would and fails if any of them would
+  ship, or if anything else git tracks would not. CI's linux job runs it.
+  `make check-akku` now installs that same package rather than every
+  tracked file, so a library export-ignored by mistake fails it.
 - **The docs site's light/dark toggle did nothing where the browser refuses
   the page storage** (site data blocked, some private modes). The page's
   script threw at its first `localStorage` call, before it wired the toggle.

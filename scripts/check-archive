@@ -1,0 +1,57 @@
+#!/bin/sh
+# check-archive: fail unless the package the Akku archive would build from
+# this checkout is exactly the tracked tree less the process-only paths.
+#
+# `akku install` unpacks the whole package into every consumer's
+# .akku/src/chez-cmark-gfm/, and 2.0.0, with no .gitattributes, shipped its
+# design records and agent instructions there. .gitattributes now marks them
+# `export-ignore`, which the archive honours. PROCESS_ONLY is kept here
+# rather than read from .gitattributes, so a line deleted there fails this
+# check instead of shrinking it. Each name must be tracked: the absence of
+# one that is not proves nothing.
+#
+# Needs git and tar.
+set -eu
+
+PROCESS_ONLY='.plans AGENTS.md spike'
+
+root=$(cd "$(dirname "$0")/.." && pwd)
+work=$(mktemp -d "${TMPDIR:-/tmp}/check-archive.XXXXXX")
+trap 'rm -rf "$work"' EXIT
+
+fail() { echo "check-archive: $*" >&2; exit 1; }
+
+# Prints the paths on stdin that are not PROCESS_ONLY or under one of them.
+shipping() {
+  awk -v list="$PROCESS_ONLY" '
+    BEGIN { n = split(list, ps, " ") }
+    { for (i = 1; i <= n; i++) if ($0 == ps[i] || index($0, ps[i] "/") == 1) next; print }'
+}
+
+"$root/scripts/archive-package" "$work/pkg.tar" || fail "could not build the package"
+tar -tf "$work/pkg.tar" > "$work/entries" || fail "could not list the package"
+# git archive writes an entry for each directory, a submodule's among them.
+grep -v '/$' "$work/entries" | sort > "$work/shipped" || fail "the package is empty"
+
+untracked='' leaked=''
+for p in $PROCESS_ONLY; do
+  [ -n "$(cd "$root" && git ls-files -- "$p")" ] || untracked="$untracked $p"
+  if awk -v p="$p" '$0 == p || index($0, p "/") == 1 { found = 1 } END { exit !found }' \
+       "$work/shipped"; then
+    leaked="$leaked $p"
+  fi
+done
+[ -z "$untracked" ] ||
+  fail "not tracked, so absence from the package proves nothing:$untracked (update PROCESS_ONLY)"
+[ -z "$leaked" ] ||
+  fail "would ship in the package:$leaked (export-ignore them in a tracked .gitattributes)"
+
+(cd "$root" && git -c core.quotePath=false ls-files -s) |
+  awk -F '\t' '{ split($1, f, " "); if (f[1] != "160000") print $2 }' |
+  shipping | sort > "$work/expected"
+[ -s "$work/expected" ] || fail "git tracks nothing to ship"
+diff -u "$work/expected" "$work/shipped" > "$work/package.diff" ||
+  { cat "$work/package.diff" >&2
+    fail "the package is not the tracked tree less $PROCESS_ONLY (- left out, + extra)"; }
+
+echo "check-archive: $(wc -l < "$work/shipped" | tr -d ' ') files ship; not $PROCESS_ONLY"

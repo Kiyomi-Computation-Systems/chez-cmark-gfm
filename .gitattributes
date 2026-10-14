@@ -1,0 +1,8 @@
+# The Akku archive builds the package as `git archive` does, and `akku
+# install` unpacks all of it into every consumer's .akku/src/. Design
+# records, agent instructions and the stage-0 spike stay in the repository
+# and out of the package. `make check-archive` fails if any of them ships,
+# or if anything else is left out.
+/.plans export-ignore
+/AGENTS.md export-ignore
+/spike export-ignore

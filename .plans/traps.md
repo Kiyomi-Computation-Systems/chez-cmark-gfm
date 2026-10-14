@@ -196,3 +196,14 @@ it should not be a comment.
   ADR-0019 then stopped sharing credentials at all, so the lesson has no
   live site here. It is kept for whoever next shares a socket or key into a
   Guix container.
+* **2.0.0 shipped its design records to every Akku consumer.** The Akku
+  archive builds a package as `git archive` does, and `akku install` unpacks
+  all of it into the consumer's `.akku/src/chez-cmark-gfm/`. With no
+  `.gitattributes` at the tag, that was `.plans/`, `AGENTS.md` and `spike/`.
+  `make check-akku` was green: it checks the libraries in `.akku/lib`, and it
+  built its package from `git ls-files`, which ignores `export-ignore`, so
+  it would also have passed a package missing a library. `.gitattributes` now
+  leaves the three out, `make check-archive` keeps its own list of what must
+  not ship and compares the rest with the tracked tree, and both checks build
+  the package with `git archive` itself through `scripts/archive-package`
+  (`.plans/archive-contents-mutation-log.md`).
