@@ -118,6 +118,13 @@ jobs:
       - name: Check every .PHONY target is documented in `make help`
         run: make check-help
 
+      # Also needs nothing but git and tar. `akku install` unpacks the whole
+      # package into each consumer's .akku/src/, and 2.0.0's carried .plans/
+      # and AGENTS.md there; this fails if .gitattributes stops leaving them
+      # out, or starts leaving out anything else.
+      - name: Check the Akku package leaves out the design records
+        run: make check-archive
+
       # packaging/debian-prereqs.txt is the single source for the build/test
       # package list (see its header comment). valgrind is added here rather
       # than in that file because it is needed only by this job's memory

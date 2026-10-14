@@ -108,5 +108,10 @@ area.
 * `guix shell --pure` does not stop a login shell from rebuilding `PATH`;
   `scripts/guix-env` uses `--container`, guarded by `make check-guix`. Do not
   assume you know how a tool builds its shell.
+* `akku install` unpacks the whole package into each consumer's
+  `.akku/src/`, and the package is `git archive` of the tag, so
+  `.gitattributes` `export-ignore` decides what ships. 2.0.0 shipped `.plans/`
+  and `AGENTS.md` while `check-akku`, which checks only libraries, was green.
+  A new process-only path needs a line there and in `scripts/check-archive`.
 * No live site, kept for whoever returns there: C struct-tag prototype scope
   (C99 6.2.1p7), and Guix container mount-point modes that ssh and gpg reject.

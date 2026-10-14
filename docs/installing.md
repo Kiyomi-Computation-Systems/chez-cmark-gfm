@@ -117,6 +117,13 @@ clause, because there is nothing to build (ADR-0017).
 `make check-akku` installs the working tree this way, as a dependency of a
 throwaway project, and fails unless exactly `src/`'s libraries land.
 
+Akku unpacks the whole package, not only its libraries, into
+`.akku/src/chez-cmark-gfm/`. From the release after 2.0.0 that package
+leaves out what `.gitattributes` marks `export-ignore`: the design records
+in `.plans/`, `AGENTS.md` and `spike/`, which stay in the repository.
+`make check-archive` builds the package as Akku's archive does and fails if
+any of them would ship, or anything else would not.
+
 ### Developing this package
 
 `akku install` run in a clone reads this package's own `Akku.manifest` and

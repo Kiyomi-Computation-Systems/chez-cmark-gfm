@@ -79,7 +79,7 @@ MEMORY_TESTS := $(filter-out tests/test-differential.sps,$(TESTS))
 # continuation handling -- a backslash-wrapped .PHONY hides every
 # continuation-line target from that check and adds a bogus `\`
 # pseudo-target. Found and fixed once already, in commit 3f5552c.
-.PHONY: all build deps check-pins check-purity check-help check-akku check-install check-memory-gate check-reference check-site examples site dev help install uninstall test test-memory vendor clean deps-info check-guix
+.PHONY: all build deps check-pins check-purity check-help check-akku check-archive check-install check-memory-gate check-reference check-site examples site dev help install uninstall test test-memory vendor clean deps-info check-guix
 
 help: ## Show this help message
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_.-]+:.*?## / \
@@ -587,6 +587,13 @@ check-install: ## Install to a temp prefix, prove install's own printed export l
 # akku-install job runs it.
 check-akku: ## Install as an Akku dependency and check exactly src/'s libraries land
 	@AKKU="$(AKKU)" CHEZ="$(CHEZ)" scripts/check-akku
+
+# What the package itself carries: `akku install` unpacks all of it into each
+# consumer's .akku/src/. Builds it as the Akku archive does (git archive,
+# honouring .gitattributes export-ignore) and requires the tracked tree less
+# the design records and agent files. Needs only git and tar.
+check-archive: ## Check the Akku package leaves out .plans/, AGENTS.md and spike/, and nothing else
+	@scripts/check-archive
 
 # Copies .sls files and nothing else. 2.0 compiles nothing (ADR-0015), and
 # the install path must not quietly acquire a build step.

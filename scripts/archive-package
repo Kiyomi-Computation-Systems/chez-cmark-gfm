@@ -1,0 +1,42 @@
+#!/bin/sh
+# archive-package OUT: write to OUT the tar the Akku archive would build from
+# this checkout, so check-archive and check-akku test the package Akku ships.
+#
+# The archive builds a package the way `git archive` does: the files git
+# tracks, less whatever `.gitattributes` marks `export-ignore`, with each
+# submodule an empty directory. So this runs `git archive` itself, rather
+# than reimplementing its rules, on a tree written from the working tree:
+# uncommitted edits to tracked files, .gitattributes included, are what get
+# tested. Attributes are read from that tree, as from a tagged commit, so an
+# untracked .gitattributes is not seen.
+#
+# The tree is written through a copy of the index into a private object
+# directory, so nothing in the repository changes.
+set -eu
+
+fail() { echo "archive-package: $*" >&2; exit 1; }
+
+[ $# -eq 1 ] || { echo "usage: archive-package OUT" >&2; exit 2; }
+case $1 in /*) out=$1 ;; *) out=$PWD/$1 ;; esac
+root=$(cd "$(dirname "$0")/.." && pwd)
+work=$(mktemp -d "${TMPDIR:-/tmp}/archive-package.XXXXXX")
+trap 'rm -rf "$work"' EXIT
+cd "$root"
+
+# `git add -u` would record a deleted file as a deletion and build a package
+# without it, which no commit is meant to ship unnoticed.
+git ls-files --deleted > "$work/deleted" || fail "git ls-files failed"
+[ ! -s "$work/deleted" ] ||
+  fail "tracked files missing from the working tree: $(tr '\n' ' ' < "$work/deleted")"
+
+index=$(git rev-parse --path-format=absolute --git-path index) || fail "no git index"
+objects=$(git rev-parse --path-format=absolute --git-path objects) || fail "no git objects"
+cp "$index" "$work/index" || fail "could not copy the index"
+mkdir "$work/objects"
+GIT_INDEX_FILE=$work/index GIT_OBJECT_DIRECTORY=$work/objects \
+  GIT_ALTERNATE_OBJECT_DIRECTORIES=$objects
+export GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+
+git add -u || fail "could not stage the working tree"
+tree=$(git write-tree) || fail "could not write the tree"
+git archive --format=tar -o "$out" "$tree" || fail "git archive failed"

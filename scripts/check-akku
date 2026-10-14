@@ -6,9 +6,9 @@
 # takes every library, tests included; only a dependency is filtered (Akku
 # skips test paths, and whatever .akkuignore names). So a consumer project is
 # made in a temporary directory, with an Akku.lock that points this package
-# at a directory holding only the files git tracks -- what Akku's archive
-# builds a package from. Files are copied from the working tree, so
-# uncommitted edits to tracked files are what gets tested.
+# at the package scripts/archive-package builds as Akku's archive does: the
+# files git tracks, less what .gitattributes export-ignores, taken from the
+# working tree, so uncommitted edits to tracked files are what gets tested.
 #
 # This package's rows in the consumer's .akku/list must be exactly the .sls
 # files git tracks under src/: a site, tool or test library would land on
@@ -42,15 +42,10 @@ manifest=$(cd "$root" && "$CHEZ" -q --script "$work/manifest.ss")
 package=${manifest% *}
 version=${manifest#* }
 
-# --no-recursion keeps a submodule's directory empty, as it is in an archive;
-# GNU tar applies it only to names after it, so it comes before -T. Each
-# step writes a file rather than feeding a pipe, so a failure in any of them
-# (a tracked file deleted from the working tree) stops the check: in a pipe,
-# only the last command's status counts.
+# Each step writes a file rather than feeding a pipe, so a failure in any of
+# them stops the check: in a pipe, only the last command's status counts.
 mkdir -p "$work/pkg/$package"
-(cd "$root" && git ls-files -z) > "$work/files" || fail "git ls-files failed"
-(cd "$root" && tar --null --no-recursion -T "$work/files" -cf "$work/pkg.tar") ||
-  fail "could not archive the tracked files"
+"$root/scripts/archive-package" "$work/pkg.tar" || fail "could not build the package"
 tar -xf "$work/pkg.tar" -C "$work/pkg/$package" || fail "could not unpack the package"
 
 mkdir "$work/consumer"
